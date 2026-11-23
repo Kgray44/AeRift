@@ -1,5 +1,5 @@
 export { GestureIntent } from "./intent.js";
-export type { CameraState, GestureFeedback, GestureTarget } from "./intent.js";
+export type { CameraState, GestureFeedback, GestureInterruption, GestureTarget } from "./intent.js";
 export { HandLandmarkTracker } from "./landmarks.js";
 export type { GestureObservation, Landmark, LandmarkFrame } from "./landmarks.js";
 export { NativeGestureCamera } from "./native-camera.js";
