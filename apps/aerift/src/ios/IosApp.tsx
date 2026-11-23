@@ -1,6 +1,6 @@
-import { AppShell, Button, ConnectionStatus, SettingsPanel, Sheet, ThemeProvider, TransferWorkspace, type AppearanceSettings } from "@aerift/ui";
+import { AppShell, Button, ConnectionStatus, SettingsPanel, Sheet, ThemeProvider, TransferWorkspace, type AppearanceSettings, type WorkspaceConnection } from "@aerift/ui";
 import type { AppSnapshot } from "@aerift/app-contract";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { IosGestureCamera } from "./IosGestureCamera";
@@ -34,26 +34,17 @@ function readAppearance(): AppearanceSettings {
 }
 
 export function IosApp() {
-  const [snapshot, setSnapshot] = useState<IosSnapshot>();
+  const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
+  const [watchAttempt, setWatchAttempt] = useState(0);
+  const snapshot: IosSnapshot | undefined = connection.state === "ready" ? connection.snapshot : undefined;
   const [appearance, setAppearance] = useState(readAppearance);
   const [sheet, setSheet] = useState<"devices" | "settings">();
   const [discoveryError, setDiscoveryError] = useState(false);
 
-  useEffect(() => {
-    let disposed = false;
-    let unwatch: (() => void) | undefined;
-    void nativeAppPort.watch((next) => {
-      if (!disposed) setSnapshot(next);
-    }).then((result) => {
-      if (!result.ok) return;
-      if (disposed) result.value();
-      else unwatch = result.value;
-    });
-    return () => {
-      disposed = true;
-      unwatch?.();
-    };
-  }, []);
+  function retryConnection() {
+    setDiscoveryError(false);
+    setWatchAttempt(attempt => attempt + 1);
+  }
 
   async function discover() {
     setDiscoveryError(false);
@@ -72,7 +63,7 @@ export function IosApp() {
 
   const paired = snapshot?.devices.some((device) => device.online && device.paired);
   const discoveryUnavailable = discoveryError || snapshot?.localNetwork === "unavailable";
-  const searching = snapshot && !discoveryUnavailable;
+  const searching = connection.state !== "disconnected" && !discoveryUnavailable;
 
   return (
     <div className="aerift-ios">
@@ -80,7 +71,7 @@ export function IosApp() {
         <AppShell brand={<h1 className="aerift-title">AeRift</h1>} toolbar={
           <>
             <ConnectionStatus state={paired ? "connected" : searching ? "searching" : "offline"}
-              label={paired ? "Paired" : searching ? "Searching" : "Disconnected"} />
+              label={paired ? "Paired" : !searching ? "Disconnected" : snapshot ? "Searching" : "Connecting"} />
             <Button onClick={() => setSheet("devices")}>Devices</Button>
             <Button onClick={() => setSheet("settings")}>Settings</Button>
           </>
@@ -91,6 +82,7 @@ export function IosApp() {
           </div>}
           <TransferWorkspace
             port={nativeAppPort}
+            connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
             activityFooter={<p>Received files appear in Files → On My iPhone → AeRift → Received.</p>}
             gesture={(controls) => <IosGestureCamera controls={controls} enabled={!sheet} />}
           />
