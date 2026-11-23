@@ -20,10 +20,12 @@ function fixture(testContext, start = async () => {}) {
   };
   const intent = new GestureIntent("native", { kind: "receive", transferId: "offer" },
     ({ action }) => commands.push(action));
-  const adapter = new NativeGestureCamera(port, "native", intent, () => {});
+  const feedback = [];
+  const adapter = new NativeGestureCamera(port, "native", intent,
+    (state) => feedback.push({ state, subscribed }));
   testContext.after(() => adapter.stop());
   return {
-    adapter, intent, commands, stopped,
+    adapter, intent, commands, stopped, feedback,
     get subscribed() { return subscribed; },
     state(state, attemptId = "native") { listener({ type: "state", state, attemptId }); },
     frame(captureMs) { listener({
@@ -86,6 +88,30 @@ test("native camera stops at the absolute deadline even while frames continue wi
   await Promise.resolve();
   assert.equal(s.subscribed, false);
   assert.equal(s.intent.feedback.phase, "interrupted");
+  const terminal = s.feedback.find(({ state }) => state.phase === "interrupted");
+  assert.equal(terminal.state.interruption, "attempt-timeout");
+  assert.equal(terminal.subscribed, true);
   assert.deepEqual(s.stopped, ["native"]);
+  assert.deepEqual(s.commands, ["interrupt"]);
+});
+
+test("the native watchdog publishes lost frame feedback before teardown", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  const s = fixture(t);
+  await s.adapter.start();
+  s.state("ready");
+  for (const captureMs of [10, 80, 150, 220]) {
+    s.intent.observe({ captureMs, track: 1, posture: "open", confidence: null }, captureMs + 5);
+  }
+  assert.equal(s.intent.feedback.phase, "ready");
+  now = 450;
+  t.mock.timers.tick(50);
+  await Promise.resolve();
+  assert.equal(s.subscribed, false);
+  const terminal = s.feedback.find(({ state }) => state.phase === "interrupted");
+  assert.equal(terminal.state.interruption, "frame-gap");
+  assert.equal(terminal.subscribed, true);
   assert.deepEqual(s.commands, ["interrupt"]);
 });

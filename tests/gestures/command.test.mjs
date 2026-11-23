@@ -146,3 +146,28 @@ test("an activated attempt expires while continuous frames see no hand", () => {
   s.release();
   assert.deepEqual(s.commands.map(([action]) => action), ["interrupt"]);
 });
+
+test("confirmation interruption feedback retains the first cause through camera teardown", () => {
+  const cases = [
+    ["cancelled", /cancelled/i, interruptionCases["explicit cancellation"]],
+    ["frame-gap", /camera frames paused/i, interruptionCases.silence],
+    ["frame-gap", /camera frames paused/i, interruptionCases["capture gap"]],
+    ["stale-frame", /recognition fell behind/i, interruptionCases["stale inference"]],
+    ["tracking-lost", /lost track/i, interruptionCases["lost hand"]],
+    ["confirmation-timeout", /confirmation timed out/i, interruptionCases["held deadline"]],
+    ["capture-timeout", /camera stopped responding/i, (s) => s.intent.setCamera("error", "capture-timeout")],
+    ["target-changed", /selection changed/i, interruptionCases["changed file"]],
+  ];
+  for (const [cause, message, interrupt] of cases) {
+    const s = setup();
+    s.ready();
+    s.grasp();
+    assert.equal(s.intent.feedback.phase, "held");
+    interrupt(s);
+    s.intent.setCamera("disabled");
+    s.release();
+    assert.equal(s.intent.feedback.interruption, cause);
+    assert.match(s.intent.feedback.message, message);
+    assert.deepEqual(s.commands.map(([action]) => action), ["arm", "interrupt"]);
+  }
+});
