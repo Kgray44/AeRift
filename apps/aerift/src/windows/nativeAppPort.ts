@@ -60,12 +60,18 @@ export const desktopSettings = {
   chooseFolder: () => command<ReceiveFolder | null>("choose_receive_folder"),
 };
 
-type DropUpdate =
-  | { kind: "dropped"; selection: FileSelection }
+export type SelectionUpdate =
+  | { kind: "changed"; selection: FileSelection | null }
   | { kind: "rejected"; error: ProtocolError };
 
-export function watchFileDrop(listener: (update: DropUpdate) => void) {
-  const updates = new Channel<DropUpdate>(listener);
-  void command<void>("watch_file_selection", { updates });
-  return () => { updates.onmessage = () => {}; };
+export function watchFileSelection(listener: (update: SelectionUpdate) => void) {
+  const updates = new Channel<SelectionUpdate>(listener);
+  let disposed = false;
+  void command<void>("watch_file_selection", { updates }).then(result => {
+    if (!disposed && !result.ok) listener({ kind: "rejected", error: result.error });
+  });
+  return () => {
+    disposed = true;
+    updates.onmessage = () => {};
+  };
 }

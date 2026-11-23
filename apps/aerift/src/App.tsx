@@ -11,8 +11,8 @@ import {
 } from "@aerift/ui";
 import "@aerift/ui/styles.css";
 import type { AppSnapshot, FileSelection } from "@aerift/app-contract";
-import { useEffect, useState } from "react";
-import { desktopSettings, nativeAppPort, watchFileDrop, type ReceiveFolder } from "./windows/nativeAppPort";
+import { useCallback, useEffect, useState } from "react";
+import { desktopSettings, nativeAppPort, watchFileSelection, type ReceiveFolder } from "./windows/nativeAppPort";
 import { GestureCamera, cameraShortcutLabels, type CameraShortcut } from "./windows/GestureCamera";
 import { DeviceTrust } from "./windows/DeviceTrust";
 
@@ -50,7 +50,6 @@ function WindowsApp() {
   const [watchAttempt, retryWatch] = useState(0);
   const [sheet, setSheet] = useState<"devices" | "settings">();
   const [settings, setSettings] = useState(readSettings);
-  const [droppedSelection, setDroppedSelection] = useState<FileSelection | null>(null);
   const [dropError, setDropError] = useState<string>();
   const [folder, setFolder] = useState<ReceiveFolder>();
   const [folderError, setFolderError] = useState(false);
@@ -66,19 +65,8 @@ function WindowsApp() {
       if (disposed) result.value();
       else unwatch = result.value;
     });
-    const stopDrop = watchFileDrop((update) => {
-      if (disposed) return;
-      if (update.kind === "dropped") {
-        setDroppedSelection(update.selection);
-        setDropError(undefined);
-      } else {
-        setDropError(update.error.code === "storage_failed"
-          ? "AeRift could not read that file." : "Drop one regular file.");
-      }
-    });
     return () => {
       disposed = true;
-      stopDrop();
       unwatch?.();
     };
   }, [watchAttempt]);
@@ -92,6 +80,18 @@ function WindowsApp() {
     }
     return () => { disposed = true; };
   }, [!!snapshot]);
+
+  const watchSelection = useCallback((listener: (file: FileSelection | null) => void) =>
+    watchFileSelection(update => {
+      if (update.kind === "changed") {
+        listener(update.selection);
+        setDropError(undefined);
+      } else {
+        setDropError(update.error.code === "invalid_request" ? "Drop one regular file." :
+          update.error.code === "storage_failed" ? "AeRift could not read that file." :
+          "AeRift could not update the file selection.");
+      }
+    }), []);
 
   function updateSettings(next: Settings) {
     setSettings(next);
@@ -132,7 +132,7 @@ function WindowsApp() {
         {dropError && <p role="alert">{dropError}</p>}
         <TransferWorkspace
           port={nativeAppPort}
-          droppedSelection={droppedSelection}
+          watchSelection={watchSelection}
           activityFooter={folder?.active && <p>Incoming files are saved to {folder.active}.</p>}
           gesture={(controls) => <GestureCamera controls={controls}
             shortcut={settings.cameraShortcut} enabled={!sheet} />}

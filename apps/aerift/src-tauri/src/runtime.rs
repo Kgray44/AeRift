@@ -763,7 +763,10 @@ mod tests {
         let source = sender.root.join(name);
         fs::write(&source, bytes).unwrap();
         let selection = SelectionRegistry::default();
-        let selected = selection.select(&source, false).unwrap();
+        let selected = selection
+            .select(selection.begin().unwrap(), &source, false)
+            .unwrap()
+            .unwrap();
         let outgoing = sender
             .transfer(
                 &selection,
@@ -927,7 +930,10 @@ mod tests {
                 let source = left.root.join(name);
                 fs::write(&source, b"12345678").unwrap();
                 let selection = SelectionRegistry::default();
-                let selected = selection.select(&source, false).unwrap();
+                let selected = selection
+                    .select(selection.begin().unwrap(), &source, false)
+                    .unwrap()
+                    .unwrap();
                 left.transfer(
                     &selection,
                     TransferRequest::Offer {

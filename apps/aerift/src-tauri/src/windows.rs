@@ -44,6 +44,7 @@ pub(crate) fn watch_file_selection(
 pub(crate) async fn select_app_file(
     window: tauri::WebviewWindow,
 ) -> Result<Option<FileSelection>, TransferError> {
+    let revision = window.state::<SelectionRegistry>().begin()?;
     tauri::async_runtime::spawn_blocking(move || {
         let Some(file) = window
             .dialog()
@@ -56,8 +57,7 @@ pub(crate) async fn select_app_file(
         let path = file.into_path().map_err(|_| ErrorCode::InvalidRequest)?;
         window
             .state::<SelectionRegistry>()
-            .select(&path, false)
-            .map(Some)
+            .select(revision, &path, false)
     })
     .await
     .map_err(|_| ErrorCode::InternalError)?
@@ -124,18 +124,19 @@ pub(crate) fn handle_webview_event(webview: &Webview<Wry>, event: &WebviewEvent)
     let WebviewEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event else {
         return;
     };
+    let registry = webview.state::<SelectionRegistry>();
+    let Ok(revision) = registry.begin() else {
+        return;
+    };
     let [path] = paths.as_slice() else {
-        webview
-            .state::<SelectionRegistry>()
-            .reject(ErrorCode::InvalidRequest.into());
+        registry.reject(revision, ErrorCode::InvalidRequest.into());
         return;
     };
     let path = path.clone();
     let handle = webview.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let registry = handle.state::<SelectionRegistry>();
-        if let Err(error) = registry.select(&path, true) {
-            registry.reject(error);
-        }
+        let _ = handle
+            .state::<SelectionRegistry>()
+            .select(revision, &path, true);
     });
 }

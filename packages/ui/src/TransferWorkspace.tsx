@@ -43,11 +43,11 @@ export interface TransferControls {
   accept: (intent: IncomingTransferIntent) => Promise<boolean>;
 }
 
-export function TransferWorkspace({ port, gesture, activityFooter, droppedSelection }: {
+export function TransferWorkspace({ port, gesture, activityFooter, watchSelection }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
-  droppedSelection?: FileSelection | null;
+  watchSelection?: (listener: (selection: FileSelection | null) => void) => () => void;
 }) {
   const titleId = useId();
   const activityId = useId();
@@ -62,7 +62,6 @@ export function TransferWorkspace({ port, gesture, activityFooter, droppedSelect
   const [pairStatus, setPairStatus] = useState<string>();
   const [pairError, setPairError] = useState<string>();
   const [toast, setToast] = useState<{ message: string; kind: "success" | "error" }>();
-  const lastDroppedSelectionId = useRef<string | undefined>(undefined);
   const active = useRef<{ port: AppPort; snapshot?: AppSnapshot; selection: FileSelection | null; selectedId?: string; operations: Map<string, Operation>; watchFailed: boolean } | undefined>(undefined);
 
   useEffect(() => {
@@ -81,6 +80,12 @@ export function TransferWorkspace({ port, gesture, activityFooter, droppedSelect
     setPairStatus(undefined);
     setPairError(undefined);
     setToast(undefined);
+
+    const unwatchSelection = watchSelection?.(file => {
+      if (disposed) return;
+      session.selection = file;
+      setSelection(file);
+    });
 
     void (async () => {
       try {
@@ -103,8 +108,13 @@ export function TransferWorkspace({ port, gesture, activityFooter, droppedSelect
         }
       }
     })();
-    return () => { disposed = true; active.current = undefined; unwatch?.(); };
-  }, [port, watchAttempt]);
+    return () => {
+      disposed = true;
+      active.current = undefined;
+      unwatchSelection?.();
+      unwatch?.();
+    };
+  }, [port, watchAttempt, watchSelection]);
 
   useEffect(() => {
     if (!invitation) return;
@@ -114,14 +124,6 @@ export function TransferWorkspace({ port, gesture, activityFooter, droppedSelect
     }, Math.max(0, Date.parse(invitation.expiresAt) - Date.now()));
     return () => window.clearTimeout(expiry);
   }, [invitation]);
-
-  useEffect(() => {
-    const session = active.current;
-    if (!session || !droppedSelection || lastDroppedSelectionId.current === droppedSelection.selectionId) return;
-    lastDroppedSelectionId.current = droppedSelection.selectionId;
-    session.selection = droppedSelection;
-    setSelection(droppedSelection);
-  }, [droppedSelection]);
 
   function showActionError(message: string) {
     setToast({ kind: "error", message });
@@ -168,7 +170,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, droppedSelect
 
   function chooseFile() {
     void run(composerKey, "file", () => port.selectFile(), (file, session) => {
-      if (!file) return;
+      if (!file || watchSelection) return;
       session.selection = file;
       setSelection(file);
     });
@@ -178,7 +180,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, droppedSelect
     return run(composerKey, "send", session => offerTransfer(port,
       session.snapshot?.devices.find(device => device.id === session.selectedId), session.selection, captured),
       (_, session) => {
-        if (session.selection?.selectionId === captured.selectionId) {
+        if (!watchSelection && session.selection?.selectionId === captured.selectionId) {
           session.selection = null;
           setSelection(null);
         }
