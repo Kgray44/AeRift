@@ -1,12 +1,15 @@
 #![cfg(target_os = "ios")]
 
+mod camera_commands;
 mod discovery;
 mod keychain;
+mod peer_storage;
 
 pub use discovery::{
     start_discovery, stop_discovery, BonjourEndpoint, BonjourPeer, BonjourState, BonjourUpdate,
 };
 pub use keychain::{IosKeychain, KeychainError};
+pub use peer_storage::open_peer_node;
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
 use tauri::plugin::mobile::PluginInvokeError;
@@ -52,9 +55,16 @@ struct PickerResponse {
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("aerift-ios")
+        .invoke_handler(tauri::generate_handler![
+            camera_commands::camera_clock,
+            camera_commands::register_camera_events,
+            camera_commands::start_camera,
+            camera_commands::stop_camera,
+        ])
         .setup(|app, api| {
             let picker = api.register_ios_plugin(init_plugin_aerift_ios)?;
             app.manage(IosPlatform(picker));
+            app.manage(camera_commands::CameraUi::default());
             Ok(())
         })
         .build()

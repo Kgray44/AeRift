@@ -1,0 +1,17 @@
+{
+  "identifier": "ios-camera",
+  "description": "Allow foreground hand capture controls in the local iOS main WebView.",
+  "local": true,
+  "platforms": [
+    "iOS"
+  ],
+  "webviews": [
+    "main"
+  ],
+  "permissions": [
+    "aerift-ios:allow-camera-clock",
+    "aerift-ios:allow-register-camera-events",
+    "aerift-ios:allow-start-camera",
+    "aerift-ios:allow-stop-camera"
+  ]
+}
