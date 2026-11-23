@@ -43,10 +43,11 @@ export interface TransferControls {
   accept: (intent: IncomingTransferIntent) => Promise<boolean>;
 }
 
-export function TransferWorkspace({ port, gesture, activityFooter }: {
+export function TransferWorkspace({ port, gesture, activityFooter, watchSelection }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
+  watchSelection?: (listener: (selection: FileSelection | null) => void) => () => void;
 }) {
   const titleId = useId();
   const activityId = useId();
@@ -80,6 +81,12 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
     setPairError(undefined);
     setToast(undefined);
 
+    const unwatchSelection = watchSelection?.(file => {
+      if (disposed) return;
+      session.selection = file;
+      setSelection(file);
+    });
+
     void (async () => {
       try {
         const result = await port.watch(next => {
@@ -101,8 +108,13 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
         }
       }
     })();
-    return () => { disposed = true; active.current = undefined; unwatch?.(); };
-  }, [port, watchAttempt]);
+    return () => {
+      disposed = true;
+      active.current = undefined;
+      unwatchSelection?.();
+      unwatch?.();
+    };
+  }, [port, watchAttempt, watchSelection]);
 
   useEffect(() => {
     if (!invitation) return;
@@ -158,7 +170,7 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
 
   function chooseFile() {
     void run(composerKey, "file", () => port.selectFile(), (file, session) => {
-      if (!file) return;
+      if (!file || watchSelection) return;
       session.selection = file;
       setSelection(file);
     });
@@ -168,8 +180,10 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
     return run(composerKey, "send", session => offerTransfer(port,
       session.snapshot?.devices.find(device => device.id === session.selectedId), session.selection, captured),
       (_, session) => {
-        session.selection = null;
-        setSelection(null);
+        if (!watchSelection && session.selection?.selectionId === captured.selectionId) {
+          session.selection = null;
+          setSelection(null);
+        }
         setToast({ kind: "success", message: "Transfer offered" });
       });
   }
@@ -241,7 +255,7 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
               loading={pending === "send"} loadingLabel="Sending…" onClick={() => { if (intent) void send(intent); }}>
               Send file <span aria-hidden="true">↗</span>
             </Button>
-            {gesture?.({ intent: watchError ? null : intent, busy: pending !== undefined, send, incoming: incomingIntents, accept })}
+            {gesture?.({ intent: watchError ? null : intent, busy: pending !== undefined || pairingOpen, send, incoming: incomingIntents, accept })}
           </div>
         </GlassSurface>
       </section>
