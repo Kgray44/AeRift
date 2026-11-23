@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeMobileObjects, normalWebUrl, portableText, removeMobileObject } from "../../apps/aerift/src/ios/local-objects.ts";
+import { decodeMobileObjects, normalWebUrl, portableCollection, portableText, removeMobileObject } from "../../apps/aerift/src/ios/local-objects.ts";
 
 const base = { schemaVersion: 1, ownership: "local" };
 const note = { ...base, id: "note", kind: "note", name: "A résumé", format: "markdown", text: "## Harbor" };
@@ -26,4 +26,14 @@ test("links remain web-only and transfer as inert text", () => {
   assert.equal(normalWebUrl("file:///etc/hosts"), undefined);
   assert.deepEqual(portableText(note), { name: "AeRift - A resume.md", text: note.text });
   assert.deepEqual(portableText(link), { name: "AeRift - Map.txt", text: link.url });
+});
+
+test("a collection copy contains its members in order and fits the existing text transfer", () => {
+  const copy = portableCollection(collection, [note, link, collection]);
+  assert.equal(copy.name, "AeRift - Trip.txt");
+  assert.deepEqual(JSON.parse(copy.text), { schemaVersion: 1, collection, items: [link, note] });
+  assert.equal(portableCollection(collection, [note]), undefined);
+  assert.equal(portableCollection({ ...collection, itemIds: ["large"] }, [
+    { ...note, id: "large", text: "x".repeat(128 * 1024) },
+  ]), undefined);
 });

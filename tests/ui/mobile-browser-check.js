@@ -133,6 +133,52 @@ async (page) => {
   await dialog.getByRole("button", { name: "Clear saved outcomes", exact: true }).click();
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   check(await history.getByText("Cancelled", { exact: true }).count() === 0, "clear removes archived outcomes");
+  await go("Workspace");
+  await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__.invoke = (command, args) => {
+      if (command !== "stage_ios_text") throw new Error("Unexpected fixture command");
+      window.mobileCollectionCopy = JSON.parse(args.text);
+      return Promise.resolve({ name: args.name, sizeBytes: new TextEncoder().encode(args.text).length, selectionId: "fixture-collection" });
+    };
+  });
+  await page.getByRole("button", { name: "Send collection copy", exact: true }).click();
+  await page.getByRole("heading", { name: "Rift", exact: true, level: 2 }).waitFor();
+  await page.locator(".ae-dock-file").getByText("AeRift - Harbor Trip.txt", { exact: true }).waitFor();
+  check(await page.evaluate(() => window.mobileCollectionCopy.items[0].name === "Packing list"),
+    "the staged collection copy includes its saved objects");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await go("Workspace");
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__ = { invoke: command => {
+      if (command === "ios_clipboard_image_available") return Promise.resolve(true);
+      if (command === "stage_ios_clipboard_image") return Promise.resolve({
+        name: "Clipboard image.png", selectionId: "fixture-clipboard-image", sizeBytes: 24184,
+      });
+      throw new Error("Unexpected fixture command");
+    } };
+  });
+  await page.getByRole("button", { name: "Clipboard", exact: true }).click();
+  const pasteImage = page.getByRole("button", { name: "Paste image for Rift", exact: true });
+  await pasteImage.waitFor();
+  check(await pasteImage.isDisabled(), "clipboard image sharing starts disabled");
+  dialog = await config();
+  const shareClipboard = dialog.getByLabel("Allow sending clipboard copies through Rift", { exact: true });
+  await shareClipboard.check();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await pasteImage.click();
+  await page.getByRole("heading", { name: "Rift", exact: true, level: 2 }).waitFor();
+  await page.locator(".ae-dock-file").getByText("Clipboard image.png", { exact: true }).waitFor();
+  await page.locator("label.ae-spatial-peer").filter({ hasText: "Studio PC" }).click();
+  const sendFile = page.getByRole("button", { name: "Send file" });
+  await sendFile.waitFor();
+  dialog = await config();
+  await shareClipboard.uncheck();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByText("Enable clipboard sharing in Control Center to offer this file.", { exact: true }).waitFor();
+  check(await sendFile.count() === 0, "revoking sharing blocks the existing clipboard selection");
+  await page.locator(".ae-transfer-dock").screenshot({ path: "docs/validation/evidence/mobile-workspace/clipboard-sharing-390.png",
+    animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await go("Workspace");
   const files = page.getByRole("region", { name: "Imported files", exact: true });
@@ -168,5 +214,5 @@ async (page) => {
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removal survives restart");
   await media.getByRole("button", { name: "Select for Rift", exact: true }).click();
   await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, durable multi-item imports, and phone/rotation/tablet bounds.";
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, collection copy staging, clipboard sharing and revocation, durable multi-item imports, saved Activity, and responsive bounds.";
 }

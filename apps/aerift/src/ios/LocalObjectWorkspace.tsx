@@ -1,10 +1,10 @@
 import type { TransferWorkspaceRegions } from "@aerift/ui";
 import { Button } from "@aerift/ui";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { command } from "../nativeAppPort";
 import type { FileSelection } from "@aerift/app-contract";
 import {
-  maxTextLength, normalWebUrl, portableText, removeMobileObject, type MobileObject,
+  maxTextLength, normalWebUrl, portableCollection, portableText, removeMobileObject, type MobileObject,
 } from "./local-objects";
 
 export const localModules = ["notes", "browser", "clipboard", "collections"] as const;
@@ -18,18 +18,21 @@ function newObject(name: string) {
   return { id, name, ownership: "local", schemaVersion: 1 } as const;
 }
 
-export function LocalObjectWorkspace({ module, objects, save, regions, openRift }: {
+export function LocalObjectWorkspace({ module, objects, save, regions, openRift, clipboardSharing, markClipboardSelection }: {
   module: LocalModule;
   objects: readonly MobileObject[];
   save: (next: readonly MobileObject[]) => boolean;
   regions: TransferWorkspaceRegions;
   openRift: () => void;
+  clipboardSharing: boolean;
+  markClipboardSelection: (id: string) => void;
 }) {
   const workspaceOpen = useRef(false);
   useLayoutEffect(() => {
     workspaceOpen.current = true;
     return () => { workspaceOpen.current = false; };
   }, []);
+  const [imagePasteSupported, setImagePasteSupported] = useState<boolean>();
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [markdown, setMarkdown] = useState(false);
@@ -45,6 +48,34 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
   const entries = objects.filter(item => item.kind === kind);
   const selected = entries.find(item => item.id === editing);
   const candidates = objects.filter(item => item.kind !== "collection");
+
+  useEffect(() => {
+    if (!clips) return;
+    let current = true;
+    void command<boolean>("ios_clipboard_image_available").then(result => {
+      if (current && result.ok) setImagePasteSupported(result.value);
+    });
+    return () => { current = false; };
+  }, [clips]);
+
+  function includesClipboard(object: MobileObject) {
+    return object.kind === "text" || (object.kind === "collection" &&
+      object.itemIds.some(id => candidates.some(item => item.id === id && item.kind === "text")));
+  }
+
+  async function pasteImage() {
+    if (!clipboardSharing || !imagePasteSupported) return;
+    let pasted = false;
+    const selected = await regions.select(async () => {
+      const result = await command<FileSelection | null>("stage_ios_clipboard_image");
+      if (result.ok && result.value) {
+        markClipboardSelection(result.value.selectionId);
+        pasted = true;
+      }
+      return result;
+    });
+    if (pasted && selected && workspaceOpen.current) openRift();
+  }
 
   function upsert(object: MobileObject) {
     return save(objects.some(item => item.id === object.id)
@@ -98,9 +129,17 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
     setFeedback(result.ok ? "" : "The browser couldn't open this address.");
   }
 
-  async function stage(object: Entry) {
+  async function stage(object: Entry | Collection) {
+    const clipboardCopy = includesClipboard(object);
+    if (clipboardCopy && !clipboardSharing) return;
+    const payload = object.kind === "collection" ? portableCollection(object, objects) : portableText(object);
+    if (!payload) {
+      setFeedback("This collection is too large to send as one file. Remove some items and try again.");
+      return;
+    }
     const result = await regions.select(async () => {
-      const result = await command<FileSelection | null>("stage_ios_text", portableText(object));
+      const result = await command<FileSelection | null>("stage_ios_text", payload);
+      if (clipboardCopy && result.ok && result.value) markClipboardSelection(result.value.selectionId);
       return result.ok && !result.value ? { ok: false, error: { code: "storage_failed" } } : result;
     });
     if (result && workspaceOpen.current) openRift();
@@ -119,8 +158,14 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
   return <section className="ios-section ios-object-editor" aria-label={module}>
     {notes && <p>Save plain text or Markdown on this iPhone. Send a copy through Rift.</p>}
     {browser && <p>Open a page in Safari’s in-app browser or collect its address to send later.</p>}
-    {clips && <p>Use the system Paste menu in the field below. AeRift only keeps text you explicitly pin.</p>}
-    {collections && <p>Group saved notes, links and pinned text on this iPhone.</p>}
+    {clips && <>
+      <p>Use the system Paste menu for text. AeRift keeps text only when you pin it.</p>
+      {imagePasteSupported === true &&
+        <Button disabled={!regions.canSelect || !clipboardSharing} onClick={() => void pasteImage()}>Paste image for Rift</Button>}
+      {imagePasteSupported === false && <p>Image paste requires iOS 16 or later.</p>}
+      {!clipboardSharing && <p>Enable clipboard sharing in Control Center to send a copy.</p>}
+    </>}
+    {collections && <p>Group saved notes, links and pinned text. A transfer copy contains the saved items in one text file.</p>}
     <form className="ios-object-form" onSubmit={saveDraft}>
       <label><span>{browser ? "Link label (optional)" : "Name"}</span>
         <input value={title} required={!browser} maxLength={100} onChange={event => setTitle(event.currentTarget.value)} />
@@ -172,8 +217,12 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
         {object.kind === "collection" ? <small>{object.itemIds.length} saved items</small> :
           object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
           <small className="ios-preview">{object.kind === "text" ? "Pinned text" : object.text.slice(0, 180)}</small>}
+        {object.kind === "collection" && includesClipboard(object) && !clipboardSharing &&
+          <small>Enable clipboard sharing to offer the pinned text in this collection.</small>}
         <div className="ae-actions">
-          {object.kind !== "collection" && <Button disabled={!regions.canSelect} onClick={() => void stage(object)}>Send copy</Button>}
+          {object.kind === "collection" ?
+            <Button disabled={!regions.canSelect || !object.itemIds.length || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>Send collection copy</Button> :
+            <Button disabled={!regions.canSelect || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>Send copy</Button>}
           {object.kind === "url" && <Button variant="quiet" onClick={() => void browse(object.url)}>Open</Button>}
           <Button variant="quiet" onClick={() => edit(object)}>Edit</Button>
           {confirmRemoval === object.id ? <>
