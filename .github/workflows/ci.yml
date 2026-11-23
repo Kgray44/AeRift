@@ -39,4 +39,4 @@ jobs:
           persist-credentials: false
       - run: xcodebuild -version
       - run: rustup target add aarch64-apple-ios-sim
-      - run: cargo check -p aerift-protocol --target aarch64-apple-ios-sim --locked
+      - run: cargo check -p aerift-protocol -p aerift-peers -p aerift-transfer --target aarch64-apple-ios-sim --locked
