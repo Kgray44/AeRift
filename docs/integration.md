@@ -25,7 +25,7 @@ Integration owns root manifests and lockfiles, workflow and GitHub settings, `co
 
 ## Source intake
 
-For any import, record the originating repository, commit, files, owner authorization, and license terms. Review dependencies and bundled assets separately, scan the proposed files and diff for secrets, remove unrelated source, and preserve required notices. Voyagewright is proprietary. Use the documented open-hand, grasp, and release interaction as the initial reference. Copying source or assets into this public repository requires explicit authorization that covers that publication.
+For any import, record the originating repository, commit, files, owner authorization, and license terms. Review dependencies and bundled assets separately, scan the proposed files and diff for secrets, remove unrelated source, and preserve required notices. Voyagewright is proprietary. On November 22, 2026, the Voyagewright owner explicitly authorized AeRift to use all Voyagewright work. Port the open-hand, grasp, and release interaction from a pinned source revision. Verify third-party rights independently before importing any libraries, models, or bundled assets.
 
 ## CI
 
