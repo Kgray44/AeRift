@@ -1,0 +1,57 @@
+# AeRift Alpha 0.1 gesture engine
+
+## Interaction
+
+Select a file with the normal picker, select a paired peer, then choose **Use camera gesture**. Keep the file and peer visible. Show one open hand, make a fist until the onscreen instruction changes, then open the same hand again to request a send. **Cancel gesture** or the ordinary **Send** button remains available. On receive, the normal **Accept** / **Reject** controls are the default. A future opt-in gesture control can bind to one pending offer already visible and explicitly selected by the receiver. The same three postures can confirm **Accept**. An arriving offer never opens the camera or arms its own acceptance.
+
+The port retains the original one-hand open → grasp → release sequence, the three-sample minimum, 200 ms initial dwell, both 130 ms confirmation dwells, and interruption on a 220 ms capture gap. AeRift starts with an explicit user action, freezes the target, expires the sequence three seconds after the initial open hand settles, rejects observations more than 150 ms old, and consumes the intent before dispatch so repeat frames and synchronous reentry have no effect. The shortest possible observed pose dwell totals 460 ms, plus frame intervals, inference, and the user's transition time. Thresholds are Alpha defaults pending physical measurement. Future customization belongs in a policy over the same observation and versioned command interfaces.
+
+Hide, blur, source change, ambiguity, stale inference, or target invalidation interrupts a started attempt. MediaPipe Web uses the three 0.6 inference thresholds from VoyageWright and does not expose a per-result presence score. Vision joint confidences are used when available. Handedness is never used as a confidence score or to identify a person. The posture calculation uses distances and is mirror invariant. Windows mirrors the preview via CSS only and uses the actual image aspect ratio. The iOS provider uses an unmirrored front camera, rotates into portrait, and converts Vision's lower-left origin to upper-left. Its 2D coordinates use zero depth and require separate threshold qualification.
+
+## Host wiring
+
+Construct a fresh `GestureIntent` for each explicit gesture attempt, using an app-generated unique ID and the current opaque selection and peer IDs. Create a `WebGestureCamera` on Windows or `NativeGestureCamera` on iOS. Surface the feedback message and dwell progress beside the selected file and peer, with a visible camera-off control. Announce changes of phase/status in an ARIA live region rather than announcing every frame.
+
+The callback receives existing app-contract v1 commands **arm**, **release**, and **interrupt**. These are local events. On **arm**, retain that intent ID in the UI action coordinator. On **interrupt**, clear it. On **release**, atomically consume that ID before awaiting any transfer work. Revalidate the current file selection and paired online peer, then invoke the same guarded action as the Send button, corresponding to `AppPort.transfer({ action: "offer", deviceId, selectionId })`. Route a receive release through the existing Accept action for that still-pending transfer ID. Disable or coalesce concurrent actions using the same pending guard for both input paths. Before a button starts its action, cancel any active gesture; call `updateContext(null)` on revocation, disappearing targets, or invalid selection and call `stop()` on host deactivation, navigation, source changes, and component disposal. A network failure, cancellation, or retry requires a fresh explicit attempt and a new intent ID. Native and web capture callbacks do not import or execute the transfer protocol.
+
+### Windows
+
+The browser camera adapter reuses the Reach/Sextant pattern of explicit foreground capture, a single lease, bounded startup, one bitmap in flight, and teardown. It requests video only and honors existing WebView2/OS camera permission. On the trusted local app origin, ship `gesture-assets/` under the frontend public directory and resolve the classic worker URL from that origin. Allow same-origin model fetches in the host CSP (`connect-src 'self'` plus existing IPC) and allow same-origin workers and WASM evaluation (`worker-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`). Keep permission bound to the trusted origin. A missing capability or denied permission leaves ordinary controls available.
+
+### iOS
+
+The Tauri production WKWebView uses a custom scheme. The Windows worker adapter requires a same-origin HTTP(S) worker and is not the iOS release path. The included `ios/GestureCapture.swift` provides AVFoundation + Vision in-process for the native host to link, without opening an HTTP listener or copying frames to the WebView. The iOS host owns adding this file to its target and exposing `NativeCameraPort`: attempt-scoped start, stop, state/frame events, and monotonic clock from `GestureCapture.clockMs()`. Forward values only across the trusted bridge and retain one capture provider per host. Start only on explicit user action, provide `NSCameraUsageDescription`, and stop on lifecycle and interface-orientation changes. The native provider supports the iPhone portrait front camera for this slice. The WebView adapter and iOS native source are integration points. This checkout does not contain the native host or final shared transfer action.
+
+## Source, rights, and performance
+
+Source revision [fc813a4c03a4916c6b0aab346abbb8b1caa8cf38](https://github.com/Kgray44/treasurehuntSoT/tree/fc813a4c03a4916c6b0aab346abbb8b1caa8cf38) in `Kgray44/treasurehuntSoT`. The [VoyageWright proprietary license](https://github.com/Kgray44/treasurehuntSoT/blob/fc813a4c03a4916c6b0aab346abbb8b1caa8cf38/LICENSE.md) reserves rights. [AeRift issue #5](https://github.com/Kgray44/AeRift/issues/5) and the Alpha integration guide record owner authorization to use the relevant work. Source intake was limited to Crossdeck's `chart-transfer-gesture.ts` and test-fixture shapes, Watchglass's `hand-provider.ts` continuity rule and `public/reach/hand-worker.js`, and the capture patterns in `src/sextant/camera.ts` and `src/reach/browser-runtime.ts`. Reach's pointing, target calibration and interaction UI are outside this flow.
+
+VoyageWright detects palm regions and 21 hand landmarks with MediaPipe Tasks Vision 0.10.32 CPU/WASM and the Hand Landmarker float16/1 task. It infers open/fist via finger geometry. The same provider also serves separate Reach pointing and manipulation interpreters. Its 640×480 browser capture uses a classic worker with a single transferable bitmap in flight and a 40 ms delay after each result. Its published Chromium photograph replay recorded p95 inference of 44.8 ms, p95 capture interval of 91.5 ms, and p95 capture-to-canvas age of 115 ms across 400 inferences. The measurement excludes camera exposure and display scanout and does not qualify a webcam, WKWebView, or physical iPhone. [VoyageWright replay evidence](https://github.com/Kgray44/treasurehuntSoT/blob/fc813a4c03a4916c6b0aab346abbb8b1caa8cf38/Development_Docs/Testing/Product_Experience/evidence/reach-d1-632e1895/worker-performance.json)
+
+Runtime and model rights were checked separately. The [MediaPipe runtime](https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE) is Apache 2.0. Google's [Hand Tracking model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Hand%20Tracking%20%28Lite_Full%29%20with%20Fairness%20Oct%202021.pdf) states Apache 2.0. The originating [pinned asset manifest](https://github.com/Kgray44/treasurehuntSoT/blob/fc813a4c03a4916c6b0aab346abbb8b1caa8cf38/public/reach/vendor/asset-manifest.json) identifies the exact task and runtime bytes. Third-party binaries are staged unmodified from upstream, with the license present in the staged bundle. No runtime dependency installation or network delivery of model assets occurs from the camera adapter. Apple supplies the iOS detector in the OS.
+
+### Stage assets for the Windows host or test
+
+Extract [MediaPipe Tasks Vision 0.10.32](https://registry.npmjs.org/@mediapipe/tasks-vision/-/tasks-vision-0.10.32.tgz), obtain [Hand Landmarker float16/1](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task) and [the upstream license](https://raw.githubusercontent.com/google-ai-edge/mediapipe/master/LICENSE), then stage the checked assets with Node. The worker verifies the model digest again before loading it.
+
+```sh
+node packages/gestures/runtime/stage-assets.mjs <extracted-package-directory> <model-file> <license-file> <public-directory>/gesture-assets
+```
+
+## Validation
+
+Run the deterministic gesture and adapter cases from the repository root after installing the root tooling.
+
+```sh
+npx --no-install tsc -p packages/gestures
+node --test tests/gestures/command.test.mjs tests/gestures/native-camera.test.mjs
+```
+
+The optional Chromium replay in `tests/gestures/replay.mjs` uses separately installed playwright-core 1.56.1, a Chromium executable, a disposable browser profile, and a scratch root containing the staged `gesture-assets/` and [Google's pointing-up test photograph](https://storage.googleapis.com/mediapipe-assets/pointing_up.jpg) (SHA-256 `ecf8ca2611d08fa25948a4fc10710af9120e88243a54da6356bacea17ff3e36e`). The replay feeds a canvas video through the actual worker, expects sustained hand detection with no send command, and checks teardown on camera loss. The command tests send synthetic landmark sequences. Neither constitutes real-camera or native-device evidence.
+
+For physical acceptance, use the installed Windows app and an installed physical iPhone build on the same LAN. Record exact build SHAs, OS/runtime versions, lens direction and lighting.
+
+1. Pair the devices. Verify that button send and receive work with the camera off. Select an ordinary file and an online paired peer.
+2. Enable gestures. Check that the UI displays the selected file, peer, and camera instructions. Perform open → fist → open. Confirm one offer in the receiver UI and one invocation of the shared action. Hold or repeat the gestures without a fresh activation and verify the offer count stays at one. Accept with the receiver button and compare saved SHA-256 and size. Swap sender and receiver and repeat.
+3. Exercise flicker, ordinary hand movement, multiple hands, occlusion, bright/dim lighting, either hand, moving out of frame, changed file/peer, camera denial/revocation, losing window focus, iPhone lock/background/rotation, and disappearing peer. Watch for an unintended offer and verify tracks stop and the buttons remain usable.
+4. Collect at least 20 intentional attempts in each direction and 50 no-intent opportunities per device during the pilot. Record success/abort rates, false activations and duplicates, median/p95 capture-to-feedback and release-to-offer, and times spent waiting for tracking. Separate software timing from sensor/display timing. A duplicate or unintended offer keeps the device gate open.
