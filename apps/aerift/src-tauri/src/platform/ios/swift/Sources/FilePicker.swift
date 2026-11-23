@@ -9,12 +9,18 @@ enum FilePickerError: Error {
     case badRepresentation
 }
 
+enum PickerSource: String, Decodable {
+    case files
+    case photos
+}
+
 @MainActor
 final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControllerDelegate {
     private var completion: ((Result<StagedSelection?, Error>) -> Void)?
 
     func present(
         from presenter: UIViewController,
+        source: PickerSource?,
         completion: @escaping (Result<StagedSelection?, Error>) -> Void
     ) {
         guard self.completion == nil else {
@@ -27,6 +33,10 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
         }
 
         self.completion = completion
+        if let source {
+            open(source, from: presenter)
+            return
+        }
         let sources = SourcePickerController { [weak self, weak presenter] source in
             guard let self else { return }
             guard let source else {
@@ -37,26 +47,30 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
                 self.finish(.failure(FilePickerError.unavailable))
                 return
             }
-            switch source {
-            case .files:
-                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: false)
-                picker.delegate = self
-                picker.isModalInPresentation = true
-                presenter.present(picker, animated: true)
-            case .photos:
-                var configuration = PHPickerConfiguration()
-                configuration.filter = .any(of: [.images, .videos])
-                configuration.selectionLimit = 1
-                configuration.preferredAssetRepresentationMode = .current
-                let picker = PHPickerViewController(configuration: configuration)
-                picker.delegate = self
-                picker.isModalInPresentation = true
-                presenter.present(picker, animated: true)
-            }
+            self.open(source, from: presenter)
         }
         sources.modalPresentationStyle = .formSheet
         sources.isModalInPresentation = true
         presenter.present(sources, animated: true)
+    }
+
+    private func open(_ source: PickerSource, from presenter: UIViewController) {
+        switch source {
+        case .files:
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: false)
+            picker.delegate = self
+            picker.isModalInPresentation = true
+            presenter.present(picker, animated: true)
+        case .photos:
+            var configuration = PHPickerConfiguration()
+            configuration.filter = .any(of: [.images, .videos])
+            configuration.selectionLimit = 1
+            configuration.preferredAssetRepresentationMode = .current
+            let picker = PHPickerViewController(configuration: configuration)
+            picker.delegate = self
+            picker.isModalInPresentation = true
+            presenter.present(picker, animated: true)
+        }
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
@@ -114,14 +128,9 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
 
 @MainActor
 private final class SourcePickerController: UIViewController {
-    enum Source {
-        case files
-        case photos
-    }
+    private let choose: (PickerSource?) -> Void
 
-    private let choose: (Source?) -> Void
-
-    init(choose: @escaping (Source?) -> Void) {
+    init(choose: @escaping (PickerSource?) -> Void) {
         self.choose = choose
         super.init(nibName: nil, bundle: nil)
     }
@@ -169,7 +178,7 @@ private final class SourcePickerController: UIViewController {
         ])
     }
 
-    private func button(_ title: String, source: Source?) -> UIButton {
+    private func button(_ title: String, source: PickerSource?) -> UIButton {
         let button = UIButton(type: .system)
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = .preferredFont(forTextStyle: .body)

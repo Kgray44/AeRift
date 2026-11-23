@@ -21,7 +21,7 @@ struct FileStagingSmoke {
         try contents.write(to: source)
         let selected = try FileStaging.stage(source, preferredName: "asset", in: imports)
         let stagedBytes = try Data(contentsOf: selected.url)
-        guard stagedBytes == contents, selected.name == "asset.dat",
+        guard stagedBytes == contents, selected.name == "asset.dat", selected.url.lastPathComponent == "asset.dat",
               selected.sizeBytes == contents.count else {
             throw SmokeError.invalidCopy
         }
@@ -30,6 +30,25 @@ struct FileStagingSmoke {
         try Data().write(to: empty)
         let emptySelection = try FileStaging.stage(empty, in: imports)
         guard emptySelection.sizeBytes == 0 else { throw SmokeError.invalidCopy }
+
+        let note = "A note with Unicode: \u{00E9}"
+        let stagedNote = try FileStaging.stageText(note, name: "Note.md", in: imports)
+        let noteBytes = try Data(contentsOf: stagedNote.url)
+        guard noteBytes == Data(note.utf8), stagedNote.name == "Note.md",
+              stagedNote.sizeBytes == note.utf8.count else {
+            throw SmokeError.invalidCopy
+        }
+        for invalidName in ["../Note.md", "nested\\Note.md", "Note.exe"] {
+            do {
+                _ = try FileStaging.stageText(note, name: invalidName, in: imports)
+                throw SmokeError.acceptedInvalidSource
+            } catch StagingError.invalidFile {}
+        }
+        do {
+            _ = try FileStaging.stageText(String(repeating: "x", count: FileStaging.textLimitBytes + 1),
+                                          name: "Note.txt", in: imports)
+            throw SmokeError.acceptedOverBudget
+        } catch StagingError.invalidFile {}
 
         let alias = fixture.appendingPathComponent("alias")
         try manager.createSymbolicLink(at: alias, withDestinationURL: source)
@@ -47,7 +66,7 @@ struct FileStagingSmoke {
         } catch StagingError.limitExceeded {}
 
         let left = try manager.contentsOfDirectory(atPath: imports.path)
-        guard left.count == 2 else { throw SmokeError.residualSelection }
-        print("File staging preserved bytes, handled empty input, and rejected unsafe or over-budget imports")
+        guard left.count == 3 else { throw SmokeError.residualSelection }
+        print("File and text staging preserved bytes and rejected unsafe or over-budget input")
     }
 }

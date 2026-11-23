@@ -2,15 +2,147 @@
   min-height: 44px;
 }
 
-.aerift-ios input,
-.aerift-ios select {
-  font-size: max(16px, 1em);
+.aerift-ios :is(input, select, textarea) { font-size: max(16px, 1em); }
+
+.aerift-ios .ae-shell[data-experience="spatial"] {
+  padding-block-end: calc(6rem + env(safe-area-inset-bottom));
+}
+
+.aerift-ios .ae-experience-nav[data-mobile-shell="true"] {
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .aerift-ios-network {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem 0.75rem;
+  gap: .25rem .75rem;
 }
+
 .aerift-ios-network p { flex: 1 1 14rem; }
+.aerift-ios .ae-transfer-space[hidden] { display: none; }
+.ios-pair-notice { justify-self: end; }
+.ios-destination-heading { margin-block-end: 1rem; }
+.aerift-ios .ios-destination-heading h2 {
+  font-size: clamp(1.85rem, 4vw, 2.65rem);
+  letter-spacing: -.035em;
+  line-height: 1.1;
+}
+
+.ios-page {
+  inline-size: min(100%, 52rem);
+  margin: clamp(.85rem, 3vw, 1.5rem) auto 0;
+  display: grid;
+  gap: 1.25rem;
+  min-width: 0;
+  animation: ae-enter var(--ae-duration-enter) var(--ae-ease) both;
+}
+
+.ios-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: clamp(1rem, 4vw, 2rem);
+}
+
+.ios-overview h3 { font-size: clamp(1.25rem, 3.5vw, 1.8rem); }
+.ios-overview p, .ios-section-head p, .ios-destination-heading p { margin-block-start: .4rem; }
+.ios-home-grid { display: grid; gap: 1rem; }
+.ios-section {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: .7rem;
+  min-width: 0;
+  padding-block: 1rem;
+  border-block-start: 1px solid var(--ae-edge);
+  overflow-wrap: anywhere;
+}
+
+.ios-section > :is(.ae-activity-list, .ae-object, .ios-section-head) { inline-size: 100%; }
+.ios-section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
+.ios-section h3 { font-size: 1.14rem; }
+.ios-list { padding-inline-start: 1.3rem; }
+.ios-module-picker { display: flex; flex-wrap: wrap; gap: .3rem; }
+.aerift-ios .ios-module-picker [aria-pressed="true"] { border-color: var(--ae-control-edge); background: var(--ae-field); }
+.ios-object-editor { justify-items: stretch; }
+.ios-object-form, .ios-object-form label, .ios-object-list, .ios-collection { display: grid; gap: .55rem; }
+.ios-object-form .ios-check { display: flex; align-items: center; min-height: 44px; }
+.ios-object-form :is(input:not([type="checkbox"]), textarea), .ios-add-member select {
+  width: 100%;
+  padding: .7rem;
+  border: 1px solid var(--ae-control-edge);
+  border-radius: var(--ae-radius-control);
+  color: var(--ae-text);
+  background: var(--ae-content);
+}
+.ios-object-list { padding: 0; list-style: none; }
+.ios-object-list li { display: grid; gap: .35rem; padding-block: .75rem; border-top: 1px solid var(--ae-edge); }
+.ios-preview { white-space: pre-wrap; }
+.ios-collection li { margin-block-end: .5rem; }
+.ios-add-member { display: grid; gap: .3rem; }
+
+.ios-dock {
+  position: fixed;
+  inset-inline: max(.625rem, env(safe-area-inset-left)) max(.625rem, env(safe-area-inset-right));
+  inset-block-end: max(.6rem, env(safe-area-inset-bottom));
+  max-inline-size: 29rem;
+  margin-inline: auto;
+  padding: .3rem;
+  border-radius: 1.6rem;
+  z-index: var(--ae-layer-chrome);
+}
+
+.aerift-ios[data-keyboard="open"] .ios-dock { display: none; }
+.aerift-ios .ios-dock nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); inline-size: 100%; }
+.aerift-ios .ios-dock .ae-nav-indicator { inline-size: 20%; translate: calc(100% * var(--ios-route)) 0; }
+.aerift-ios .ios-dock nav button.ae-button[data-variant] {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: .15rem;
+  padding: .35rem .05rem;
+  min-inline-size: 0;
+  min-block-size: 3.25rem;
+  font-size: .6875rem;
+  font-weight: 650;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: transform var(--ae-duration-quick) var(--ae-ease);
+}
+
+.aerift-ios .ios-dock nav button > svg { display: block; }
+.aerift-ios .ios-dock nav button > span:first-of-type { overflow-wrap: anywhere; }
+.ios-attention {
+  position: absolute;
+  inset-block-start: .35rem;
+  inset-inline-end: .5rem;
+  inline-size: .43rem;
+  block-size: .43rem;
+  border-radius: 50%;
+  background: var(--ae-accent);
+}
+
+.ios-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.aerift-ios .ae-toast-slot { bottom: calc(5.75rem + env(safe-area-inset-bottom)); }
+.aerift-ios .aerift-control-center { display: grid; gap: 1rem; }
+
+@media (min-width: 42rem) {
+  .ios-home-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 23rem) {
+  .aerift-ios .ios-dock nav button.ae-button[data-variant] { font-size: .625rem; }
+}

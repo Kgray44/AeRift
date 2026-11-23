@@ -15,6 +15,7 @@ enum StagingError: Error {
 
 enum FileStaging {
     static let limitBytes = 512 * 1_024 * 1_024
+    private static let stagingLock = NSLock()
     private static let freeSpaceMargin = 64 * 1_024 * 1_024
 
     // A killed app cannot run the Rust selection's destructor.
@@ -40,18 +41,58 @@ enum FileStaging {
               let size = values.fileSize, size >= 0 else {
             throw StagingError.invalidFile
         }
+        let name = preferredName.map { ($0 as NSString).lastPathComponent } ?? source.lastPathComponent
+        let displayName = (name as NSString).pathExtension.isEmpty && !source.pathExtension.isEmpty
+            ? "\(name).\(source.pathExtension)" : name
+        return try stageContent(named: displayName, size: size, in: root) { destination in
+            try copyExactly(size, from: source, to: destination)
+        }
+    }
+
+    static let textLimitBytes = 128 * 1_024
+
+    static func stageText(_ text: String, name: String) throws -> StagedSelection {
+        try stageText(text, name: name, in: stagingDirectory.get())
+    }
+
+    static func stageText(_ text: String, name: String, in root: URL) throws -> StagedSelection {
+        let bytes = Data(text.utf8)
+        guard !bytes.isEmpty, bytes.count <= textLimitBytes,
+              !name.isEmpty, name.utf8.count <= 180, name == (name as NSString).lastPathComponent,
+              name.rangeOfCharacter(from: .controlCharacters) == nil,
+              !name.contains("\\"), !name.contains(":"),
+              ["txt", "md"].contains((name as NSString).pathExtension) else {
+            throw StagingError.invalidFile
+        }
+        return try stageContent(named: name, size: bytes.count, in: root) { destination in
+            try bytes.write(to: destination, options: .withoutOverwriting)
+        }
+    }
+
+    private static func stageContent(named name: String, size: Int, in root: URL,
+                                     write: (URL) throws -> Void) throws -> StagedSelection {
+        stagingLock.lock()
+        defer { stagingLock.unlock() }
         guard size <= limitBytes else { throw StagingError.limitExceeded }
 
         let manager = FileManager.default
         let selections = try manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
         var remainingBudget = limitBytes
         for selection in selections {
-            let file = selection.appendingPathComponent("content")
-            // Native owners can delete earlier selections while a new item is being imported.
-            if let bytes = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                remainingBudget -= min(remainingBudget, bytes)
-            } else if manager.fileExists(atPath: file.path) {
-                throw StagingError.invalidFile
+            let files: [URL]
+            do {
+                files = try manager.contentsOfDirectory(at: selection, includingPropertiesForKeys: [.fileSizeKey])
+            } catch {
+                if !manager.fileExists(atPath: selection.path) { continue }
+                throw error
+            }
+            for file in files {
+                // Native owners can delete earlier selections while a new item is being imported.
+                if let bytes = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                    remainingBudget -= min(remainingBudget, bytes)
+                } else if manager.fileExists(atPath: file.path) {
+                    throw StagingError.invalidFile
+                }
             }
         }
         guard size <= remainingBudget else { throw StagingError.limitExceeded }
@@ -63,13 +104,13 @@ enum FileStaging {
 
         let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: false)
-        let destination = directory.appendingPathComponent("content")
+        let safeName = !name.isEmpty && name != "." && name != ".." && !name.contains("/") && name.utf8.count <= 240 &&
+            name == (name as NSString).lastPathComponent &&
+            name.rangeOfCharacter(from: .controlCharacters) == nil ? name : "Content"
+        let destination = directory.appendingPathComponent(safeName, isDirectory: false)
         do {
-            try copyExactly(size, from: source, to: destination)
-            let name = preferredName.map { ($0 as NSString).lastPathComponent } ?? source.lastPathComponent
-            let displayName = (name as NSString).pathExtension.isEmpty && !source.pathExtension.isEmpty
-                ? "\(name).\(source.pathExtension)" : name
-            return StagedSelection(url: destination, name: displayName, sizeBytes: size)
+            try write(destination)
+            return StagedSelection(url: destination, name: name, sizeBytes: size)
         } catch {
             try? manager.removeItem(at: directory)
             throw error

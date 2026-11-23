@@ -56,9 +56,25 @@ export type WorkspaceConnection =
   | { state: "connecting" | "disconnected" }
   | { state: "ready"; snapshot: AppSnapshot };
 
+export interface TransferWorkspaceRegions {
+  pairingAction: ReactNode;
+  selection: FileSelection | null;
+  selecting: boolean;
+  canSelect: boolean;
+  select: (picker: AppPort["selectFile"]) => Promise<boolean>;
+}
+
+export interface MobileTransferPresentation {
+  view: "rift" | "activity" | "supplement";
+  archivedTransfers?: readonly Transfer[];
+  openRift: () => void;
+  openActivity: () => void;
+  render: (regions: TransferWorkspaceRegions) => ReactNode;
+}
+
 export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection,
   navigationStart = "AeRift", navigationEnd, pairRequest, onPairingOpenChange,
-  platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift }: {
+  platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift, mobile }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
@@ -74,6 +90,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   allowDrop?: boolean;
   desktopView?: "rift" | "activity" | "hidden";
   onOpenRift?: () => void;
+  mobile?: MobileTransferPresentation;
 }) {
   const titleId = useId();
   const activityId = useId();
@@ -82,9 +99,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const environment = useRef<HTMLDivElement>(null);
   const [localDestination, setDestination] = useState<"send" | "activity">("send");
   const [activityFilter, setActivityFilter] = useState<"all" | "active" | "finished">("all");
-  const destination = desktopView === "activity" ? "activity" : desktopView === undefined ? localDestination : "send";
-  const riftVisible = desktopView !== "hidden" && destination === "send";
   const hosted = desktopView !== undefined;
+  const destination = mobile
+    ? mobile.view === "rift" ? "send" : mobile.view
+    : desktopView === "activity" ? "activity" : hosted ? "send" : localDestination;
+  const riftVisible = desktopView !== "hidden" && destination === "send";
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
   const [watchError, setWatchError] = useState<string>();
   const [watchAttempt, setWatchAttempt] = useState(0);
@@ -321,7 +340,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   }
 
   function chooseFile() {
-    void run(composerKey, "file", () => port.selectFile(), (file, session) => {
+    void selectWith(() => port.selectFile());
+  }
+
+  function selectWith(picker: AppPort["selectFile"]) {
+    return run(composerKey, "file", () => picker(), (file, session) => {
       if (!file || watchSelection) return;
       session.selection = file;
       setSelection(file);
@@ -434,9 +457,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const incoming = transfers.filter(item => item.direction === "incoming" && item.state === "pending");
   const channel = transfers.filter(item => item.direction === "incoming" && isTransferActive(item));
   if (rift && !channel.some(item => item.id === rift.id)) channel.push(rift);
-  const history = hosted
+  const liveHistory = hosted
     ? transfers.filter(transfer => activityFilter === "all" || isTransferActive(transfer) === (activityFilter === "active"))
     : transfers.filter(item => !channel.some(featured => item.id === featured.id));
+  const archived = mobile?.archivedTransfers?.filter(item => !isTransferActive(item) &&
+    !transfers.some(live => live.id === item.id)) ?? [];
   const outgoingObject = !departure?.receipt ? departure?.file ?? selection : selection;
   const outgoingPhase = outgoingObject && objectPhase(outgoingObject, selectedId, gestureFeedback);
   const gesturePhase = (rift && incomingObjectPhase(rift, gestureFeedback)) || outgoingPhase || undefined;
@@ -503,7 +528,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       const device = devices.find(peer => peer.id === transfer.deviceId && peer.paired);
       return <Button variant="quiet" disabled={!!pending || !!watchError}
         onClick={() => {
-          if (onOpenRift) onOpenRift();
+          if (mobile) mobile.openRift();
+          else if (onOpenRift) onOpenRift();
           else setDestination("send");
           selectDevice(device?.id);
           chooseFile();
@@ -538,10 +564,43 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       action={transferActions(transfer)} />;
   }
 
+  const activitySection = <section key="activity" id={activityId} hidden={destination !== "activity"}
+    aria-label={mobile ? "Transfer history" : undefined}
+    aria-labelledby={mobile ? undefined : `${activityId}-heading`} className="ae-activity">
+    {!mobile && <h2 id={`${activityId}-heading`}>{hosted ? "Transfer history" : "Activity"}</h2>}
+    {hosted && <label className="aerift-activity-filter">Show
+      <select value={activityFilter} onChange={event => {
+        const value = event.currentTarget.value;
+        setActivityFilter(value === "active" || value === "finished" ? value : "all");
+      }}>
+        <option value="all">All transfers</option>
+        <option value="active">In progress</option>
+        <option value="finished">Finished</option>
+      </select>
+    </label>}
+    {liveHistory.length || archived.length ? <div className="ae-activity-list">
+      {liveHistory.map(transfer => <TransferProgress key={transfer.id} transfer={transfer}
+        deviceName={nameOf(transfer.deviceId)}
+        error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined}
+        action={transferActions(transfer)} />)}
+      {archived.map(transfer => <TransferProgress key={transfer.id} transfer={transfer}
+        deviceName={nameOf(transfer.deviceId)}
+        error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined} />)}
+    </div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
+      <p>{hosted && activityFilter !== "all" ? "No transfers match this view." :
+        !hosted && channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
+    {activityFooter}
+  </section>;
+
+  const transferSection = <section key="transfer-status" id={transferRegionId} ref={transferRegion}
+    tabIndex={-1} className="ae-rift-board" aria-label="Transfer status" hidden={!channel.length || (hosted && !riftVisible)}>
+    {channel.map(riftCard)}
+  </section>;
+
   return <>
-    {!hosted && <><header className="ae-experience-nav" data-destination={destination}>
+    {!hosted && <><header className="ae-experience-nav" data-destination={destination} data-mobile-shell={!!mobile}>
       <GlassSurface material="chrome" className="ae-nav-brand">{navigationStart}</GlassSurface>
-      <GlassSurface material="chrome" className="ae-nav-destinations">
+      {!mobile && <GlassSurface material="chrome" className="ae-nav-destinations">
         <nav aria-label="AeRift destinations">
           <span className="ae-nav-indicator" aria-hidden="true" />
           <Button variant="quiet" onClick={() => setDestination("send")} aria-controls={titleId}
@@ -549,12 +608,16 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           <Button variant="quiet" onClick={() => setDestination("activity")} aria-controls={activityId}
             aria-current={destination === "activity" ? "page" : undefined}><SpatialIcon name="activity" />Activity</Button>
         </nav>
-      </GlassSurface>
+      </GlassSurface>}
       {navigationEnd && <GlassSurface material="chrome" className="ae-nav-tools">{navigationEnd}</GlassSurface>}
     </header>
     <div className="ae-offer-notice">
-      <span role="status">{!!incoming.length && <Button variant="quiet" aria-controls={transferRegionId}
-        onClick={() => transferRegion.current?.focus()}>
+      <span role="status">{!!incoming.length && <Button variant="quiet"
+        aria-controls={transferRegionId}
+        onClick={() => {
+          if (mobile && destination === "supplement") mobile.openActivity();
+          else transferRegion.current?.focus();
+        }}>
         <SpatialIcon name="drop" size={17} />{incoming.length} incoming {incoming.length === 1 ? "offer" : "offers"}
       </Button>}</span>
     </div>
@@ -562,7 +625,16 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     {watchError && desktopView !== "hidden" && <div className="ae-workspace-notice">
       <p role="alert">{watchError}</p><Button variant="quiet" onClick={retry}>Retry connection</Button>
     </div>}
-    <div className="ae-transfer-space" hidden={desktopView === "hidden"} ref={environment} data-experience-phase={phase} data-experience-progress={progress}>
+    {mobile?.render({
+      selection, selecting: pending === "file",
+      canSelect: !!snapshot && !watchError && pending === undefined,
+      select: selectWith,
+      pairingAction: <Button disabled={pairingDisabled} onClick={() => setPairingOpen(true)}>
+        <SpatialIcon name="pair" size={17} />{pairingLabel}
+      </Button>,
+    })}
+    <div className="ae-transfer-space" ref={environment} data-experience-phase={phase} data-experience-progress={progress}
+      data-mobile-view={mobile?.view} hidden={desktopView === "hidden" || destination === "supplement"}>
       <section id={titleId} hidden={!riftVisible} aria-label="Spatial workspace" className="ae-workspace-view">
         <SpatialScene devices={devices} selectedId={selectedId} onSelect={selectDevice} busy={!!pending}
           platform={platform} discovery={stageDiscovery} onPair={() => setPairingOpen(true)}
@@ -616,30 +688,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
             </Button>}
         </GlassSurface>
       </section>
-      <section id={activityId} hidden={destination !== "activity"} aria-labelledby={`${activityId}-heading`} className="ae-activity">
-        <h2 id={`${activityId}-heading`}>{hosted ? "Transfer history" : "Activity"}</h2>
-        {hosted && <label className="aerift-activity-filter">Show
-          <select value={activityFilter} onChange={event => {
-            const value = event.currentTarget.value;
-            setActivityFilter(value === "active" || value === "finished" ? value : "all");
-          }}>
-            <option value="all">All transfers</option>
-            <option value="active">In progress</option>
-            <option value="finished">Finished</option>
-          </select>
-        </label>}
-        {history.length ? <div className="ae-activity-list">{history.map(transfer => (
-          <TransferProgress key={transfer.id} transfer={transfer} deviceName={nameOf(transfer.deviceId)}
-            error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined} action={transferActions(transfer)} />
-        ))}</div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
-          <p>{hosted && activityFilter !== "all" ? "No transfers match this view." :
-            !hosted && channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
-        {activityFooter}
-      </section>
-      <section id={transferRegionId} ref={transferRegion} tabIndex={-1} className="ae-rift-board"
-        aria-label="Transfer status" hidden={!channel.length || (hosted && !riftVisible)}>
-        {channel.map(riftCard)}
-      </section>
+      {mobile?.view === "activity" ? [transferSection, activitySection] : [activitySection, transferSection]}
     </div>
     <Sheet open={pairingOpen} title="Pair a device" onClose={() => setPairingOpen(false)}>
       {pairingOpen && <PairingPanel invitation={invitation} requests={pendingPairs} disabled={pairingDisabled}

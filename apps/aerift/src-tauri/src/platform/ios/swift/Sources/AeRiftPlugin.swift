@@ -1,6 +1,47 @@
+import QuickLook
+import SafariServices
 import AVFoundation
 import Tauri
 import UIKit
+
+private struct SelectionArgs: Decodable {
+    let path: String
+    let action: String
+}
+
+@MainActor
+private final class SelectionPreview: NSObject, QLPreviewControllerDataSource, QLPreviewControllerDelegate {
+    let item: NSURL
+    let done: () -> Void
+
+    init(url: URL, done: @escaping () -> Void) {
+        self.item = url as NSURL
+        self.done = done
+    }
+
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        item
+    }
+
+    func previewControllerDidDismiss(_ controller: QLPreviewController) {
+        done()
+    }
+}
+
+private struct TextArgs: Decodable {
+    let text: String
+    let name: String
+}
+
+private struct BrowserArgs: Decodable {
+    let url: String
+}
+
+private struct PickerArgs: Decodable {
+    let source: PickerSource?
+}
 
 private struct PickerResponse: Encodable {
     struct Selection: Encodable {
@@ -52,13 +93,15 @@ private struct DiscoveryArgs: Decodable {
 }
 
 final class AeRiftPlugin: Plugin {
+    @MainActor private var selectionPreview: SelectionPreview?
     @MainActor private lazy var filePicker = FilePicker()
     @MainActor private lazy var handCamera = HandCamera()
     @MainActor private var cameraAttempt: CameraArgs?
     @MainActor private var cancelledAttempts: [String] = []
     @MainActor private lazy var discovery = BonjourDiscovery()
 
-    @objc func pickFile(_ invoke: Invoke) {
+    @objc func pickFile(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(PickerArgs.self)
         DispatchQueue.main.async {
             guard UIApplication.shared.applicationState == .active,
                   let presenter = self.manager.viewController else {
@@ -69,7 +112,7 @@ final class AeRiftPlugin: Plugin {
             if let attempt = self.cameraAttempt {
                 self.stopCameraAttempt(attempt.attemptId)
             }
-            self.filePicker.present(from: presenter) { result in
+            self.filePicker.present(from: presenter, source: args.source) { result in
                 switch result {
                 case .success(let selection):
                     invoke.resolve(PickerResponse(selection: selection.map {
@@ -99,6 +142,94 @@ final class AeRiftPlugin: Plugin {
                     invoke.reject(message)
                 }
             }
+        }
+    }
+
+    @objc func presentSelection(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(SelectionArgs.self)
+        DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState == .active,
+                  let presenter = self.manager.viewController,
+                  let view = presenter.viewIfLoaded, view.window != nil,
+                  presenter.presentedViewController == nil else {
+                invoke.reject("Open AeRift to view this item.")
+                return
+            }
+
+            // Only Rust calls this adapter, with the path of an owned selection.
+            let url = URL(fileURLWithPath: args.path)
+            if args.action == "preview" {
+                let preview = SelectionPreview(url: url) { [weak self] in
+                    self?.selectionPreview = nil
+                    invoke.resolve()
+                }
+                guard QLPreviewController.canPreview(preview.item) else {
+                    invoke.reject("Quick Look does not support this item.")
+                    return
+                }
+                let controller = QLPreviewController()
+                controller.dataSource = preview
+                controller.delegate = preview
+                controller.modalPresentationStyle = .fullScreen
+                self.selectionPreview = preview
+                presenter.present(controller, animated: true)
+            } else if args.action == "export" {
+                let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                controller.popoverPresentationController?.sourceView = view
+                controller.popoverPresentationController?.sourceRect = CGRect(
+                    x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1
+                )
+                controller.completionWithItemsHandler = { _, _, _, error in
+                    if let error {
+                        invoke.reject(error.localizedDescription)
+                    } else {
+                        invoke.resolve()
+                    }
+                }
+                presenter.present(controller, animated: true)
+            } else {
+                invoke.reject("Unknown selection action.")
+            }
+        }
+    }
+
+    @objc func stageText(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(TextArgs.self)
+        DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState == .active else {
+                invoke.reject("Open AeRift to prepare text.")
+                return
+            }
+            do {
+                let selection = try FileStaging.stageText(args.text, name: args.name)
+                invoke.resolve(PickerResponse(selection: .init(
+                    path: selection.url.path, name: selection.name, sizeBytes: selection.sizeBytes
+                )))
+            } catch {
+                invoke.reject("AeRift could not prepare this text for transfer.")
+            }
+        }
+    }
+
+    @objc func openBrowser(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(BrowserArgs.self)
+        guard let components = URLComponents(string: args.url),
+              let scheme = components.scheme?.lowercased(), ["https", "http"].contains(scheme),
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              let url = components.url else {
+            invoke.reject("Enter a valid web address.")
+            return
+        }
+        DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState == .active,
+                  let presenter = self.manager.viewController,
+                  presenter.viewIfLoaded?.window != nil, presenter.presentedViewController == nil else {
+                invoke.reject("The browser is unavailable.")
+                return
+            }
+            presenter.present(SFSafariViewController(url: url), animated: true)
+            invoke.resolve()
         }
     }
 
