@@ -2,8 +2,18 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { createIosCameraPort, NativeGestureCamera, type GestureControlOptions, type NativeCameraEvent } from "@aerift/gestures";
 import { GestureControl, type GestureCameraStatus, type TransferControls } from "@aerift/ui";
 
+export type IosCameraPermission = "notDetermined" | "authorized" | "denied" | "restricted" | "unavailable";
+
+export async function iosCameraPermission(request = false): Promise<IosCameraPermission> {
+  try {
+    return await invoke<IosCameraPermission>("plugin:aerift-ios|camera_permission", { request });
+  } catch {
+    return "unavailable";
+  }
+}
+
 const cameraPort = createIosCameraPort({
-  authorized: () => invoke<boolean>("plugin:aerift-ios|camera_authorized"),
+  authorized: async () => await iosCameraPermission() === "authorized",
   clockMs: () => invoke<number>("plugin:aerift-ios|camera_clock"),
   createChannel: (listener) => new Channel<NativeCameraEvent>(listener),
   registerEvents: (events) => invoke<void>("plugin:aerift-ios|register_camera_events", { events }),

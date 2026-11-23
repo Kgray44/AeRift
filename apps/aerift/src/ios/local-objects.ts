@@ -61,14 +61,16 @@ function serializeAttachmentIndex(objects: readonly MobileObject[]): string {
     ? [[object.id, object.attachmentIds]] : []));
 }
 
+function noteTextRecord(object: MobileObject): MobileObject {
+  if (object.kind !== "note") return object;
+  const { attachmentIds: _attachmentIds, ...note } = object;
+  return note;
+}
+
 export function persistMobileObjects(storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
   previous: readonly MobileObject[], next: readonly MobileObject[]) {
   // Older builds strictly decode this key. Keep the note text readable after a downgrade.
-  const legacy = next.map(object => {
-    if (object.kind !== "note") return object;
-    const { attachmentIds: _attachmentIds, ...note } = object;
-    return note;
-  });
+  const legacy = next.map(noteTextRecord);
   const previousIndex = serializeAttachmentIndex(previous);
   const nextIndex = serializeAttachmentIndex(next);
   if (previousIndex === nextIndex) {
@@ -105,11 +107,25 @@ export function normalWebUrl(value: string): string | undefined {
   }
 }
 
+function portableName(name: string, extension: "txt" | "md") {
+  const slug = name.normalize("NFKD").replace(/[^a-z0-9 -]/gi, "").trim().slice(0, 72);
+  return "AeRift - " + (slug || "Object") + "." + extension;
+}
+
 export function portableText(object: Exclude<MobileObject, { kind: "collection" }>) {
   const extension = object.kind === "note" && object.format === "markdown" ? "md" : "txt";
-  const slug = object.name.normalize("NFKD").replace(/[^a-z0-9 -]/gi, "").trim().slice(0, 72);
   return {
-    name: `AeRift - ${slug || "Object"}.${extension}`,
+    name: portableName(object.name, extension),
     text: object.kind === "url" ? object.url : object.text,
   };
+}
+
+export function portableCollection(collection: Extract<MobileObject, { kind: "collection" }>,
+  objects: readonly MobileObject[]) {
+  const entries = new Map(objects.filter(item => item.kind !== "collection").map(item => [item.id, noteTextRecord(item)]));
+  const items = collection.itemIds.map(id => entries.get(id));
+  if (!items.length || items.some(item => item === undefined)) return undefined;
+  const text = JSON.stringify({ schemaVersion: 1, collection, items }, null, 2);
+  if (new TextEncoder().encode(text).length > 128 * 1024) return undefined;
+  return { name: portableName(collection.name, "txt"), text };
 }
