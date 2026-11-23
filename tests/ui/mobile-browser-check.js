@@ -24,7 +24,7 @@ async (page) => {
   await screenshot("light-home-390");
   await go("Workspace");
   await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
-  await page.getByRole("button", { name: "Choose media", exact: true }).click();
+  await page.getByRole("button", { name: "Choose for Rift", exact: true }).click();
   await page.getByRole("heading", { name: "Ready for Rift", exact: true }).waitFor();
   await screenshot("light-workspace-390");
   await go("Devices");
@@ -133,5 +133,33 @@ async (page) => {
   await dialog.getByRole("button", { name: "Clear saved outcomes", exact: true }).click();
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   check(await history.getByText("Cancelled", { exact: true }).count() === 0, "clear removes archived outcomes");
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, and phone/rotation/tablet bounds.";
+  await page.setViewportSize({ width: 390, height: 844 });
+  await go("Workspace");
+  const files = page.getByRole("region", { name: "Imported files", exact: true });
+  await files.getByRole("button", { name: "Import files", exact: true }).click();
+  await files.getByText("Harbor log.txt", { exact: true }).waitFor();
+  check((await files.getByRole("listitem").allTextContents())[0].includes("Navigation chart.pdf"),
+    "file import order survives staging");
+  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  const media = page.getByRole("region", { name: "Imported photos and videos", exact: true });
+  await media.getByRole("button", { name: "Import photos or videos", exact: true }).click();
+  await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
+  check((await media.getByRole("listitem").allTextContents())[0].includes("Harbor aerial.heic"),
+    "photo-library order is preserved");
+  check(await media.getByText("Navigation chart.pdf", { exact: true }).count() === 0, "media filters out provider files");
+  const video = media.getByRole("listitem").filter({ hasText: "Harbor approach.mov" });
+  await video.getByRole("button", { name: "Preview", exact: true }).click();
+  await video.getByRole("button", { name: "Export copy", exact: true }).click();
+  await video.getByRole("button", { name: "Select for Rift", exact: true }).click();
+  await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
+  await page.screenshot({ path: "docs/validation/evidence/mobile-workspace/media-import-tray-390.png", fullPage: true,
+    animations: "disabled" });
+  await go("Rift");
+  await page.locator(".ae-dock-file").getByText("Harbor approach.mov", { exact: true }).waitFor();
+  await go("Workspace");
+  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await media.getByRole("button", { name: "Remove Harbor aerial.heic", exact: true }).click();
+  check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removes only the selected imported copy");
+  await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, multi-item imports, and phone/rotation/tablet bounds.";
 }

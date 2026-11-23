@@ -10,6 +10,7 @@ import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { IosGestureCamera } from "./IosGestureCamera";
 import { MobileNavigation } from "./MobileNavigation";
+import { nativeMobileMedia, type MobileMediaPort } from "./mobile-media";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileObject } from "./local-objects";
 import { decodeMobileHistory, historyStorageKey, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
@@ -83,8 +84,9 @@ function readHistory() {
 
 const pickNative = (source: PickerSource) => command<FileSelection | null>("select_app_file", { source });
 
-export function IosApp({ port = nativeAppPort, pick = pickNative }: {
+export function IosApp({ port = nativeAppPort, pick = pickNative, media = nativeMobileMedia }: {
   port?: AppPort;
+  media?: MobileMediaPort;
   pick?: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
 } = {}) {
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
@@ -292,7 +294,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
               </>}
               {destination === "workspace" && <>
                 <MobileWorkspace regions={regions} modules={preferences}
-                  pick={pick} received={summary.received} openRift={() => navigate("rift")}
+                  pick={pick} media={media} received={summary.received} openRift={() => navigate("rift")}
                   objects={objects} save={saveObjects} />
                 {objectError && <p role="alert">{objectError}</p>}
               </>}
