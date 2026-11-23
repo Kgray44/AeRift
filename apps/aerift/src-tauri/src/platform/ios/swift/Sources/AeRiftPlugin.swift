@@ -107,8 +107,6 @@ final class AeRiftPlugin: Plugin {
                 invoke.resolve()
             } catch BonjourError.busy {
                 invoke.reject("AeRift discovery is already running.")
-            } catch BonjourError.inactive {
-                invoke.reject("Open AeRift to discover nearby devices.")
             } catch {
                 invoke.reject("AeRift could not start local discovery.")
             }
