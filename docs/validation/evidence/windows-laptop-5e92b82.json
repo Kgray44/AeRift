@@ -1,0 +1,16 @@
+{
+  "commit": "5e92b82d0169a66912ce26bc3eade7f6e645bb0c",
+  "scope": "physical Windows laptop launch",
+  "windowsVersion": "Microsoft Windows NT 10.0.26300.0",
+  "webView": "Edg/157.0.4341.60",
+  "installer": "AeRift_0.1.0_x64-setup.exe",
+  "sha256": "AA6C362BDE724CA9B83E42793B89D69BD656692EB4A38042B69276FE68B8DA89",
+  "installed": true,
+  "nativePickerEnabled": true,
+  "settingsRendered": true,
+  "observedAtUtc": "2026-11-23T07:58:37Z",
+  "captureSha256": {
+    "workspace": "02e34620e881d070f9b9f7e688a7a06db7f0c1fd740059650196687beeed30b6",
+    "settings": "1f97a70c56dd578f9681acccd26c34c49c8a05f5de07da19b88fb45cc93917b1"
+  }
+}
