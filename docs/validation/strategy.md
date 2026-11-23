@@ -17,6 +17,14 @@ Run `node --test "tests/acceptance/*.test.mjs"` with Node 24. Windows and macOS 
 
 For loopback, use production APIs with two isolated native stores, temporary roots, ephemeral identities, a listener on a dynamically assigned loopback port, bounded timeouts and deterministic teardown. Swap sender and receiver roles. Capture event stream, terminal states, destination entry count and hashes. Exercise malformed inputs and unauthorized requests through the approved native test interfaces. Include invalid destinations, permission errors and path-boundary rejection through the filesystem adapter. Assert no publication on denial or failure, no overwrite on collision, and no success before remote confirmation. Record unsupported OS semantics where a simulated adapter error substitutes for real permission denial.
 
+## Two-process peer integration
+
+From the integrated checkout containing the peer crate, build the existing Rust example with `cargo build --manifest-path crates/peers/Cargo.toml --example loopback_node`. Run `node tests/acceptance/validate-peer-demo.mjs <compiled loopback_node> <scratch directory> <source SHA>` with Node 24. Find the executable under target/debug/examples or under the equivalent examples directory in `CARGO_TARGET_DIR`; on Windows it has the `.exe` suffix. Reserve at least 256 MiB for the generated fixtures, received files and temporary copies before the run.
+
+This uses two separate Rust processes on loopback, with fresh ephemeral identity and trust stores for each case. It checks file visibility before consent, refusal without publication, empty and binary integrity, preservation of both same-name contents, and a 64 MiB transfer at the demo receiver limit. The driver keeps the pairing invitation in memory and prints a JSON receipt without it. Local fixtures and saved output remain in the scratch directory for inspection.
+
+The receipt includes pairing-request latency from writing the invitation to observing the consent prompt and approval-to-result latency from entering the approval to observing both terminal receipts. These elapsed times include harness observation, HTTP and polling where applicable. Keep them scoped to this loopback run. Use the instrumented benchmark driver and physical run for upload throughput, process memory and UI timing.
+
 ## Defensive review gates
 
 These are review targets from the protocol. The foundation does not implement the control paths. Link each review to a PR head, implementation locations and executed evidence.
