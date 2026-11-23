@@ -50,6 +50,7 @@ final class AeRiftPlugin: Plugin {
     @MainActor private lazy var filePicker = FilePicker()
     @MainActor private lazy var handCamera = HandCamera()
     @MainActor private var cameraAttempt: CameraArgs?
+    @MainActor private var cancelledAttempts: [String] = []
     @MainActor private lazy var discovery = BonjourDiscovery()
 
     @objc func pickFile(_ invoke: Invoke) {
@@ -132,6 +133,11 @@ final class AeRiftPlugin: Plugin {
             return
         }
         Task { @MainActor in
+            guard !cancelledAttempts.contains(args.attemptId) else {
+                try? args.events.send(CameraUpdate.status("disabled", attemptId: args.attemptId))
+                invoke.resolve()
+                return
+            }
             guard cameraAttempt == nil else {
                 try? args.events.send(CameraUpdate.status("busy", attemptId: args.attemptId))
                 invoke.resolve()
@@ -167,6 +173,11 @@ final class AeRiftPlugin: Plugin {
     }
 
     @MainActor private func stopCameraAttempt(_ id: String) {
+        // Stop can reach the bridge while its matching start is queued.
+        if !cancelledAttempts.contains(id) {
+            cancelledAttempts.append(id)
+            if cancelledAttempts.count > 32 { cancelledAttempts.removeFirst() }
+        }
         guard cameraAttempt?.attemptId == id else { return }
         handCamera.stop()
         finishCameraAttempt(id, reason: nil)

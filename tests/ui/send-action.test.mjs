@@ -26,3 +26,15 @@ test("a valid button or gesture intent uses the same v1 offer", async () => {
   } };
   assert.equal(await offerTransfer(port, target, selection, intent), result);
 });
+
+test("a dropped replacement invalidates the old gesture before the new file can be offered", async () => {
+  const droppedFile = { selectionId: "drop", name: "dropped.bin", sizeBytes: 12 };
+  const requests = [];
+  const port = { transfer(request) {
+    requests.push(request);
+    return Promise.resolve({ ok: true, value: { id: "receipt" } });
+  } };
+  assert.equal(await offerTransfer(port, target, droppedFile, intent), null);
+  await offerTransfer(port, target, droppedFile, { ...intent, selectionId: droppedFile.selectionId });
+  assert.deepEqual(requests, [{ action: "offer", deviceId: target.id, selectionId: "drop" }]);
+});

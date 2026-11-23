@@ -68,9 +68,14 @@ impl Connector for Harness {
 
 fn setup() -> (tempfile::TempDir, Harness) {
     let directory = tempfile::tempdir().unwrap();
+    let destination = directory.path().join("received");
+    let staging = directory.path().join("private");
+    std::fs::create_dir(&destination).unwrap();
+    std::fs::create_dir(&staging).unwrap();
     let receiver = Arc::new(
-        Receiver::new(
-            directory.path(),
+        Receiver::with_staging_directory(
+            &destination,
+            &staging,
             ReceiveLimits {
                 active_bytes: 16 * 1024 * 1024,
                 session_offers: 32,
@@ -138,7 +143,8 @@ async fn approve(receiver: Arc<Receiver>) {
 async fn sender_recovers_lost_completion_and_preserves_an_existing_destination() {
     let (dir, mut harness) = setup();
     harness.lose_completion = true;
-    let existing = dir.path().join("payload.bin");
+    let destination = dir.path().join("received");
+    let existing = destination.join("payload.bin");
     let source = dir.path().join("source.bin");
     std::fs::write(&existing, b"already here").unwrap();
     let data = vec![0x8d; 150_000];
@@ -154,10 +160,16 @@ async fn sender_recovers_lost_completion_and_preserves_an_existing_destination()
     assert_eq!(result.bytes_transferred, data.len() as u64);
     assert_eq!(std::fs::read(&existing).unwrap(), b"already here");
     assert_eq!(
-        std::fs::read(dir.path().join("1-payload.bin")).unwrap(),
+        std::fs::read(destination.join("1-payload.bin")).unwrap(),
         data
     );
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+    assert_eq!(std::fs::read_dir(destination).unwrap().count(), 2);
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("private"))
+            .unwrap()
+            .count(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -169,6 +181,10 @@ async fn public_sender_mid_stream_cancel_keeps_progress_and_removes_partial() {
     let cancellation = CancellationToken::new();
     let observer = harness.receiver.clone();
     let stop = cancellation.clone();
+    let destination = dir.path().join("received");
+    let staging = dir.path().join("private");
+    let active_destination = destination.clone();
+    let active_staging = staging.clone();
     let cancel_at_progress = tokio::spawn(async move {
         let mut watch = observer.subscribe();
         while !observer.snapshot().iter().any(|item| {
@@ -176,7 +192,10 @@ async fn public_sender_mid_stream_cancel_keeps_progress_and_removes_partial() {
         }) {
             watch.changed().await.unwrap();
         }
+        let destination_count = std::fs::read_dir(active_destination).unwrap().count();
+        let staging_count = std::fs::read_dir(active_staging).unwrap().count();
         stop.cancel();
+        (destination_count, staging_count)
     });
     let observed = Arc::new(Mutex::new(Vec::new()));
     let events = observed.clone();
@@ -192,7 +211,7 @@ async fn public_sender_mid_stream_cancel_keeps_progress_and_removes_partial() {
         .await
         .unwrap();
     decision.await.unwrap();
-    cancel_at_progress.await.unwrap();
+    assert_eq!(cancel_at_progress.await.unwrap(), (0, 1));
     assert_eq!(status.state, State::Cancelled);
     assert!(status.bytes_transferred > 0);
     assert_eq!(observed.lock().unwrap().last().unwrap().1, status);
@@ -206,12 +225,13 @@ async fn public_sender_mid_stream_cancel_keeps_progress_and_removes_partial() {
     let id = observed.lock().unwrap().last().unwrap().0;
     assert_eq!(sender.cancel(id).await.unwrap().state, State::Cancelled);
     tokio::time::timeout(Duration::from_secs(3), async {
-        while std::fs::read_dir(dir.path()).unwrap().count() != 1 {
+        while std::fs::read_dir(&staging).unwrap().count() != 0 {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
     .unwrap();
+    assert_eq!(std::fs::read_dir(destination).unwrap().count(), 0);
 }
 
 #[tokio::test]
@@ -306,5 +326,7 @@ async fn metadata_retries_are_scoped_and_digest_mismatch_never_publishes() {
     let status = harness.receiver.status(key).unwrap();
     assert_eq!(status.state, State::Failed);
     assert_eq!(status.error.unwrap().code, ErrorCode::IntegrityFailed);
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    for name in ["received", "private"] {
+        assert_eq!(std::fs::read_dir(dir.path().join(name)).unwrap().count(), 0);
+    }
 }
