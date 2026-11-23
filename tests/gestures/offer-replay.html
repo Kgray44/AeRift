@@ -69,19 +69,21 @@ function exchange(data, expected, transfer = []) {
   });
 }
 
+const paced = new URL(location.href).searchParams.has("paced");
 const poses = [];
 const phases = [];
 try {
   await exchange({ type: "INIT" }, "READY");
   let capture = 0;
   // Fixed playback timestamps decouple posture recognition from host scheduling.
-  for (const photo of [open, fist, open, fist, open]) {
+  for (const [step, photo] of [open, fist, open, fist, open].entries()) {
     context.fillStyle = "white";
     context.fillRect(0, 0, 640, 480);
     // Align one open-hand crop with the fist fixture's palm region.
     if (photo === fist) context.drawImage(fist, 150, 80, 322, 319);
     else context.drawImage(open, 360, 0, 360, 382, 150, 0, 324, 344);
-    for (let frame = 0; frame < 5; frame++) {
+    const frames = paced && step === 0 ? 35 : 5;
+    for (let frame = 0; frame < frames; frame++) {
       capture += 80;
       const bitmap = await createImageBitmap(canvas);
       const result = await exchange({ type: "FRAME", bitmap, capture }, "RESULT", [bitmap]);
@@ -97,7 +99,7 @@ try {
 } finally {
   worker.terminate();
 }
-const expectedPoses = ["open", "fist", "open", "fist", "open"].flatMap((pose) => Array(5).fill(pose));
+const expectedPoses = ["open", "fist", "open", "fist", "open"].flatMap((pose, step) => Array(paced && step === 0 ? 35 : 5).fill(pose));
 const status = mountPoint.querySelector("[role=status]").textContent;
 const stoppedAfterOffer = stopCalls === 1;
 button.click();
@@ -109,5 +111,5 @@ const pass = JSON.stringify(poses) === JSON.stringify(expectedPoses) &&
   phases.includes("held") && phases.at(-1) === "released" &&
   JSON.stringify(sendCalls) === JSON.stringify([selected]) && status === "Transfer offered." &&
   requiresSelection && stoppedAfterOffer && stoppedAfterTargetChange && !mountPoint.hasChildNodes();
-window.replayResult = { pass, phases, poses, sendCalls, status, requiresSelection, stoppedAfterOffer, stoppedAfterTargetChange };
+window.replayResult = { pass, paced, phases, poses, sendCalls, status, requiresSelection, stoppedAfterOffer, stoppedAfterTargetChange };
 </script>
