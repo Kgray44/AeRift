@@ -1,7 +1,11 @@
 #![cfg(target_os = "ios")]
 
+mod discovery;
 mod keychain;
 
+pub use discovery::{
+    start_discovery, stop_discovery, BonjourEndpoint, BonjourPeer, BonjourState, BonjourUpdate,
+};
 pub use keychain::{IosKeychain, KeychainError};
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
@@ -70,46 +74,98 @@ pub async fn pick_file<R: Runtime>(
 pub struct HandLandmark {
     pub x: f64,
     pub y: f64,
+    pub z: f64,
     pub confidence: f64,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandFrame {
-    pub timestamp_ms: f64,
-    pub frame_width: u32,
-    pub frame_height: u32,
+    pub capture_ms: f64,
+    pub width: u32,
+    pub height: u32,
     pub hands: Vec<Vec<HandLandmark>>,
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
+pub enum CameraState {
+    Disabled,
+    Requesting,
+    Starting,
+    Ready,
+    Denied,
+    Unavailable,
+    Busy,
+    Suspended,
+    Error,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum CameraUpdate {
-    Frame { frame: HandFrame },
-    Stopped { reason: Option<String> },
+    Frame {
+        attempt_id: String,
+        frame: HandFrame,
+    },
+    State {
+        attempt_id: String,
+        state: CameraState,
+    },
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CameraStart<'a> {
+    attempt_id: &'a str,
     events: &'a Channel<CameraUpdate>,
 }
 
-/// Call only from an explicit foreground camera action. Reuse the session's
-/// channel for restarts and reset the shared intent on any stop or stream gap.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CameraStop<'a> {
+    attempt_id: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CameraClock {
+    clock_ms: f64,
+}
+
+pub async fn hand_camera_clock<R: Runtime>(app: &AppHandle<R>) -> Result<f64, PluginInvokeError> {
+    let clock: CameraClock = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("cameraClock", ())
+        .await?;
+    Ok(clock.clock_ms)
+}
+
+/// Call only from an explicit foreground camera action. Reuse the app's
+/// channel for new attempts and route state changes to the shared controller.
 pub async fn start_hand_camera<R: Runtime>(
     app: &AppHandle<R>,
+    attempt_id: &str,
     events: &Channel<CameraUpdate>,
 ) -> Result<(), PluginInvokeError> {
     app.state::<IosPlatform<R>>()
         .0
-        .run_mobile_plugin_async("startCamera", CameraStart { events })
+        .run_mobile_plugin_async("startCamera", CameraStart { attempt_id, events })
         .await
 }
 
-pub async fn stop_hand_camera<R: Runtime>(app: &AppHandle<R>) -> Result<(), PluginInvokeError> {
+pub async fn stop_hand_camera<R: Runtime>(
+    app: &AppHandle<R>,
+    attempt_id: &str,
+) -> Result<(), PluginInvokeError> {
     app.state::<IosPlatform<R>>()
         .0
-        .run_mobile_plugin_async("stopCamera", ())
+        .run_mobile_plugin_async("stopCamera", CameraStop { attempt_id })
         .await
 }
 

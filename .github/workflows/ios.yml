@@ -35,7 +35,8 @@ jobs:
             -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift"
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/BonjourDiscovery.swift"
       - name: Test bounded native file staging
         run: |
           swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \

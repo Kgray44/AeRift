@@ -6,13 +6,14 @@ import Vision
 struct HandLandmark: Encodable {
     let x: Double
     let y: Double
+    let z: Double = 0
     let confidence: Double
 }
 
 struct HandFrame: Encodable {
-    let timestampMs: Double
-    let frameWidth: Int
-    let frameHeight: Int
+    let captureMs: Double
+    let width: Int
+    let height: Int
     /// Vision's 21 joints in the shared landmark order. The origin is top-left.
     let hands: [[HandLandmark]]
 }
@@ -39,12 +40,26 @@ final class HandCamera: NSObject {
         )
     }
 
+    nonisolated static func clockMs() -> Double {
+        CMClockGetTime(CMClockGetHostTimeClock()).seconds * 1_000
+    }
+
+    private static var isForegroundPortrait: Bool {
+        let application = UIApplication.shared
+        guard application.applicationState == .active else { return false }
+        let orientation = application.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?
+            .interfaceOrientation ?? application.statusBarOrientation
+        return orientation == .portrait
+    }
+
     func start(
         onFrame: @escaping (HandFrame) -> Void,
         onStop: @escaping (HandCameraError?) -> Void
     ) async throws {
         guard generation == nil else { throw HandCameraError.busy }
-        guard UIApplication.shared.applicationState == .active else { throw HandCameraError.inactive }
+        guard Self.isForegroundPortrait else { throw HandCameraError.inactive }
 
         let ticket = UUID()
         generation = ticket
@@ -56,15 +71,19 @@ final class HandCamera: NSObject {
             guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
                 throw HandCameraError.permissionDenied
             }
-            guard generation == ticket, UIApplication.shared.applicationState == .active else {
+            guard generation == ticket, Self.isForegroundPortrait else {
                 throw HandCameraError.inactive
             }
 
-            let source = HandCapture { [weak self] frame in
-                let deliveredAt = DispatchTime.now().uptimeNanoseconds
+            let source = HandCapture { [weak self] frame, release in
                 DispatchQueue.main.async {
-                    guard self?.generation == ticket,
-                          DispatchTime.now().uptimeNanoseconds - deliveredAt < 220_000_000 else { return }
+                    defer { release() }
+                    guard let self, self.generation == ticket else { return }
+                    guard Self.isForegroundPortrait else {
+                        self.stop(reason: .inactive)
+                        return
+                    }
+                    guard Self.clockMs() - frame.captureMs <= 150 else { return }
                     onFrame(frame)
                 }
             }
@@ -78,7 +97,10 @@ final class HandCamera: NSObject {
             try await source.start()
             guard generation == ticket else { throw HandCameraError.interrupted }
         } catch {
-            if generation == ticket { stop(reason: nil) }
+            if generation == ticket {
+                self.onStop = nil
+                stop(reason: nil)
+            }
             throw error
         }
     }
@@ -126,7 +148,8 @@ private final class HandCapture: NSObject, AVCaptureVideoDataOutputSampleBufferD
     private let output = AVCaptureVideoDataOutput()
     private static let queue = DispatchQueue(label: "com.aerift.hand-camera", qos: .userInitiated)
     private let request = VNDetectHumanHandPoseRequest()
-    private let onFrame: (HandFrame) -> Void
+    private let delivery = DispatchSemaphore(value: 1)
+    private let onFrame: (HandFrame, @escaping () -> Void) -> Void
     private var lastFrameMs = -Double.infinity
 
     private static let jointOrder: [VNHumanHandPoseObservation.JointName] = [
@@ -138,7 +161,7 @@ private final class HandCapture: NSObject, AVCaptureVideoDataOutputSampleBufferD
         .littleMCP, .littlePIP, .littleDIP, .littleTip
     ]
 
-    init(onFrame: @escaping (HandFrame) -> Void) {
+    init(onFrame: @escaping (HandFrame, @escaping () -> Void) -> Void) {
         self.onFrame = onFrame
         super.init()
         request.maximumHandCount = 2
@@ -191,9 +214,15 @@ private final class HandCapture: NSObject, AVCaptureVideoDataOutputSampleBufferD
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
-        let timestamp = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)) * 1_000
-        guard timestamp.isFinite, timestamp - lastFrameMs >= 75,
-              let image = CMSampleBufferGetImageBuffer(sample) else { return }
+        let sourceClock: CMClock?
+        if #available(iOS 15.4, *) { sourceClock = session.synchronizationClock }
+        else { sourceClock = session.masterClock }
+        guard let sourceClock, let image = CMSampleBufferGetImageBuffer(sample) else { return }
+        let timestamp = sourceClock.convertTime(sample.presentationTimeStamp, to: CMClockGetHostTimeClock())
+            .seconds * 1_000
+        let age = HandCamera.clockMs() - timestamp
+        guard age.isFinite, age >= 0, age <= 150, timestamp - lastFrameMs >= 75,
+              delivery.wait(timeout: .now()) == .success else { return }
         lastFrameMs = timestamp
 
         let handler = VNImageRequestHandler(cmSampleBuffer: sample, orientation: .up)
@@ -208,7 +237,8 @@ private final class HandCapture: NSObject, AVCaptureVideoDataOutputSampleBufferD
                 }
             }
         }
-        onFrame(HandFrame(timestampMs: timestamp, frameWidth: CVPixelBufferGetWidth(image),
-                          frameHeight: CVPixelBufferGetHeight(image), hands: hands))
+        let frame = HandFrame(captureMs: timestamp, width: CVPixelBufferGetWidth(image),
+                              height: CVPixelBufferGetHeight(image), hands: hands)
+        onFrame(frame) { [delivery] in delivery.signal() }
     }
 }
