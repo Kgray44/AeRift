@@ -1,59 +1,47 @@
 name: Windows app
 
 on:
-  pull_request:
-    paths:
-      - 'apps/aerift/**'
-      - 'apps/windows/**'
-      - 'crates/**'
-      - 'packages/**'
-      - 'Cargo.*'
-      - 'package*.json'
-      - '.github/workflows/windows-app.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  installer:
+  renderer:
+    name: iOS renderer retry checks
     runs-on: windows-2022
-    timeout-minutes: 45
-    env:
-      CARGO_TARGET_DIR: ${{ github.workspace }}/apps/aerift/src-tauri/target
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '22'
-      - name: Build the Windows installer
+          node-version: 22
+      - name: Build the native app renderer
         working-directory: apps/aerift
         shell: pwsh
         run: |
           npm ci
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          rustup update stable --no-self-update
+          npm run build
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $env:RUSTUP_TOOLCHAIN = 'stable'
-          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm run tauri build -- --bundles nsis
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          git diff --exit-code -- ../../package-lock.json ../../Cargo.lock src-tauri/Cargo.lock
-      - name: Install, launch, and capture the WebView
+      - name: Exercise connection and Bonjour retry
         shell: pwsh
-        run: ./apps/windows/Test-InstalledShell.ps1
-      - name: Upload installer and native launch evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'aerift-renderer-test'
+          New-Item -ItemType Directory -Path $tools | Out-Null
+          npm install --prefix $tools --no-save --ignore-scripts --package-lock=false playwright@1.56.1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $driver = Join-Path $tools 'node_modules/playwright/index.mjs'
+          $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'
+          $evidence = Join-Path $env:RUNNER_TEMP 'aerift-ios-retry-evidence'
+          node tests/ci/ios-reconnect-check.mjs $driver $edge apps/aerift/dist $evidence
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Upload verification evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: aerift-windows-x64
-          path: |
-            apps/aerift/src-tauri/target/release/bundle/nsis/*-setup.exe
-            ${{ runner.temp }}/aerift-evidence/
+          name: ios-renderer-retry
+          path: ${{ runner.temp }}/aerift-ios-retry-evidence/
           if-no-files-found: error
