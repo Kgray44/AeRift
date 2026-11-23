@@ -41,6 +41,7 @@ private struct BrowserArgs: Decodable {
 
 private struct PickerArgs: Decodable {
     let source: PickerSource?
+    let limit: Int
 }
 
 private struct PickerResponse: Encodable {
@@ -48,6 +49,7 @@ private struct PickerResponse: Encodable {
         let path: String
         let name: String
         let sizeBytes: Int
+        var kind: StagedKind = .file
     }
 
     let selection: Selection?
@@ -55,6 +57,10 @@ private struct PickerResponse: Encodable {
 
 private struct ClipboardImageCapability: Encodable {
     let supported: Bool
+}
+
+private struct BatchPickerResponse: Encodable {
+    let selections: [PickerResponse.Selection]
 }
 
 private struct CameraArgs: Decodable {
@@ -120,11 +126,11 @@ final class AeRiftPlugin: Plugin {
             if let attempt = self.cameraAttempt {
                 self.stopCameraAttempt(attempt.attemptId)
             }
-            self.filePicker.present(from: presenter, source: args.source) { result in
+            self.filePicker.present(from: presenter, source: args.source, limit: args.limit) { result in
                 switch result {
-                case .success(let selection):
-                    invoke.resolve(PickerResponse(selection: selection.map {
-                        .init(path: $0.url.path, name: $0.name, sizeBytes: $0.sizeBytes)
+                case .success(let selections):
+                    invoke.resolve(BatchPickerResponse(selections: selections.map {
+                        .init(path: $0.url.path, name: $0.name, sizeBytes: $0.sizeBytes, kind: $0.kind)
                     }))
                 case .failure(let error):
                     let message: String
@@ -143,6 +149,8 @@ final class AeRiftPlugin: Plugin {
                             message = "A file chooser is already open."
                         case .unavailable:
                             message = "The file chooser is unavailable."
+                        case .tooManyItems:
+                            message = "Choose fewer items and try again."
                         default:
                             message = "AeRift could not import this item."
                         }

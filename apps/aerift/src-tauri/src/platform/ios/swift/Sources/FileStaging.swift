@@ -1,10 +1,15 @@
 import Foundation
 
 /// Passed to Rust. Only the opaque selection ID, display name and size reach the UI.
+enum StagedKind: String, Encodable {
+    case file, photo, video
+}
+
 struct StagedSelection {
     let url: URL
     let name: String
     let sizeBytes: Int
+    var kind: StagedKind = .file
 }
 
 enum StagingError: Error {
@@ -14,6 +19,29 @@ enum StagingError: Error {
 }
 
 enum FileStaging {
+    static func discard(_ selections: [StagedSelection]) {
+        for selection in selections {
+            do {
+                try FileManager.default.removeItem(at: selection.url)
+            } catch {
+                continue
+            }
+            try? FileManager.default.removeItem(at: selection.url.deletingLastPathComponent())
+        }
+    }
+
+    // A batch is published only when every provider has staged successfully.
+    static func stageBatch<T>(_ items: [T], stage: (T) throws -> StagedSelection) throws -> [StagedSelection] {
+        var staged = [StagedSelection]()
+        do {
+            for item in items { staged.append(try stage(item)) }
+            return staged
+        } catch {
+            discard(staged)
+            throw error
+        }
+    }
+
     static let limitBytes = 512 * 1_024 * 1_024
     private static let stagingLock = NSLock()
     private static let freeSpaceMargin = 64 * 1_024 * 1_024
