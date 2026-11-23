@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { command } from "../nativeAppPort";
 import type { FileSelection } from "@aerift/app-contract";
 import {
-  maxTextLength, normalWebUrl, portableText, removeMobileObject, type MobileObject,
+  maxTextLength, normalWebUrl, portableCollection, portableText, removeMobileObject, type MobileObject,
 } from "./local-objects";
 
 export const localModules = ["notes", "browser", "clipboard", "collections"] as const;
@@ -98,9 +98,14 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
     setFeedback(result.ok ? "" : "The browser couldn't open this address.");
   }
 
-  async function stage(object: Entry) {
+  async function stage(object: Entry | Collection) {
+    const payload = object.kind === "collection" ? portableCollection(object, objects) : portableText(object);
+    if (!payload) {
+      setFeedback("This collection is too large to send as one file. Remove some items and try again.");
+      return;
+    }
     const result = await regions.select(async () => {
-      const result = await command<FileSelection | null>("stage_ios_text", portableText(object));
+      const result = await command<FileSelection | null>("stage_ios_text", payload);
       return result.ok && !result.value ? { ok: false, error: { code: "storage_failed" } } : result;
     });
     if (result && workspaceOpen.current) openRift();
@@ -120,7 +125,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
     {notes && <p>Save plain text or Markdown on this iPhone. Send a copy through Rift.</p>}
     {browser && <p>Open a page in Safari’s in-app browser or collect its address to send later.</p>}
     {clips && <p>Use the system Paste menu in the field below. AeRift only keeps text you explicitly pin.</p>}
-    {collections && <p>Group saved notes, links and pinned text on this iPhone.</p>}
+    {collections && <p>Group saved notes, links and pinned text. A transfer copy contains the saved items in one text file.</p>}
     <form className="ios-object-form" onSubmit={saveDraft}>
       <label><span>{browser ? "Link label (optional)" : "Name"}</span>
         <input value={title} required={!browser} maxLength={100} onChange={event => setTitle(event.currentTarget.value)} />
@@ -173,7 +178,9 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
           object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
           <small className="ios-preview">{object.kind === "text" ? "Pinned text" : object.text.slice(0, 180)}</small>}
         <div className="ae-actions">
-          {object.kind !== "collection" && <Button disabled={!regions.canSelect} onClick={() => void stage(object)}>Send copy</Button>}
+          {object.kind === "collection" ?
+            <Button disabled={!regions.canSelect || !object.itemIds.length} onClick={() => void stage(object)}>Send collection copy</Button> :
+            <Button disabled={!regions.canSelect} onClick={() => void stage(object)}>Send copy</Button>}
           {object.kind === "url" && <Button variant="quiet" onClick={() => void browse(object.url)}>Open</Button>}
           <Button variant="quiet" onClick={() => edit(object)}>Edit</Button>
           {confirmRemoval === object.id ? <>
