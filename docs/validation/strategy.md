@@ -57,3 +57,15 @@ Measure setup from connect request to authenticated usable connection. Time tran
 Run `node tests/acceptance/benchmark.mjs receipt.json` to compute nearest-rank p50, p95 and maximum. The JSON input has `commit`, `environment`, `payloadBytes` and `trials`. Each trial has `connectionMs`, `transferMs`, `peakRssBytes` and `integrityVerified`. Optional per-trial fields are `progressOffMs`, `gestureMs` and `uiInputMs`. Supply each optional field in all trials of a series when measured. Throughput uses MiB/s. Negative progress overhead is retained as measured. The analyzer checks and summarizes input. Candidate instrumentation and physical measurements are pending.
 
 For an instrumented local or simulator driver, run `node tests/acceptance/run-benchmark.mjs config.json -- <executable> [args...]`. The config contains `commit`, `environment`, `payloadBytes` and optional `trialCount`, `timeoutMs` and `compareProgress`. The harness starts a fresh process for each trial, discards trial zero, and alternates the order of paired progress runs. The trusted driver reads `AERIFT_BENCH_TRIAL`, `AERIFT_BENCH_PROGRESS` (`on` or `off`), and `AERIFT_BENCH_PAYLOAD_BYTES`. It must perform and verify one transfer, clean up its own fixtures and subprocesses, and print a single JSON measurement object to stdout. The runner emits the individual measurements and summary. Collect physical-device traces directly and use the analyzer when a single executable cannot coordinate both devices.
+
+### Rust progress callback benchmark
+
+Build and run the probe from a pinned peer checkout or source export. Pass a generated fixture between 1 and 64 MiB and its checkout SHA. The launcher builds against the checkout's locked peer libraries and uses the existing peer test store.
+
+```powershell
+./tests/acceptance/run-peer-progress-probe.ps1 -PeerSource <peer-checkout> -SourceSha <source-sha> -Fixture <fixture-file> -ScratchDirectory <scratch-folder>
+```
+
+On Windows the probe creates two authenticated peers on loopback within one process. It discards a warmup pair and alternates five retained pairs with and without forwarding each upload progress callback to a Tokio watch subscriber. It verifies saved bytes against the source SHA-256 before retaining each trial. The timed callback region includes forwarding when enabled and excludes bookkeeping in both modes. The launcher saves raw trials, lockfile and executable hashes, and paired per-callback timing differences.
+
+The transfer rate uses bytes remaining after the first upload progress event and elapsed time to remote completion. It includes receiver persistence and confirmation. The pairing span runs from invitation redemption start to receiver consent prompt. These measurements describe the production Rust peer engine and the test subscriber. Packaged native progress delivery and UI responsiveness require a separate run through the actual application bridge.
