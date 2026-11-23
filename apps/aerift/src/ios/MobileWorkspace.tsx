@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { WORKSPACE_MODULES } from "@aerift/app-contract/experience";
 import { MobileMediaTray } from "./MobileMediaTray";
-import type { MediaSource, MobileMediaPort } from "./mobile-media";
+import type { MediaSource } from "./mobile-media";
+import type { ObservedMediaPort } from "./mobile-media-observer";
 import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
 import { command } from "../nativeAppPort";
@@ -15,7 +16,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
   regions: TransferWorkspaceRegions;
   modules: ModuleVisibility;
   pick: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
-  media: MobileMediaPort;
+  media: ObservedMediaPort;
   received: readonly Transfer[];
   openRift: () => void;
   objects: readonly MobileObject[] | undefined;

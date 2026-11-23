@@ -42,6 +42,15 @@ private struct BrowserArgs: Decodable {
 private struct PickerArgs: Decodable {
     let source: PickerSource?
     let limit: Int
+    let persist: Bool
+}
+
+private struct MediaLibraryResponse: Encodable {
+    let items: [MediaImport]
+}
+
+private struct MediaAssetArgs: Decodable {
+    let assetId: UUID
 }
 
 private struct PickerResponse: Encodable {
@@ -101,6 +110,15 @@ private struct DiscoveryArgs: Decodable {
 final class AeRiftPlugin: Plugin {
     @MainActor private var selectionPreview: SelectionPreview?
     @MainActor private lazy var filePicker = FilePicker()
+    @MainActor private var mediaLibrary: MediaLibrary?
+
+    @MainActor
+    private func openMediaLibrary() throws -> MediaLibrary {
+        if let mediaLibrary { return mediaLibrary }
+        let library = try MediaLibrary.openDeviceLibrary()
+        mediaLibrary = library
+        return library
+    }
     @MainActor private lazy var handCamera = HandCamera()
     @MainActor private var cameraAttempt: CameraArgs?
     @MainActor private var cancelledAttempts: [String] = []
@@ -115,12 +133,29 @@ final class AeRiftPlugin: Plugin {
                 return
             }
 
+            let library: MediaLibrary?
+            let limit: Int
+            do {
+                library = args.persist ? try self.openMediaLibrary() : nil
+                limit = try library?.pickerLimit() ?? args.limit
+            } catch {
+                invoke.reject("AeRift could not open the import library or it is full.")
+                return
+            }
             if let attempt = self.cameraAttempt {
                 self.stopCameraAttempt(attempt.attemptId)
             }
-            self.filePicker.present(from: presenter, source: args.source, limit: args.limit) { result in
+            self.filePicker.present(from: presenter, source: args.source, limit: limit) { result in
                 switch result {
                 case .success(let selections):
+                    if let library {
+                        do {
+                            invoke.resolve(MediaLibraryResponse(items: try library.append(selections)))
+                        } catch {
+                            invoke.reject("AeRift could not save the imported copies.")
+                        }
+                        return
+                    }
                     invoke.resolve(BatchPickerResponse(selections: selections.map {
                         .init(path: $0.url.path, name: $0.name, sizeBytes: $0.sizeBytes, kind: $0.kind)
                     }))
@@ -149,6 +184,41 @@ final class AeRiftPlugin: Plugin {
                     }
                     invoke.reject(message)
                 }
+            }
+        }
+    }
+
+    @objc func listMedia(_ invoke: Invoke) {
+        DispatchQueue.main.async {
+            do {
+                invoke.resolve(MediaLibraryResponse(items: try self.openMediaLibrary().list()))
+            } catch {
+                invoke.reject("AeRift could not read the import library.")
+            }
+        }
+    }
+
+    @objc func removeMedia(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(MediaAssetArgs.self)
+        DispatchQueue.main.async {
+            do {
+                invoke.resolve(MediaLibraryResponse(items: try self.openMediaLibrary().remove(args.assetId)))
+            } catch {
+                invoke.reject("AeRift could not remove this imported copy.")
+            }
+        }
+    }
+
+    @objc func stageMedia(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(MediaAssetArgs.self)
+        DispatchQueue.main.async {
+            do {
+                let file = try self.openMediaLibrary().stage(args.assetId)
+                invoke.resolve(PickerResponse(selection: .init(
+                    path: file.url.path, name: file.name, sizeBytes: file.sizeBytes, kind: file.kind
+                )))
+            } catch {
+                invoke.reject("AeRift could not reopen this imported copy.")
             }
         }
     }

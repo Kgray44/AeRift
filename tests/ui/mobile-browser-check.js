@@ -161,5 +161,12 @@ async (page) => {
   await media.getByRole("button", { name: "Remove Harbor aerial.heic", exact: true }).click();
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removes only the selected imported copy");
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, multi-item imports, and phone/rotation/tablet bounds.";
+  await page.reload();
+  await go("Workspace");
+  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
+  check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removal survives restart");
+  await media.getByRole("button", { name: "Select for Rift", exact: true }).click();
+  await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, durable multi-item imports, and phone/rotation/tablet bounds.";
 }

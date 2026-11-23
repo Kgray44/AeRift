@@ -56,17 +56,22 @@ const fixtureMedia = {
   ],
 } as const;
 
-let imports: ImportedMedia[] = [];
+const fixtureLibraryKey = "aerift.fixture.media";
+let imports: ImportedMedia[] = JSON.parse(localStorage.getItem(fixtureLibraryKey) ?? "[]");
+
+function saveImports(items: ImportedMedia[]) {
+  imports = items;
+  localStorage.setItem(fixtureLibraryKey, JSON.stringify(items));
+  return { ok: true, value: imports } as const;
+}
 const media: MobileMediaPort = {
   async list() { return { ok: true, value: imports }; },
   async import(source) {
-    imports = [...imports, ...fixtureMedia[source].filter(item => !imports.some(value => value.id === item.id))
-      .map(item => ({ ...item, assetId: item.id, schemaVersion: 1, ownership: "local" } as const))];
-    return { ok: true, value: imports };
+    return saveImports([...imports, ...fixtureMedia[source].filter(item => !imports.some(value => value.id === item.id))
+      .map(item => ({ ...item, assetId: item.id, schemaVersion: 1, ownership: "local" } as const))]);
   },
   async remove(id) {
-    imports = imports.filter(item => item.id !== id);
-    return { ok: true, value: imports };
+    return saveImports(imports.filter(item => item.id !== id));
   },
   async select(id) {
     const item = imports.find(asset => asset.id === id);

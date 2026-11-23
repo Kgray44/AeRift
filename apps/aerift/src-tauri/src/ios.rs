@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use aerift_transfer::{ErrorCode, PeerId, TransferError};
 use tauri::{ipc::Channel, Manager, WebviewWindow};
-use tauri_plugin_aerift_ios::{PickerSource, SelectionAction};
+use tauri_plugin_aerift_ios::{MediaImport, PickerSource, SelectionAction};
 use uuid::Uuid;
 
 use crate::{
-    ios_media::{MediaImport, MediaTray},
     runtime::{
         AppRuntime, AppSnapshot, PairRequest, PairResult, Session, TransferRequest, TransferView,
     },
@@ -73,38 +72,42 @@ pub(crate) async fn import_ios_media(
     source: PickerSource,
 ) -> Result<Vec<MediaImport>, TransferError> {
     require_main(&window)?;
-    let tray = window.state::<MediaTray>();
-    let limit = tray.picker_limit()?;
-    let files = tauri_plugin_aerift_ios::pick_files(window.app_handle(), Some(source), limit)
+    tauri_plugin_aerift_ios::import_media(window.app_handle(), source)
         .await
-        .map_err(|_| ErrorCode::StorageFailed)?;
-    tray.append(files)
+        .map_err(|_| ErrorCode::StorageFailed.into())
 }
 
 #[tauri::command]
-pub(crate) fn list_ios_media(window: WebviewWindow) -> Result<Vec<MediaImport>, TransferError> {
+pub(crate) async fn list_ios_media(
+    window: WebviewWindow,
+) -> Result<Vec<MediaImport>, TransferError> {
     require_main(&window)?;
-    window.state::<MediaTray>().list()
+    tauri_plugin_aerift_ios::list_media(window.app_handle())
+        .await
+        .map_err(|_| ErrorCode::StorageFailed.into())
 }
 
 #[tauri::command]
-pub(crate) fn remove_ios_media(
+pub(crate) async fn remove_ios_media(
     window: WebviewWindow,
     asset_id: Uuid,
 ) -> Result<Vec<MediaImport>, TransferError> {
     require_main(&window)?;
-    window.state::<MediaTray>().remove(asset_id)
+    tauri_plugin_aerift_ios::remove_media(window.app_handle(), &asset_id.to_string())
+        .await
+        .map_err(|_| ErrorCode::StorageFailed.into())
 }
 
 #[tauri::command]
-pub(crate) fn select_ios_media(
+pub(crate) async fn select_ios_media(
     window: WebviewWindow,
     asset_id: Uuid,
 ) -> Result<Option<FileSelection>, TransferError> {
     require_main(&window)?;
-    let staged = window.state::<MediaTray>().get(asset_id)?;
     let registry = window.state::<SelectionRegistry>();
-    registry.select_shared_staged(registry.begin()?, staged)
+    let revision = registry.begin()?;
+    let staged = open_media(&window, asset_id).await?;
+    registry.select_staged(revision, staged)
 }
 
 #[tauri::command]
@@ -114,10 +117,20 @@ pub(crate) async fn present_ios_media(
     action: SelectionAction,
 ) -> Result<(), TransferError> {
     require_main(&window)?;
-    let staged = window.state::<MediaTray>().get(asset_id)?;
+    let staged = open_media(&window, asset_id).await?;
     tauri_plugin_aerift_ios::present_selection(window.app_handle(), &staged, action)
         .await
         .map_err(|_| ErrorCode::InvalidRequest.into())
+}
+
+async fn open_media(
+    window: &WebviewWindow,
+    asset_id: Uuid,
+) -> Result<tauri_plugin_aerift_ios::StagedSelection, TransferError> {
+    tauri_plugin_aerift_ios::stage_media(window.app_handle(), &asset_id.to_string())
+        .await
+        .map_err(|_| ErrorCode::StorageFailed)?
+        .ok_or_else(|| ErrorCode::StorageFailed.into())
 }
 
 #[tauri::command]

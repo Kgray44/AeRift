@@ -5,11 +5,12 @@ import {
 } from "@aerift/ui";
 import type { AppPort, AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift/app-contract/experience";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { IosGestureCamera } from "./IosGestureCamera";
 import { MobileNavigation } from "./MobileNavigation";
+import { observeMobileMedia } from "./mobile-media-observer";
 import { nativeMobileMedia, type MobileMediaPort } from "./mobile-media";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileObject } from "./local-objects";
@@ -89,6 +90,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
   media?: MobileMediaPort;
   pick?: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
 } = {}) {
+  const library = useMemo(() => observeMobileMedia(media), [media]);
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
   const [watchAttempt, setWatchAttempt] = useState(0);
   const snapshot: IosSnapshot | undefined = connection.state === "ready" ? connection.snapshot : undefined;
@@ -294,7 +296,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
               </>}
               {destination === "workspace" && <>
                 <MobileWorkspace regions={regions} modules={preferences}
-                  pick={pick} media={media} received={summary.received} openRift={() => navigate("rift")}
+                  pick={pick} media={library} received={summary.received} openRift={() => navigate("rift")}
                   objects={objects} save={saveObjects} />
                 {objectError && <p role="alert">{objectError}</p>}
               </>}
