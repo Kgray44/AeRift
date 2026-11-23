@@ -22,6 +22,10 @@ function messageFor(code: ErrorCode) {
   return errors[code] ?? "The operation could not be completed. Try again.";
 }
 
+type Operation = "file" | "send" | "accept" | "decline" | "cancel";
+const composerKey = "composer";
+const transferKey = (id: string) => `transfer:${id}`;
+
 export interface TransferControls {
   intent: TransferIntent | null;
   busy: boolean;
@@ -40,20 +44,20 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
   const [watchAttempt, setWatchAttempt] = useState(0);
   const [selection, setSelection] = useState<FileSelection | null>(null);
   const [selectedId, setSelectedId] = useState<string>();
-  const [pending, setPending] = useState<"file" | "send" | "update">();
+  const [operations, setOperations] = useState<ReadonlyMap<string, Operation>>(() => new Map());
   const [toast, setToast] = useState<{ message: string; kind: "success" | "error" }>();
-  const active = useRef<{ port: AppPort; snapshot?: AppSnapshot; selection: FileSelection | null; selectedId?: string; locked: boolean; watchFailed: boolean } | undefined>(undefined);
+  const active = useRef<{ port: AppPort; snapshot?: AppSnapshot; selection: FileSelection | null; selectedId?: string; operations: Map<string, Operation>; watchFailed: boolean } | undefined>(undefined);
 
   useEffect(() => {
     let disposed = false;
     let unwatch: (() => void) | undefined;
-    const state = { port, selection: null, locked: false, watchFailed: false };
+    const state = { port, selection: null, operations: new Map<string, Operation>(), watchFailed: false };
     const session: NonNullable<typeof active.current> = state;
     active.current = session;
     setSnapshot(undefined);
     setSelection(null);
     setSelectedId(undefined);
-    setPending(undefined);
+    setOperations(new Map());
     setWatchError(undefined);
     setToast(undefined);
 
@@ -81,12 +85,12 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
     return () => { disposed = true; active.current = undefined; unwatch?.(); };
   }, [port, watchAttempt]);
 
-  async function run<T>(key: NonNullable<typeof pending>, action: (session: NonNullable<typeof active.current>) => Promise<Result<T> | null>,
+  async function run<T>(key: string, operation: Operation, action: (session: NonNullable<typeof active.current>) => Promise<Result<T> | null>,
     success: (value: T, session: NonNullable<typeof active.current>) => void) {
     const session = active.current;
-    if (!session || session.port !== port || session.locked || session.watchFailed) return false;
-    session.locked = true;
-    setPending(key);
+    if (!session || session.port !== port || session.operations.has(key) || session.watchFailed) return false;
+    session.operations.set(key, operation);
+    setOperations(new Map(session.operations));
     try {
       const result = await action(session);
       if (session !== active.current) return false;
@@ -101,23 +105,24 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
       if (session === active.current) setToast({ kind: "error", message: "The app could not finish the operation." });
       return false;
     } finally {
-      session.locked = false;
-      if (session === active.current) setPending(undefined);
+      session.operations.delete(key);
+      if (session === active.current) setOperations(new Map(session.operations));
     }
   }
 
+  const pending = operations.get(composerKey);
   const pairs = snapshot?.devices.filter(device => device.paired) ?? [];
   const target = pairs.find(device => device.id === selectedId && device.online);
   const intent = target && selection ? { deviceId: target.id, selectionId: selection.selectionId } : null;
 
   function selectDevice(id: string) {
-    if (!active.current || active.current.locked) return;
+    if (!active.current || active.current.operations.has(composerKey)) return;
     active.current.selectedId = id;
     setSelectedId(id);
   }
 
   function chooseFile() {
-    void run("file", () => port.selectFile(), (file, session) => {
+    void run(composerKey, "file", () => port.selectFile(), (file, session) => {
       if (!file) return;
       session.selection = file;
       setSelection(file);
@@ -125,7 +130,7 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
   }
 
   function send(captured: TransferIntent) {
-    return run("send", session => offerTransfer(port,
+    return run(composerKey, "send", session => offerTransfer(port,
       session.snapshot?.devices.find(device => device.id === session.selectedId), session.selection, captured),
       (_, session) => {
         session.selection = null;
@@ -135,7 +140,15 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
   }
 
   function updateTransfer(request: Exclude<TransferRequest, { action: "offer" }>) {
-    void run("update", () => port.transfer(request), () => {});
+    const operation = request.action === "cancel" ? "cancel" : request.accept ? "accept" : "decline";
+    void run(transferKey(request.transferId), operation, session => {
+      const transfer = session.snapshot?.transfers.find(item => item.id === request.transferId);
+      if (!transfer) return Promise.resolve(null);
+      const awaitingConsent = transfer.state === "pending" && transfer.direction === "incoming";
+      const allowed = request.action === "respond" ? awaitingConsent
+        : !awaitingConsent && ["pending", "accepted", "transferring"].includes(transfer.state);
+      return allowed ? port.transfer(request) : Promise.resolve(null);
+    }, () => {});
   }
 
   return <>
@@ -167,13 +180,20 @@ export function TransferWorkspace({ port, gesture, activityFooter }: {
           {snapshot?.transfers.length ? snapshot.transfers.map(transfer => {
             const active = ["pending", "accepted", "transferring"].includes(transfer.state);
             const incoming = transfer.state === "pending" && transfer.direction === "incoming";
+            const operation = operations.get(transferKey(transfer.id));
+            const disabled = !!watchError;
             return <TransferProgress key={transfer.id} transfer={transfer}
               error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined}
               action={active && <div className="ae-actions">
                 {incoming ? <>
-                  <Button disabled={!!pending} onClick={() => updateTransfer({ action: "respond", transferId: transfer.id, accept: true })}>Accept</Button>
-                  <Button variant="quiet" disabled={!!pending} onClick={() => updateTransfer({ action: "respond", transferId: transfer.id, accept: false })}>Decline</Button>
-                </> : <Button variant="quiet" disabled={!!pending}
+                  <Button disabled={disabled || (operation !== undefined && operation !== "accept")}
+                    loading={operation === "accept"} loadingLabel="Accepting…"
+                    onClick={() => updateTransfer({ action: "respond", transferId: transfer.id, accept: true })}>Accept</Button>
+                  <Button variant="quiet" disabled={disabled || (operation !== undefined && operation !== "decline")}
+                    loading={operation === "decline"} loadingLabel="Declining…"
+                    onClick={() => updateTransfer({ action: "respond", transferId: transfer.id, accept: false })}>Decline</Button>
+                </> : <Button variant="quiet" disabled={disabled || (operation !== undefined && operation !== "cancel")}
+                  loading={operation === "cancel"} loadingLabel="Cancelling…"
                   onClick={() => updateTransfer({ action: "cancel", transferId: transfer.id })}>Cancel transfer</Button>}
               </div>} />;
           }) : <p>No transfers yet.</p>}

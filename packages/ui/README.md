@@ -22,7 +22,9 @@ export function App() {
 }
 ```
 
-The optional `gesture` render prop supplies `intent`, `busy` and `send(intent)`. The gesture controller captures the intent when arming, discards it on interruption or target change, and calls the same send action as the button after a valid release. The workspace checks the captured IDs against the current file and paired online device and serializes requests. The native adapter remains responsible for authorization. `GestureIndicator` displays state supplied by the caller.
+The optional `gesture` render prop supplies `intent`, `busy` and `send(intent)`. The gesture controller captures the intent when arming, discards it on interruption or target change, and calls the same send action as the button after a valid release. The workspace checks the captured IDs against the current file and paired online device and serializes composer operations independently of each transfer row. The native adapter remains responsible for authorization. `GestureIndicator` displays state supplied by the caller.
+
+The host should resolve `transfer({ action: "offer", ... })` as soon as it has allocated and published the pending transfer receipt. Stream progress and terminal results through `watch`. Keep the native command handler able to process consent and cancellation while a stream is active. The UI keeps each transfer row independently actionable even when another command receipt is delayed.
 
 ## Add a theme
 

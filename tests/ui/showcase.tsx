@@ -22,18 +22,20 @@ const startingTransfers: readonly Transfer[] = [
     state: "completed", bytesTransferred: 2 * 1024 ** 2 },
 ];
 
-type Scene = "normal" | "searching" | "disconnected" | "incoming" | "failure";
+type Scene = "normal" | "searching" | "disconnected" | "incoming" | "failure" | "offer-pending";
 
-function demoPort(scene: Scene): AppPort {
-  let transfers = scene === "incoming"
+function demoPort(scene: Scene): AppPort & { releaseOffer: () => void } {
+  let transfers = scene === "incoming" || scene === "offer-pending"
     ? [{ id: "incoming", deviceId: "phone", direction: "incoming", file, state: "pending", bytesTransferred: 0 } satisfies Transfer, ...startingTransfers]
     : [...startingTransfers];
+  let releaseOffer: (() => void) | undefined;
   const listeners = new Set<(snapshot: AppSnapshot) => void>();
   let sequence = 0;
   const publish = () => {
     for (const listener of listeners) listener({ version: 1, devices, transfers, pendingPairing: [] });
   };
   return {
+    releaseOffer() { releaseOffer?.(); },
     async watch(listener) {
       if (scene === "disconnected") return { ok: false, error: { code: "network_error" } };
       listeners.add(listener);
@@ -60,6 +62,10 @@ function demoPort(scene: Scene): AppPort {
         transfers = transfers.map(item => item.id === transfer.id ? transfer : item);
       }
       publish();
+      if (request.action === "offer" && scene === "offer-pending") {
+        await new Promise<void>(resolve => { releaseOffer = resolve; });
+        releaseOffer = undefined;
+      }
       return { ok: true, value: transfer };
     },
   };
@@ -99,12 +105,13 @@ function Showcase() {
   const showScene = (scene: Scene) => setDemo(previous => ({ scene, port: demoPort(scene), revision: previous.revision + 1 }));
   const scenes: readonly [Scene, string][] = [
     ["normal", "Connected devices"], ["searching", "Discovering devices"], ["disconnected", "Connection error"],
-    ["incoming", "Incoming request"], ["failure", "Send failure"],
+    ["incoming", "Incoming request"], ["failure", "Send failure"], ["offer-pending", "Delayed offer receipt"],
   ];
 
   return <ThemeProvider registry={registry} {...appearance}>
     <AppShell toolbar={<>
       <Popover label="Scenarios" actions={scenes.map(([id, label]) => ({ id, label, onSelect: () => showScene(id) }))} />
+      {demo.scene === "offer-pending" && <Button onClick={demo.port.releaseOffer}>Resolve demo offer</Button>}
       <Button variant="quiet" onClick={() => setSettings(true)}>Appearance</Button>
     </>}>
       <GlassSurface material="raised" className="demo-hero">

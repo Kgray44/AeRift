@@ -9,7 +9,9 @@ npm install --no-save --package-lock=false react@19 react-dom@19 @types/react@19
 npx vite --config tests/ui/vite.config.mts
 ```
 
-Open the localhost URL printed by Vite. Use **Scenarios** to switch between connected, discovering, disconnected, incoming and send-error states. Choose a file and paired device to enable **Send file** or **Arm demo gesture**. **Appearance** previews system, light and dark color schemes, reduced transparency, increased contrast, reduced motion, and a CSS token override theme.
+Open the localhost URL printed by Vite. Use **Scenarios** to switch between connected, discovering, disconnected, incoming, send-error and delayed-offer states. Choose a file and paired device to enable **Send file** or **Arm demo gesture**. **Appearance** previews system, light and dark color schemes, reduced transparency, increased contrast, reduced motion, and a CSS token override theme.
+
+In **Delayed offer receipt**, send a file, cancel another transfer and accept or decline the incoming request before pressing **Resolve demo offer**. The fixture holds the offer promise until that final step.
 
 ```sh
 npx tsc -p packages/ui/tsconfig.json
