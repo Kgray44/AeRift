@@ -18,7 +18,9 @@ permissions:
 jobs:
   installer:
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/apps/aerift/src-tauri/target
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -31,16 +33,18 @@ jobs:
         working-directory: apps/aerift
         shell: pwsh
         run: |
-          npm ci --workspaces=false
+          npm ci
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           rustup update stable --no-self-update
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $env:RUSTUP_TOOLCHAIN = 'stable'
           cargo fetch --locked --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm run tauri build -- --bundles nsis
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          git diff --exit-code -- package-lock.json src-tauri/Cargo.lock
+          git diff --exit-code -- ../../package-lock.json ../../Cargo.lock src-tauri/Cargo.lock
       - name: Install, launch, and capture the WebView
         shell: pwsh
         run: ./apps/windows/Test-InstalledShell.ps1
