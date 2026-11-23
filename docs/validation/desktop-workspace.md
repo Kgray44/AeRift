@@ -18,6 +18,8 @@ Mission 3 uses the production UI Overhaul shell, GLASS appearance, spatial scene
 
 To run the browser check, start the desktop frontend with `npm run dev --workspace @aerift/app`. The harness uses an installed Chrome by default, with `AERIFT_BROWSER_CHANNEL` available for a different Chromium channel. Make Playwright resolvable to Node or set `AERIFT_PLAYWRIGHT_MODULE` to its absolute `index.mjs` path. `AERIFT_DESKTOP_URL` overrides the default development URL. Set `AERIFT_DESKTOP_EVIDENCE` to a directory to capture screenshots.
 
+The installed Windows CI smoke checks the default Home, production Rift, Settings, Full Workspace and native tray commands. The disposable runner also reads back Explorer and startup registration, then launches a second instance to check that it stages the requested file in the original window. It removes the test registrations afterward.
+
 ## Visual evidence
 
 - [Dark Simplified with Orbit open](evidence/desktop-workspace/dark-simplified-orbit.png)
@@ -28,7 +30,7 @@ To run the browser check, start the desktop frontend with `npm run dev --workspa
 
 ## Integration and qualification still required
 
-- On an installed Windows build, verify Windows Explorer menu registration and removal, launching a second instance with a file, tray close/reopen and Quit, global shortcut conflicts, sign-in registration, DPI positioning, toast delivery and live WebView2 camera recovery. The browser harness simulates those IPC calls. Native toast branding and delivery depend on installed Windows behavior and OS notification preferences. [Tauri notifications](https://v2.tauri.app/plugin/notification/)
+- On an installed Windows build, verify the Explorer menu action through the shell UI, tray close/reopen and Quit, global shortcut conflicts, sign-in registration, DPI positioning, toast delivery and live WebView2 camera recovery. The browser harness simulates those IPC calls. Native toast branding and delivery depend on installed Windows behavior and OS notification preferences. [Tauri notifications](https://v2.tauri.app/plugin/notification/)
 - Repeat physical Windows and iPhone pairing and bidirectional integrity checks on the integrated revision, including ambient operation during a transfer. The native loopback test validates both local adapters and file bytes.
 - Verify a physical camera through permission grant, denial, device switch and capture relinquishment. Camera release on focus loss is supported by the WebView lifecycle. Exclusive camera arbitration across applications is unqualified.
 - Qualify a screen reader, Windows scaling, multiple monitors and reduced transparency on native hardware. The browser check covers keyboard focus, width and explicit Light and Dark appearance.
