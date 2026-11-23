@@ -8,7 +8,7 @@ import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift
 import { useEffect, useRef, useState } from "react";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
-import { IosGestureCamera } from "./IosGestureCamera";
+import { IosGestureCamera, iosCameraPermission, type IosCameraPermission } from "./IosGestureCamera";
 import { MobileNavigation } from "./MobileNavigation";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileObject } from "./local-objects";
@@ -110,6 +110,10 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
   const [cameraRetry, setCameraRetry] = useState(0);
+  const [cameraPermission, setCameraPermission] = useState<IosCameraPermission>();
+  const [requestingCamera, setRequestingCamera] = useState(false);
+  const cameraPermissionRequest = useRef(0);
+  const cameraPermissionPending = useRef(false);
   const [discovering, setDiscovering] = useState(false);
   const destinationHeading = useRef<HTMLHeadingElement>(null);
   const navigationRequested = useRef(false);
@@ -200,6 +204,38 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
     const result = await command<void>("retry_ios_discovery");
     setDiscoveryError(!result.ok);
     setDiscovering(false);
+  }
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let active = true;
+    const refresh = async () => {
+      if (cameraPermissionPending.current) return;
+      const request = ++cameraPermissionRequest.current;
+      const status = await iosCameraPermission();
+      if (active && request === cameraPermissionRequest.current) setCameraPermission(status);
+    };
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [settingsOpen]);
+
+  async function requestCameraAccess() {
+    if (cameraPermissionPending.current) return;
+    cameraPermissionPending.current = true;
+    cameraPermissionRequest.current++;
+    setRequestingCamera(true);
+    try {
+      const status = await iosCameraPermission(true);
+      setCameraPermission(status);
+      if (status === "authorized") setCameraRetry(value => value + 1);
+    } finally {
+      cameraPermissionPending.current = false;
+      setRequestingCamera(false);
+    }
   }
 
   function updatePreferences(key: keyof ModuleVisibility | "gestures" | "rememberActivity" | "clipboardShare", checked: boolean) {
@@ -349,15 +385,23 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
             <legend>Gesture recognition</legend>
             <label className="ae-camera-toggle">Enable camera gestures in Rift
               <input type="checkbox" checked={preferences.gestures}
-                onChange={event => updatePreferences("gestures", event.currentTarget.checked)} />
+                onChange={event => {
+                  const enabled = event.currentTarget.checked;
+                  updatePreferences("gestures", enabled);
+                  if (enabled) void requestCameraAccess();
+                }} />
             </label>
             <p>The front camera listens in Rift with a selected file and recipient or an incoming offer while AeRift is open in portrait. Recognition stays on this iPhone.</p>
             {preferences.gestures && <p role="status"><strong>{cameraStatus?.label ?? "Camera standby"}</strong> {cameraStatus?.detail}</p>}
-            {preferences.gestures && (cameraStatus?.state === "permission" || cameraStatus?.state === "unavailable" ||
-              cameraStatus?.state === "paused") && <div>
-                <p>Allow camera access for AeRift in iOS Settings, then return to Rift.</p>
-                <Button onClick={() => setCameraRetry(value => value + 1)}>Retry camera</Button>
-              </div>}
+            {preferences.gestures && <div>
+              {cameraPermission === "denied" && <p>Allow camera access for AeRift in iOS Settings, then return to Rift.</p>}
+              {cameraPermission === "restricted" && <p>Camera access is restricted on this iPhone.</p>}
+              {cameraPermission === "unavailable" && <p>AeRift couldn’t check camera access. Try again while the app is open.</p>}
+              {cameraPermission !== "restricted" && <Button loading={requestingCamera} loadingLabel="Checking camera access…"
+                onClick={() => void requestCameraAccess()}>
+                {cameraPermission === "notDetermined" || !cameraPermission ? "Request camera access" : "Retry camera"}
+              </Button>}
+            </div>}
           </fieldset>
           <fieldset className="ae-settings">
             <legend>Activity history</legend>

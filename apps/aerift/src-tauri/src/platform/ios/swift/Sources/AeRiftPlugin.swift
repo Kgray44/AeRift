@@ -70,8 +70,12 @@ private struct CameraClock: Encodable {
     let clockMs: Double
 }
 
-private struct CameraAuthorization: Encodable {
-    let authorized: Bool
+private struct CameraPermissionRequest: Decodable {
+    let request: Bool
+}
+
+private struct CameraPermission: Encodable {
+    let status: String
 }
 
 private struct CameraUpdate: Encodable {
@@ -297,8 +301,24 @@ final class AeRiftPlugin: Plugin {
         invoke.resolve(CameraClock(clockMs: HandCamera.clockMs()))
     }
 
-    @objc func cameraAuthorized(_ invoke: Invoke) {
-        invoke.resolve(CameraAuthorization(authorized: AVCaptureDevice.authorizationStatus(for: .video) == .authorized))
+    @objc func cameraPermission(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(CameraPermissionRequest.self)
+        Task { @MainActor in
+            if args.request, UIApplication.shared.applicationState == .active,
+               AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
+                _ = await AVCaptureDevice.requestAccess(for: .video)
+            }
+
+            let status: String
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .notDetermined: status = "notDetermined"
+            case .authorized: status = "authorized"
+            case .denied: status = "denied"
+            case .restricted: status = "restricted"
+            @unknown default: status = "unavailable"
+            }
+            invoke.resolve(CameraPermission(status: status))
+        }
     }
 
     @objc func startCamera(_ invoke: Invoke) throws {
