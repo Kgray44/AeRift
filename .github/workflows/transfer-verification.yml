@@ -16,7 +16,12 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - run: cargo fmt --manifest-path crates/transfer/Cargo.toml --check
+      - run: cargo fmt --manifest-path crates/peers/Cargo.toml --check
       - run: cargo test --manifest-path crates/transfer/Cargo.toml -- --nocapture
+      - run: cargo test --manifest-path crates/peers/Cargo.toml -- --nocapture
+      - run: cargo clippy --manifest-path crates/transfer/Cargo.toml --all-targets -- -D warnings
+      - run: cargo clippy --manifest-path crates/peers/Cargo.toml --all-targets -- -D warnings
   ios:
     runs-on: macos-15
     timeout-minutes: 15
@@ -24,5 +29,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: rustup target add aarch64-apple-ios-sim
-      - run: cargo check --manifest-path crates/transfer/Cargo.toml --target aarch64-apple-ios-sim
+      - run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - run: cargo check --manifest-path crates/peers/Cargo.toml --target aarch64-apple-ios-sim
+      - run: cargo check --manifest-path crates/peers/Cargo.toml --target aarch64-apple-ios
