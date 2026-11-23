@@ -6,19 +6,19 @@ Use one Tauri 2 host with a shared React and TypeScript interface and native Win
 
 | Workstream | Branch | Owned paths |
 | --- | --- | --- |
-| Windows and shared host | `worker/01-windows` | `apps/windows/`, `apps/aerift/` except the iOS paths |
-| iOS | `worker/02-ios` | `apps/ios/`, `apps/aerift/src-tauri/gen/apple/`, `apps/aerift/src-tauri/src/platform/ios/` |
-| Discovery and pairing | `worker/03-peers` | `crates/peers/`, `tests/peers/` |
-| File transport | `worker/04-transfer` | `crates/transfer/`, `tests/transfer/` |
-| GLASS and transfer UI | `worker/05-glass` | `packages/ui/`, `tests/ui/` |
-| Camera gestures | `worker/06-gestures` | `packages/gestures/`, `tests/gestures/` |
+| Windows and shared host | `feat/alpha-windows-app` | `apps/windows/` and `apps/aerift/` outside the iOS-owned subtrees and the coordinated `.github/workflows/windows-app.yml` |
+| iOS | `feat/alpha-ios-app` | `apps/ios/`, `apps/aerift/src-tauri/gen/apple/` and `apps/aerift/src-tauri/src/platform/ios/` and the coordinated `.github/workflows/ios.yml` |
+| Alpha validation | `feat/alpha-validation` | `tests/acceptance/` and `docs/validation/` |
+| Discovery, pairing and transport | `feat/alpha-transfer-engine` | `crates/peers/`, `tests/peers/`, `crates/transfer/` and `tests/transfer/` |
+| GLASS and transfer UI | `feat/alpha-glass-design` | `packages/ui/` and `tests/ui/` |
+| Camera gestures | `feat/alpha-gesture-engine` | `packages/gestures/` and `tests/gestures/` |
 
-Integration owns root manifests and lockfiles, workflow and GitHub settings, `contracts/`, `crates/protocol/`, `packages/app-contract/`, `tests/contracts/`, and shared docs. Ask in the workstream issue or PR before editing shared paths, adding dependencies or crossing an ownership boundary. Identify the exact package, feature flags and rationale. Integration coordinates API and lockfile changes together.
+Integration owns root manifests and lockfiles, shared workflow and GitHub settings, `contracts/`, `crates/protocol/`, `packages/app-contract/`, `tests/contracts/`, and shared docs. The iOS workstream also owns the iOS-specific `apps/aerift/src-tauri/Info.ios.plist`. Alpha validation owns the coordinated `.github/workflows/alpha-validation.yml`. Ask in the workstream issue or PR before editing shared paths, adding dependencies or crossing an ownership boundary. Identify the exact package, feature flags and rationale. Integration coordinates API and lockfile changes together.
 
 ## Worker handoff
 
 1. Start from the published baseline SHA in an independent checkout or cloud environment. Follow the AERO X16 reserve rule for local clones, worktrees and builds. Keep a dedicated branch and PR linked to your issue.
-2. Open a draft PR as soon as a reviewable seam is ready. List scope, touched paths, commands and actual results, native evidence, remaining dependencies and shared changes. Use isolated fixtures only in tests and label any simulated evidence.
+2. Open a draft PR as soon as a reviewable seam is ready. If a later slice needs to start before the first is merged, coordinate a dependent follow-up branch. List scope, touched paths, commands and actual results, native evidence, remaining dependencies and shared changes. Use isolated fixtures only in tests and label any simulated evidence.
 3. Coordinate shared app wiring by PR. For packages awaiting workspace registration, use self-contained test commands and ask Integration to register the package before merging. Avoid competing lockfile edits.
 4. Integration reviews ownership, contract compatibility and exact-commit checks and merges to main. After the first native launch slice, each merge must preserve the installable slice. Land independently useful changes as gates pass.
 5. Start native work early. Windows owns installer and WebView2 evidence. iOS owns Mac/Xcode build, provisioning and physical-device install evidence. Integration records the build SHA for all qualification evidence.

@@ -5,9 +5,6 @@ edition = "2024"
 rust-version = "1.89"
 publish = false
 
-# Standalone until Integration registers the crate in the root workspace.
-[workspace]
-
 [dependencies]
 bytes = "1"
 http-body-util = "0.1"
