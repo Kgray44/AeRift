@@ -43,17 +43,24 @@ export interface TransferControls {
   accept: (intent: IncomingTransferIntent) => Promise<boolean>;
 }
 
-export function TransferWorkspace({ port, gesture, activityFooter, watchSelection }: {
+export type WorkspaceConnection =
+  | { state: "connecting" | "disconnected" }
+  | { state: "ready"; snapshot: AppSnapshot };
+
+export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
   watchSelection?: (listener: (selection: FileSelection | null) => void) => () => void;
+  connection?: { generation: number; retry: () => void; onChange: (value: WorkspaceConnection) => void };
 }) {
   const titleId = useId();
   const activityId = useId();
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
   const [watchError, setWatchError] = useState<string>();
   const [watchAttempt, setWatchAttempt] = useState(0);
+  const retryGeneration = connection?.generation ?? watchAttempt;
+  const notifyConnection = connection?.onChange;
   const [selection, setSelection] = useState<FileSelection | null>(null);
   const [selectedId, setSelectedId] = useState<string>();
   const [operations, setOperations] = useState<ReadonlyMap<string, Operation>>(() => new Map());
@@ -70,6 +77,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     const state = { port, selection: null, operations: new Map<string, Operation>(), watchFailed: false };
     const session: NonNullable<typeof active.current> = state;
     active.current = session;
+    notifyConnection?.({ state: "connecting" });
     setSnapshot(undefined);
     setSelection(null);
     setSelectedId(undefined);
@@ -87,25 +95,29 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       setSelection(file);
     });
 
+    function disconnect(message: string) {
+      if (disposed) return;
+      session.watchFailed = true;
+      session.snapshot = undefined;
+      setSnapshot(undefined);
+      setWatchError(message);
+      notifyConnection?.({ state: "disconnected" });
+    }
+
     void (async () => {
       try {
         const result = await port.watch(next => {
           if (disposed) return;
           session.snapshot = next;
           setSnapshot(next);
+          notifyConnection?.({ state: "ready", snapshot: next });
         });
         if (result.ok) {
           if (disposed) result.value();
           else unwatch = result.value;
-        } else if (!disposed) {
-          session.watchFailed = true;
-          setWatchError(messageFor(result.error.code));
-        }
+        } else disconnect(messageFor(result.error.code));
       } catch {
-        if (!disposed) {
-          session.watchFailed = true;
-          setWatchError("Could not connect to the app. Try again.");
-        }
+        disconnect("Could not connect to the app. Try again.");
       }
     })();
     return () => {
@@ -114,7 +126,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       unwatchSelection?.();
       unwatch?.();
     };
-  }, [port, watchAttempt, watchSelection]);
+  }, [port, retryGeneration, watchSelection, notifyConnection]);
 
   useEffect(() => {
     if (!invitation) return;
@@ -249,7 +261,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
               {pendingPairs.length ? `Review pairing request${pendingPairs.length > 1 ? "s" : ""} (${pendingPairs.length})` : "Pair a device"}
             </Button>
           </div>
-          {watchError && <Button onClick={() => setWatchAttempt(attempt => attempt + 1)}>Retry connection</Button>}
+          {watchError && <Button onClick={connection?.retry ?? (() => setWatchAttempt(attempt => attempt + 1))}>Retry connection</Button>}
           <div className="ae-send">
             <Button variant="primary" disabled={pending !== "send" && (!intent || !!pending || !!watchError)}
               loading={pending === "send"} loadingLabel="Sending…" onClick={() => { if (intent) void send(intent); }}>
