@@ -1,5 +1,5 @@
 const COMMANDS: &[&str] = &[
-    "camera_authorized",
+    "camera_permission",
     "camera_clock",
     "register_camera_events",
     "start_camera",

@@ -160,6 +160,30 @@ pub(crate) async fn stage_ios_text(
 }
 
 #[tauri::command]
+pub(crate) async fn ios_clipboard_image_available(
+    window: WebviewWindow,
+) -> Result<bool, TransferError> {
+    require_main(&window)?;
+    tauri_plugin_aerift_ios::clipboard_image_available(window.app_handle())
+        .await
+        .map_err(|_| ErrorCode::InternalError.into())
+}
+
+#[tauri::command]
+pub(crate) async fn stage_ios_clipboard_image(
+    window: WebviewWindow,
+) -> Result<Option<FileSelection>, TransferError> {
+    require_main(&window)?;
+    let registry = window.state::<SelectionRegistry>();
+    let revision = registry.begin()?;
+    match tauri_plugin_aerift_ios::paste_clipboard_image(window.app_handle()).await {
+        Ok(Some(staged)) => registry.select_staged(revision, staged),
+        Ok(None) => Ok(None),
+        Err(_) => Err(ErrorCode::StorageFailed.into()),
+    }
+}
+
+#[tauri::command]
 pub(crate) async fn open_ios_browser(
     window: WebviewWindow,
     url: String,
