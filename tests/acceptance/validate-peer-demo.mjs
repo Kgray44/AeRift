@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { watch } from "node:fs";
 import { mkdir, mkdtemp, readdir, stat } from "node:fs/promises";
@@ -165,7 +165,7 @@ async function exchange(executable, source, destination, action) {
       observation = await windowsObservation(sender, receiver, destination, "large.bin", deadline);
     }
     const accept = action !== "reject";
-    const expected = accept ? "Completed" : "Rejected";
+    const expected = action === "deny-write" ? "Failed" : accept ? "Completed" : "Rejected";
     const approvedAt = performance.now();
     receiver.write(accept ? "yes" : "no");
     if (action === "disconnect") {
@@ -178,8 +178,14 @@ async function exchange(executable, source, destination, action) {
     const approvalToResultMs = performance.now() - approvedAt;
     const [senderCode, receiverCode] = await Promise.all([sender.exit(deadline), receiver.exit(deadline)]);
     assert.equal(receiverCode, 0);
-    if (accept) assert.equal(senderCode, 0);
-    else assert.equal(senderCode, 1, "the demo reports rejection as a send error");
+    assert.equal(senderCode, expected === "Completed" ? 0 : 1);
+    if (action === "deny-write") {
+      return {
+        outcome: expected,
+        bytesTransferred: Number(receiveResult[1]),
+        senderBytesHandedToHttp: Number(sendResult[1]),
+      };
+    }
     assert.equal(sendResult[1], receiveResult[1], "peer byte counts differ");
     const bytesTransferred = Number(sendResult[1]);
     const metrics = await observation?.finish(bytesTransferred, approvedAt);
@@ -189,16 +195,31 @@ async function exchange(executable, source, destination, action) {
   }
 }
 
-const [, , executable, scratch, sourceSha, mode = "matrix"] = process.argv;
-assert.ok(executable && scratch && sourceSha && process.argv.length <= 6,
-  "usage: node validate-peer-demo.mjs <compiled loopback_node> <scratch directory> <source SHA> [matrix|disconnect|windows-benchmark]");
-assert.ok(["matrix", "disconnect", "windows-benchmark"].includes(mode), "invalid mode");
-if (mode === "windows-benchmark") assert.equal(process.platform, "win32", "the working-set probe requires Windows");
+const [, , executable, scratch, sourceSha, mode = "matrix", deniedDestination] = process.argv;
+const permissionCheck = mode === "windows-permission";
+assert.ok(executable && scratch && sourceSha &&
+  (permissionCheck ? process.argv.length === 7 : process.argv.length <= 6),
+  "usage: node validate-peer-demo.mjs <compiled loopback_node> <scratch directory> <source SHA> [matrix|disconnect|windows-benchmark|windows-permission <write-denied directory>]");
+assert.ok(["matrix", "disconnect", "windows-benchmark", "windows-permission"].includes(mode), "invalid mode");
+if (mode.startsWith("windows-")) assert.equal(process.platform, "win32", "the selected mode requires Windows");
 assert.match(sourceSha, /^[a-f0-9]{40}$/, "record the full source SHA used to build the example");
 const root = await mkdtemp(join(resolve(scratch), "aerift-peer-demo-"));
-const { directory, manifest } = await prepareFixtures(root, largeBytes);
-const destination = join(root, "received");
-await mkdir(destination);
+const { directory, manifest } = await prepareFixtures(root, permissionCheck ? 1 : largeBytes);
+const destination = permissionCheck ? resolve(deniedDestination) : join(root, "received");
+if (permissionCheck) {
+  assert.deepEqual(await readdir(destination), [], "the permission fixture must start empty");
+  for (const path of [join(root, "missing"), join(directory, "binary.bin")]) {
+    const result = spawnSync(resolve(executable), ["receive", "127.0.0.1:0", path], {
+      encoding: "utf8", timeout: 5000, windowsHide: true,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 1, "invalid destination must fail before startup");
+    assert.equal(result.stdout, "", "invalid destination unexpectedly started the listener");
+    assert.match(result.stderr, /storage[_ ]?failed/i, "expected a storage error");
+  }
+} else {
+  await mkdir(destination);
+}
 const receipts = [];
 let destinationEntries = [];
 const matrix = [
@@ -207,6 +228,7 @@ const matrix = [
 ];
 const cases = mode === "matrix" ? matrix
   : mode === "disconnect" ? [["large", "disconnect"], ["large", "approve"]]
+  : permissionCheck ? [["binary", "deny-write"]]
   : [["large", "observe"]];
 for (const [id, action] of cases) {
   const source = manifest.files.find(file => file.id === id);
