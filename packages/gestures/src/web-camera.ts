@@ -1,5 +1,5 @@
 // Capture and worker lifecycle adapted from VoyageWright Reach/Sextant.
-import { GestureIntent, MAX_ATTEMPT_MS, type CameraState, type GestureFeedback, type GestureTarget } from "./intent.js";
+import { GestureIntent, MAX_ATTEMPT_MS, type CameraState, type GestureFeedback, type GestureInterruption, type GestureTarget } from "./intent.js";
 import { HandLandmarkTracker, type LandmarkFrame } from "./landmarks.js";
 
 interface CameraOptions {
@@ -51,7 +51,7 @@ export class WebGestureCamera {
 
     this.active = true;
     this.intent.begin(performance.now());
-    this.attemptTimeout = setTimeout(() => this.stop(), MAX_ATTEMPT_MS);
+    this.attemptTimeout = setTimeout(() => this.stop("disabled", "attempt-timeout"), MAX_ATTEMPT_MS);
     const suspend = () => this.stop("suspended");
     const visibility = () => {
       if (document.visibilityState !== "visible") suspend();
@@ -137,7 +137,7 @@ export class WebGestureCamera {
   }
 
   /** Call from host deactivation, before changing cameras, and on component disposal. */
-  stop(state: CameraState = "disabled"): void {
+  stop(state: CameraState = "disabled", reason: GestureInterruption | null = null): void {
     this.started = true;
     this.active = false;
     this.ready = false;
@@ -159,12 +159,12 @@ export class WebGestureCamera {
       this.stream = null;
       if (this.media && reserved.get(this.media) === this) reserved.delete(this.media);
     }
-    this.publish(this.intent.setCamera(state));
+    this.publish(this.intent.setCamera(state, reason));
   }
 
   private timeout(ms: number): void {
     clearTimeout(this.deadline);
-    this.deadline = setTimeout(() => this.stop("error"), ms);
+    this.deadline = setTimeout(() => this.stop("error", "capture-timeout"), ms);
   }
 
   private publish(result: GestureFeedback): boolean {
@@ -190,7 +190,7 @@ export class WebGestureCamera {
       if (!this.active || this.worker !== worker) return;
       const now = performance.now();
       if (this.intent.tick(now).phase === "interrupted") return this.stop("suspended");
-      if (now - lastFrame > (receivedFrame ? 750 : 3_000)) return this.stop("error");
+      if (now - lastFrame > (receivedFrame ? 750 : 3_000)) return this.stop("error", "capture-timeout");
       if (this.video.readyState < 2 || this.video.currentTime === mediaTime) {
         this.poll = setTimeout(() => void pump(), 40);
         return;
@@ -214,7 +214,7 @@ export class WebGestureCamera {
       if (!this.active || this.worker !== worker) return;
       const now = performance.now();
       if (this.intent.tick(now).phase === "interrupted") return this.stop("suspended");
-      if (now - lastFrame > (receivedFrame ? 750 : 3_000)) return this.stop("error");
+      if (now - lastFrame > (receivedFrame ? 750 : 3_000)) return this.stop("error", "capture-timeout");
       this.deadline = setTimeout(watchdog, 50);
     };
     worker.onmessage = ({ data }: MessageEvent<WorkerResult>) => {

@@ -1,4 +1,4 @@
-import { GestureIntent, MAX_ATTEMPT_MS, type CameraState, type GestureFeedback, type GestureTarget } from "./intent.js";
+import { GestureIntent, MAX_ATTEMPT_MS, type CameraState, type GestureFeedback, type GestureInterruption, type GestureTarget } from "./intent.js";
 import { HandLandmarkTracker, type LandmarkFrame } from "./landmarks.js";
 
 export type NativeCameraEvent =
@@ -37,7 +37,10 @@ export class NativeGestureCamera {
     this.started = true;
     this.active = true;
     this.intent.begin(performance.now());
-    this.attemptTimeout = setTimeout(() => this.stop(), MAX_ATTEMPT_MS);
+    this.attemptTimeout = setTimeout(() => {
+      this.publish(this.intent.cancel("attempt-timeout"));
+      this.stop();
+    }, MAX_ATTEMPT_MS);
     if (this.publish(this.intent.setCamera("requesting"))) return;
     try {
       const unsubscribe = await this.port.subscribe((event) => this.receive(event));
@@ -53,10 +56,13 @@ export class NativeGestureCamera {
       this.timer = setInterval(() => {
         const now = performance.now();
         const result = this.intent.tick(now);
-        if (result.phase === "interrupted" || result.phase === "released") return this.stop();
+        if (result.phase === "interrupted" || result.phase === "released") {
+          this.publish(result);
+          return this.stop();
+        }
         if (result.camera === "ready") {
           if (lastFrameAt === Infinity) lastFrameAt = now;
-          if (now - Math.max(this.lastFrameAt, lastFrameAt) > 750) this.stop("error");
+          if (now - Math.max(this.lastFrameAt, lastFrameAt) > 750) this.stop("error", "capture-timeout");
         }
       }, 50);
       await this.port.start(this.attemptId);
@@ -71,7 +77,7 @@ export class NativeGestureCamera {
     if (this.active && this.publish(this.intent.updateContext(target))) this.stop();
   }
 
-  stop(state: CameraState = "disabled"): void {
+  stop(state: CameraState = "disabled", reason: GestureInterruption | null = null): void {
     this.started = true;
     if (!this.active) return;
     this.active = false;
@@ -85,7 +91,7 @@ export class NativeGestureCamera {
     void Promise.resolve().then(() => this.port.stop(this.attemptId)).catch(() => {
       this.publish(this.intent.setCamera("error"));
     });
-    this.publish(this.intent.setCamera(state));
+    this.publish(this.intent.setCamera(state, reason));
   }
 
   private receive(event: NativeCameraEvent): void {
