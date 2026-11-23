@@ -18,10 +18,8 @@ use std::{
 use aerift_peers::{Device, DiscoveredPeer, PeerNode};
 #[cfg(windows)]
 use aerift_peers::{Discovery, Identity, Platform};
-#[cfg(windows)]
-use aerift_transfer::ReceiveLimits;
 use aerift_transfer::{
-    ErrorCode, IncomingTransfer, PeerId, Receiver, State, Status, TransferError,
+    ErrorCode, IncomingTransfer, PeerId, ReceiveLimits, Receiver, State, Status, TransferError,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -48,6 +46,12 @@ mod ios;
 use ios::{disk_free, storage_failed};
 
 const MAX_RECEIPTS: usize = 256;
+const RECEIVE_HEADROOM_BYTES: u64 = 256 * 1024 * 1024;
+const RECEIVE_LIMITS: ReceiveLimits = ReceiveLimits {
+    // The host enforces live staging capacity at approval.
+    active_bytes: u64::MAX,
+    session_offers: MAX_RECEIPTS,
+};
 const DECISION_TIMEOUT: Duration = Duration::from_secs(300);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -299,14 +303,8 @@ impl Session {
                     }
                 };
                 let destination = fs::canonicalize(destination).map_err(storage_failed)?;
-                let available = disk_free(&destination)?;
-                let receiver = Arc::new(Receiver::new(
-                    &destination,
-                    ReceiveLimits {
-                        active_bytes: available.min((1 << 53) - 1),
-                        session_offers: MAX_RECEIPTS,
-                    },
-                )?);
+                disk_free(&destination)?;
+                let receiver = Arc::new(Receiver::new(&destination, RECEIVE_LIMITS)?);
                 let identity = Identity::load_or_create(&WindowsIdentity::new(&prepare_root))?;
                 let trust = Arc::new(WindowsTrust::new(&prepare_root));
                 // A generic label avoids advertising the user's Windows account or machine hostname.
@@ -623,14 +621,14 @@ impl Session {
     }
 
     fn respond(&self, id: &str, accept: bool) -> Result<TransferView, TransferError> {
-        self.respond_with_capacity(id, accept, || disk_free(&self.destination))
+        self.respond_with_capacity(id, accept, disk_free)
     }
 
     fn respond_with_capacity(
         &self,
         id: &str,
         accept: bool,
-        available: impl FnOnce() -> Result<u64, TransferError>,
+        available: impl FnOnce(&Path) -> Result<u64, TransferError>,
     ) -> Result<TransferView, TransferError> {
         // Hold the same lock through the capacity check and the receiver reservation.
         let _approval = lock(&self.receive_approvals);
@@ -639,7 +637,7 @@ impl Session {
             .iter()
             .find(|entry| incoming_id(entry) == id)
             .ok_or(ErrorCode::PeerUnavailable)?;
-        if accept {
+        if accept && entry.status.state == State::Pending {
             let remaining = transfers
                 .iter()
                 .filter(|entry| matches!(entry.status.state, State::Accepted | State::Transferring))
@@ -650,7 +648,10 @@ impl Session {
                         .saturating_sub(entry.status.bytes_transferred)
                 })
                 .fold(0u64, u64::saturating_add);
-            if entry.offer.size_bytes > available()?.saturating_sub(remaining) {
+            let budget = available(self.receiver.staging_directory())?
+                .checked_sub(RECEIVE_HEADROOM_BYTES)
+                .and_then(|free| free.checked_sub(remaining));
+            if !budget.is_some_and(|bytes| entry.offer.size_bytes <= bytes) {
                 return Err(ErrorCode::StorageFailed.into());
             }
         }
@@ -1012,6 +1013,19 @@ mod tests {
             })
             .await;
 
+            // Model disk pressure and its recovery without allocating either amount.
+            let modeled_headroom = 256 * 1024 * 1024;
+            assert!(matches!(
+                right.respond_with_capacity(&first, true, |path| {
+                    assert_eq!(path, right.receiver.staging_directory());
+                    Ok(modeled_headroom + 7)
+                }),
+                Err(error) if error.code == ErrorCode::StorageFailed
+            ));
+            assert!(right.snapshot().transfers.iter().any(|transfer| {
+                transfer.id == first && transfer.status.state == State::Pending
+            }));
+
             thread::scope(|scope| {
                 let (checking_first, first_check) = mpsc::sync_channel(1);
                 let (release_first, first_release) = mpsc::sync_channel(1);
@@ -1020,17 +1034,17 @@ mod tests {
                 let receiver = &right;
 
                 let approve_first = scope.spawn(move || {
-                    receiver.respond_with_capacity(&first, true, || {
+                    receiver.respond_with_capacity(&first, true, |_| {
                         checking_first.send(()).unwrap();
                         first_release.recv_timeout(Duration::from_secs(5)).unwrap();
-                        Ok(12)
+                        Ok(modeled_headroom + 12)
                     })
                 });
                 first_check.recv_timeout(Duration::from_secs(5)).unwrap();
 
                 let approve_second = scope.spawn(move || {
                     starting_second.send(()).unwrap();
-                    receiver.respond_with_capacity(&second, true, || {
+                    receiver.respond_with_capacity(&second, true, |_| {
                         checking_second.send(()).unwrap();
                         let written = receiver
                             .receiver
@@ -1038,7 +1052,7 @@ mod tests {
                             .iter()
                             .map(|entry| entry.status.bytes_transferred)
                             .sum::<u64>();
-                        Ok(12u64.saturating_sub(written))
+                        Ok((modeled_headroom + 12).saturating_sub(written))
                     })
                 });
                 second_started.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1066,6 +1080,26 @@ mod tests {
                 .unwrap();
             assert_eq!(unapproved.status.state, State::Pending);
             assert!(!right.destination.join("second.bin").exists());
+            until(|| {
+                right.snapshot().transfers.into_iter().find(|transfer| {
+                    transfer.file.name == "first.bin" && transfer.status.state == State::Completed
+                })
+            })
+            .await;
+            assert_eq!(
+                right
+                    .respond_with_capacity(&unapproved.id, true, |_| Ok(modeled_headroom + 8))
+                    .unwrap()
+                    .status
+                    .state,
+                State::Accepted
+            );
+            until(|| {
+                right.snapshot().transfers.into_iter().find(|transfer| {
+                    transfer.file.name == "second.bin" && transfer.status.state == State::Completed
+                })
+            })
+            .await;
             stop_pair(left, right, &stop).await;
             left_storage.close().unwrap();
             right_storage.close().unwrap();

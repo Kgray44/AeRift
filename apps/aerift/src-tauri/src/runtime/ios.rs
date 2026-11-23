@@ -1,15 +1,20 @@
 use std::{
-    ffi::CString, fs, mem::MaybeUninit, net::Ipv4Addr, os::unix::ffi::OsStrExt, path::Path,
+    ffi::CString,
+    fs,
+    mem::MaybeUninit,
+    net::Ipv4Addr,
+    os::unix::ffi::OsStrExt,
+    path::Path,
     sync::{Arc, Mutex},
 };
 
-use aerift_transfer::{ErrorCode, ReceiveLimits, Receiver, TransferError};
+use aerift_transfer::{ErrorCode, Receiver, TransferError};
 use tauri::ipc::Channel;
 use tauri_plugin_aerift_ios::{BonjourState, BonjourUpdate};
 use tokio::{net::TcpListener, sync::watch};
 use tokio_util::sync::CancellationToken;
 
-use super::{lock, Session, MAX_RECEIPTS};
+use super::{lock, Session, RECEIVE_LIMITS};
 
 impl Session {
     pub(super) async fn open_ios(
@@ -21,14 +26,11 @@ impl Session {
             let directories =
                 tauri_plugin_aerift_ios::receive_directories(&handle).map_err(storage_failed)?;
             clear_interrupted_receives(&directories.partials)?;
-            let available = disk_free(&directories.partials)?;
+            disk_free(&directories.partials)?;
             let receiver = Arc::new(Receiver::with_staging_directory(
                 &directories.published,
                 &directories.partials,
-                ReceiveLimits {
-                    active_bytes: available.min((1 << 53) - 1),
-                    session_offers: MAX_RECEIPTS,
-                },
+                RECEIVE_LIMITS,
             )?);
             let peer = Arc::new(tauri_plugin_aerift_ios::open_peer_node(Arc::clone(
                 &receiver,
