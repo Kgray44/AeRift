@@ -68,7 +68,7 @@ echo "$launch"
 pid="${launch##*: }"
 sleep 5
 xcrun simctl spawn "$device" launchctl list | awk -v pid="$pid" \
-  '$1 == pid && $3 ~ /com[.]aerift[.]app/ { found=1 } END { exit !found }'
+  '$1 == pid && $3 ~ /com[.]kgamazing44[.]aerift/ { found=1 } END { exit !found }'
 echo "AeRift remained running on iPhone simulator $device"
 
 if [[ -n "${IOS_EVIDENCE_DIR:-}" ]]; then

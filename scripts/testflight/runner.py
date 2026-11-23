@@ -359,6 +359,15 @@ class Runner:
                 "-derivedDataPath", str(self.temp / "DerivedData"), "archive",
                 f"MARKETING_VERSION={self.args.version}", f"CURRENT_PROJECT_VERSION={self.args.build}",
             ]
+            # Metal can be the active Xcode toolchain, while embedded Rust/Swift objects
+            # resolve their compatibility libraries from Xcode's default Swift toolchain.
+            swiftc = Path(self.run(["xcrun", "--toolchain", "XcodeDefault", "--find", "swiftc"],
+                                   env=xcode_env).decode().strip())
+            library_root = swiftc.parent.parent / "lib"
+            swift_libraries = [library_root / relative for relative in ("swift/iphoneos", "swift-5.0/iphoneos")]
+            library_paths = " ".join(f'"{path}"' for path in swift_libraries if path.is_dir())
+            if library_paths:
+                command.append(f"LIBRARY_SEARCH_PATHS=$(inherited) {library_paths}")
             if not signed:
                 command.extend(["CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO"])
             self.run(command, env=xcode_env, public_log=not signed)

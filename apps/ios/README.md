@@ -20,7 +20,7 @@ The iPhone app uses the shared Tauri 2 host in `apps/aerift`. Pairing, encrypted
 
 Use the shared host's locked npm and Cargo dependencies. After the shared host is present, install Xcode and select its command-line tools. Install XcodeGen and the matching targets with `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`. From the repository root, run `bash apps/ios/prepare-apple.sh` after installing the host dependencies. It generates the Tauri Xcode project and embeds the Apple privacy manifest. Tauri 2.9 merges `apps/aerift/src-tauri/Info.ios.plist` when packaging. From the repository root, `bash apps/ios/simulator-smoke.sh` generates the project, builds the app, verifies the bundled plist and launches the result on an available iPhone simulator.
 
-For a physical iPhone, add an Apple account in Xcode, choose an authorized signing team for `com.kgamazing44.aerift`, pair the device with the Mac and enable Developer Mode. Select the iPhone as the run destination. Keep team credentials in Xcode or the approved CI signing store. [Tauri iOS signing](https://v2.tauri.app/distribute/sign/ios/) · [Apple device installation](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices).
+For a physical iPhone, use the existing hosted App Store distribution route in the [AeRift TestFlight guide](../../docs/testflight.md).
 
 ## Internal TestFlight
 
