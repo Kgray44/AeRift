@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  AppShell, Button, ConnectionStatus, GestureIndicator, GlassSurface, Popover, SettingsPanel,
+  AppShell, Button, ConnectionStatus, GestureIndicator, Popover, SettingsPanel,
   Sheet, ThemeProvider, TransferWorkspace, createThemeRegistry, glassTheme,
   type AppearanceSettings, type GestureState, type TransferControls, type TransferIntent,
 } from "../../packages/ui/src";
@@ -133,20 +133,13 @@ function Showcase() {
 
   return <ThemeProvider registry={registry} {...appearance}>
     <AppShell toolbar={<>
+      <ConnectionStatus state={demo.scene === "searching" ? "searching" : demo.scene === "disconnected" ? "error" : "connected"}
+            label={demo.scene === "searching" ? "Simulated discovery" : demo.scene === "disconnected" ? "Simulated connection error" : "Simulated local network"}
+            announce />
       <Popover label="Scenarios" actions={scenes.map(([id, label]) => ({ id, label, onSelect: () => showScene(id) }))} />
       {demo.scene === "offer-pending" && <Button onClick={demo.port.releaseOffer}>Resolve demo offer</Button>}
       <Button variant="quiet" onClick={() => setSettings(true)}>Appearance</Button>
     </>}>
-      <GlassSurface material="raised" className="demo-hero">
-        <div className="demo-hero-copy">
-          <ConnectionStatus state={demo.scene === "searching" ? "searching" : demo.scene === "disconnected" ? "error" : "connected"}
-            label={demo.scene === "searching" ? "Simulated discovery" : demo.scene === "disconnected" ? "Simulated connection error" : "Simulated local network"}
-            announce />
-          <h1>Transfer files</h1>
-          <p>Send a file to a paired device on your local network.</p>
-        </div>
-        <div className="demo-optic" aria-hidden="true"><span /><span /><span /></div>
-      </GlassSurface>
       <TransferWorkspace key={demo.revision} port={demo.port} gesture={controls => <GestureDemo controls={controls} />} />
       <Sheet open={settings} title="Appearance" onClose={() => setSettings(false)}>
         <SettingsPanel value={appearance} onChange={setAppearance} themes={[...registry.values()]} />
