@@ -327,6 +327,14 @@ class Runner:
 
         self.archive_path = self.temp / "AeRift.xcarchive"
         with self.tauri_options(host, public_env) as xcode_env:
+            # Opening the Tauri Xcode project merges the app's platform plist.
+            # XcodeGen will rewrite the generated file when applying signing.
+            bundle_plists = list(project_root.glob("*_iOS/Info.plist"))
+            require(len(bundle_plists) == 1, "ONE_GENERATED_APP_PLIST_REQUIRED")
+            bundle_plist = bundle_plists[0]
+            metadata = plistlib.loads(bundle_plist.read_bytes())
+            require(metadata.get("NSCameraUsageDescription") and metadata.get("NSLocalNetworkUsageDescription"),
+                    "GENERATED_PRIVACY_STRINGS_REQUIRED")
             if signed:
                 self.configure_signing()
                 self.app_record()
@@ -355,10 +363,6 @@ class Runner:
             self.stage = "DEVICE_ARCHIVE"
             # Tauri's generated Info.plist uses literal version strings. Xcode
             # build settings alone cannot override them when archiving directly.
-            bundle_plists = list(project_root.glob("*_iOS/Info.plist"))
-            require(len(bundle_plists) == 1, "ONE_GENERATED_APP_PLIST_REQUIRED")
-            bundle_plist = bundle_plists[0]
-            metadata = plistlib.loads(bundle_plist.read_bytes())
             metadata["CFBundleShortVersionString"] = self.args.version
             metadata["CFBundleVersion"] = self.args.build
             bundle_plist.write_bytes(plistlib.dumps(metadata, sort_keys=False))
