@@ -19,6 +19,17 @@
 
 Record PASS after all required observations for the row, FAIL for an attempted run with an unmet expectation, and NOT TESTED when evidence is missing. Link the receipt, fixture hashes and candidate SHA per row. Browser and loopback evidence supplements the native run.
 
+## Internal TestFlight distribution
+
+Use the VoyageWright sequence for Apple delivery. Its hosted macOS pipeline ran an unsigned build or signing preflight on a pinned source revision, then a separate protected job signed, exported, uploaded and observed Apple processing. The successful VoyageWright run proves the delivery procedure. An AeRift build needs its own delivery receipt. [VoyageWright signed upload](https://github.com/Kgray44/treasurehuntSoT/actions/runs/39521997164)
+
+1. Confirm the AeRift App Store Connect record and App ID for `com.aerift.app`, an App Store distribution profile for that ID, a protected GitHub signing environment with authorized credentials, and the authorized internal TestFlight tester group. [Apple app record](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/) · [App Store provisioning](https://developer.apple.com/help/account/provisioning-profiles/create-an-app-store-provisioning-profile/) · [Internal TestFlight groups](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)
+2. Run unsigned archive and signing preflight against the selected full SHA. Record the Xcode and iOS SDK versions, bundle ID, app version and build number, and pin the Windows installer from the same SHA.
+3. Run signing, export, and upload in the protected job on the approved SHA. Keep the archive hash and the Apple processing result, remove temporary signing state, and keep private keys, profiles and tester identifiers out of the receipt.
+4. Verify that the intended AeRift build is available to the internal group. On the physical iPhone, record the TestFlight version and build, install, launch, then execute the Windows ↔ iPhone checklist. Upload and Apple processing are delivery milestones. Record installation and each device observation separately.
+
+The AeRift signing environment was absent when checked. Provisioning, upload and physical install remain pending.
+
 ## Physical Windows laptop ↔ iPhone run
 
 1. Record the SHA, package/artifact checksums, build commands, OS/device models, architecture, WebView2 and Xcode versions, signing or distribution method, and network topology without private addresses. Install fresh builds on both devices. Launch both and verify they work without cloud sign-in.
@@ -34,4 +45,4 @@ Per case, record ID, UTC timestamp, SHA, both device builds, direction, fixture 
 
 ## Build and run limits
 
-The local host is Windows and can exercise Windows-native evidence once an installable artifact exists. Tauri's iOS build requires macOS and Xcode. The hosted `macos-15` foundation job cross-checks the Rust contract for the iOS simulator target. A hosted compile does not exercise the app UI or device installation. Xcode device installation additionally requires a signing and provisioning setup. No physical iPhone session or signing setup was confirmed for this validation baseline. [Tauri build prerequisites](https://v2.tauri.app/start/prerequisites/) · [Apple device installation](https://developer.apple.com/documentation/Xcode/running-your-app-on-simulated-or-physical-devices)
+The local host is Windows and can exercise Windows-native evidence once an installable artifact exists. Tauri's iOS build requires macOS and Xcode. The hosted `macos-15` foundation job cross-checks the Rust contract for the iOS simulator target. A hosted compile does not exercise the app UI or device installation. Xcode device installation additionally requires a signing and provisioning setup. A physical iPhone session and an AeRift-specific signing setup remain pending. [Tauri build prerequisites](https://v2.tauri.app/start/prerequisites/) · [Apple device installation](https://developer.apple.com/documentation/Xcode/running-your-app-on-simulated-or-physical-devices)
