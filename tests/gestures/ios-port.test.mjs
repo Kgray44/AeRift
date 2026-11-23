@@ -102,3 +102,29 @@ test("cancelled registration cannot start its camera when the acknowledgement ar
   assert.deepEqual(starts, ["replacement"]);
   assert.deepEqual(stops, ["cancelled"]);
 });
+
+test("replacement waits for the previous native camera stop acknowledgement", async () => {
+  const starts = [];
+  let acknowledgeStop;
+  const nativeStop = new Promise((resolve) => { acknowledgeStop = resolve; });
+  const port = createIosCameraPort({
+    clockMs: async () => 0,
+    createChannel: (listener) => listener,
+    async registerEvents() {},
+    async start({ attemptId }) { starts.push(attemptId); },
+    stop: () => nativeStop,
+  });
+
+  const detach = await port.subscribe(() => {});
+  await port.start("old");
+  detach();
+  const stop = port.stop("old");
+  await port.subscribe(() => {});
+  const restart = port.start("new");
+  await new Promise((resolve) => setImmediate(resolve));
+  const startsBeforeAcknowledgement = starts.slice();
+  acknowledgeStop();
+  await Promise.all([stop, restart]);
+  assert.deepEqual(startsBeforeAcknowledgement, ["old"]);
+  assert.deepEqual(starts, ["old", "new"]);
+});

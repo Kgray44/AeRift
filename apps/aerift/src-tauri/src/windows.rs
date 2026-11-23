@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     runtime::{
-        AppSnapshot, DesktopRuntime, FolderView, PairRequest, PairResult, Session, TransferRequest,
+        AppRuntime, AppSnapshot, FolderView, PairRequest, PairResult, Session, TransferRequest,
         TransferView,
     },
     selection::{FileSelection, SelectionRegistry, SelectionUpdate},
@@ -15,7 +15,7 @@ use crate::{
 
 async fn session(window: &tauri::WebviewWindow) -> Result<Arc<Session>, TransferError> {
     let root = window.path().app_local_data_dir().map_err(storage_failed)?;
-    window.state::<DesktopRuntime>().session(root).await
+    window.state::<AppRuntime>().session(root).await
 }
 
 #[tauri::command]
@@ -24,12 +24,12 @@ pub(crate) async fn watch_app(
     updates: Channel<AppSnapshot>,
 ) -> Result<Uuid, TransferError> {
     let session = session(&window).await?;
-    window.state::<DesktopRuntime>().watch(session, updates)
+    window.state::<AppRuntime>().watch(session, updates)
 }
 
 #[tauri::command]
 pub(crate) fn unwatch_app(window: tauri::WebviewWindow, subscription_id: Uuid) {
-    window.state::<DesktopRuntime>().unwatch(subscription_id);
+    window.state::<AppRuntime>().unwatch(subscription_id);
 }
 
 #[tauri::command]
@@ -87,7 +87,7 @@ pub(crate) async fn get_receive_folder(
     window: tauri::WebviewWindow,
 ) -> Result<FolderView, TransferError> {
     let root = window.path().app_local_data_dir().map_err(storage_failed)?;
-    let active = window.state::<DesktopRuntime>().receive_directory();
+    let active = window.state::<AppRuntime>().receive_directory();
     tauri::async_runtime::spawn_blocking(move || {
         crate::runtime::folder_view(&root, active.as_deref())
     })
@@ -100,7 +100,7 @@ pub(crate) async fn choose_receive_folder(
     window: tauri::WebviewWindow,
 ) -> Result<Option<FolderView>, TransferError> {
     let root = window.path().app_local_data_dir().map_err(storage_failed)?;
-    let active = window.state::<DesktopRuntime>().receive_directory();
+    let active = window.state::<AppRuntime>().receive_directory();
     tauri::async_runtime::spawn_blocking(move || {
         let Some(folder) = window
             .dialog()

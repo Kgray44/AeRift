@@ -1,11 +1,15 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{path::PathBuf, sync::Mutex};
+
+#[cfg(target_os = "ios")]
+use std::sync::Arc;
+#[cfg(windows)]
+use std::{fs, path::Path};
+#[cfg(target_os = "ios")]
+use tauri_plugin_aerift_ios::StagedSelection;
 
 use aerift_transfer::{ErrorCode, TransferError};
 use serde::Serialize;
+#[cfg(windows)]
 use tauri::ipc::Channel;
 use uuid::Uuid;
 
@@ -19,9 +23,17 @@ pub(crate) struct FileSelection {
 
 struct SelectedFile {
     details: FileSelection,
-    path: PathBuf,
+    source: SelectionSource,
 }
 
+#[derive(Clone)]
+pub(crate) struct SelectionSource {
+    pub(crate) path: PathBuf,
+    #[cfg(target_os = "ios")]
+    _staging: Arc<StagedSelection>,
+}
+
+#[cfg(windows)]
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum SelectionUpdate {
@@ -33,12 +45,14 @@ pub(crate) enum SelectionUpdate {
 struct State {
     revision: u64,
     selected: Option<SelectedFile>,
+    #[cfg(windows)]
     watcher: Option<Channel<SelectionUpdate>>,
 }
 
 #[derive(Default)]
 pub(crate) struct SelectionRegistry(Mutex<State>);
 
+#[cfg(windows)]
 impl State {
     fn publish_selection(&self) {
         self.publish(SelectionUpdate::Changed {
@@ -54,6 +68,7 @@ impl State {
 }
 
 impl SelectionRegistry {
+    #[cfg(windows)]
     pub(crate) fn watch(&self, updates: Channel<SelectionUpdate>) -> Result<(), TransferError> {
         let mut state = self.0.lock().map_err(|_| ErrorCode::InternalError)?;
         state.watcher = Some(updates);
@@ -70,6 +85,7 @@ impl SelectionRegistry {
         Ok(state.revision)
     }
 
+    #[cfg(windows)]
     pub(crate) fn select(
         &self,
         revision: u64,
@@ -95,11 +111,39 @@ impl SelectionRegistry {
         Ok(Some(details))
     }
 
-    pub(crate) fn lookup(&self, selection_id: &str) -> Option<(FileSelection, PathBuf)> {
+    #[cfg(target_os = "ios")]
+    pub(crate) fn select_staged(
+        &self,
+        revision: u64,
+        staged: StagedSelection,
+    ) -> Result<Option<FileSelection>, TransferError> {
+        if staged.size_bytes > (1 << 53) - 1 {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        let mut state = self.0.lock().map_err(|_| ErrorCode::InternalError)?;
+        if revision != state.revision {
+            return Ok(None);
+        }
+        let details = FileSelection {
+            selection_id: Uuid::new_v4().to_string(),
+            name: staged.name.clone(),
+            size_bytes: staged.size_bytes,
+        };
+        state.selected = Some(SelectedFile {
+            details: details.clone(),
+            source: SelectionSource {
+                path: staged.path().to_owned(),
+                _staging: Arc::new(staged),
+            },
+        });
+        Ok(Some(details))
+    }
+
+    pub(crate) fn lookup(&self, selection_id: &str) -> Option<(FileSelection, SelectionSource)> {
         let state = self.0.lock().ok()?;
         let entry = state.selected.as_ref()?;
         (entry.details.selection_id == selection_id)
-            .then(|| (entry.details.clone(), entry.path.clone()))
+            .then(|| (entry.details.clone(), entry.source.clone()))
     }
 
     pub(crate) fn consume(&self, selection_id: &str) -> bool {
@@ -112,12 +156,14 @@ impl SelectionRegistry {
             .is_some_and(|file| file.details.selection_id == selection_id)
         {
             state.selected = None;
+            #[cfg(windows)]
             state.publish_selection();
             return true;
         }
         false
     }
 
+    #[cfg(windows)]
     pub(crate) fn reject(&self, revision: u64, error: TransferError) {
         let Ok(state) = self.0.lock() else {
             return;
@@ -128,6 +174,7 @@ impl SelectionRegistry {
     }
 }
 
+#[cfg(windows)]
 impl SelectedFile {
     fn prepare(path: &Path) -> Result<Self, TransferError> {
         let name = path
@@ -146,12 +193,12 @@ impl SelectedFile {
                 name,
                 size_bytes: metadata.len(),
             },
-            path,
+            source: SelectionSource { path },
         })
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use std::sync::Arc;
