@@ -5,7 +5,7 @@ The iPhone still uses the shared v1 pairing, consent and file transport. One sub
 | Area | Implemented in this change | Remaining |
 | --- | --- | --- |
 | Navigation | Floating bottom navigation using the shared Mission 0 destination model, Control Center, focus restoration, offer affordances and the Overhaul navigation indicator | Shared-element motion and native VoiceOver, Dynamic Type, keyboard and rotation qualification |
-| Files and Photos | Direct, single-item system pickers. Files can browse available providers. Photos uses the system's selected-item access with current representation. Rift stages a private copy for v1. Preview supported formats with Quick Look and export a copy through iOS sharing. Verified receives land under Files → AeRift → Received. | Persistent asset library, multiselection and metadata fidelity evidence |
+| Files and Photos | Native system pickers can select one item for Rift or import up to 12 items per batch to an ordered tray. Files can browse available providers. Photos uses the system's selected-item access with current representation. Rift stages a private copy for v1. Preview supported formats with Quick Look and export a copy through iOS sharing. Verified receives land under Files → AeRift → Received. | Durable asset library, named media groups, and selected-representation metadata fidelity on physical devices |
 | Notes | Local Markdown source and plain text, editable and sent as ordinary .md or .txt files after selecting an existing trusted destination | Attachments and rendered rich previews |
 | Browser | Safari Services in-app browsing and explicit link collection. Link copies use .txt. Web pages are outside the transfer webview. | In-app page capture and download import from the browser, along with physical qualification of the browser's external-open controls |
 | Clipboard | Optional text pins through an editable field, image staging via the native Paste control on iOS 16+, and a separate Rift sharing opt-in. Turning off sharing blocks new offers of already staged clipboard copies. | Image pins, optional unpinned history and physical Paste permission checks |
@@ -19,6 +19,8 @@ Saved local objects use the versioned Mission 0 object contract. Opaque native s
 System surfaces used here are [Quick Look](https://developer.apple.com/documentation/quicklook/qlpreviewcontroller), the [iOS share sheet](https://developer.apple.com/documentation/uikit/uiactivityviewcontroller) and [Safari Services](https://developer.apple.com/documentation/safariservices/sfsafariviewcontroller).
 
 Clipboard uses the system Paste menu for text and [UIPasteControl](https://developer.apple.com/documentation/uikit/uipastecontrol) for images. Image paste prepares a temporary Rift file after the user taps the native control. Clipboard sharing starts off and is separate from showing the module. It applies to pins, image copies and collection copies containing pins. There are no background reads or automatic sends.
+
+The Files and Photos import tray holds up to 24 imported copies per app session and shares the app’s existing 512 MiB staging limit. Import publishes the full batch only after each provider succeeds. Choose individual imports for Quick Look, export, or Rift. Removing an imported copy leaves its source alone. A copy already selected for Rift stays available there until you clear or send it. Files, Photos and Videos use the shared digital-object presentation model. Photos and video imports keep the representation the platform supplies. AeRift requests the [system picker’s current representation](https://developer.apple.com/documentation/photosui/phpickerconfiguration-swift.struct/preferredassetrepresentationmode) and copies its bytes without recompression.
 
 ## Android adapter plan
 
@@ -34,7 +36,9 @@ Playwright drove the production components through a deterministic fixture port 
 
 [Light Home](evidence/mobile-workspace/light-home-390.png) · [Light Workspace](evidence/mobile-workspace/light-workspace-390.png) · [Light Rift](evidence/mobile-workspace/light-rift-390.png) · [Dark Activity](evidence/mobile-workspace/dark-activity-390.png) · [Dark tablet Home](evidence/mobile-workspace/dark-home-1024.png)
 
-Run the fixture from the root with `npm exec -- vite --config tests/ui/vite.config.mts --host 127.0.0.1 --port 4187`. Open `http://127.0.0.1:4187/mobile.html` in Playwright and run `playwright-cli run-code --filename=tests/ui/mobile-browser-check.js`. The script resets storage for the fixture origin and writes the five captures above.
+Run the fixture from the root with `npm exec -- vite --config tests/ui/vite.config.mts --host 127.0.0.1 --port 4187`. Open `http://127.0.0.1:4187/mobile.html` in Playwright and run `playwright-cli run-code --filename=tests/ui/mobile-browser-check.js`. The script resets storage for the fixture origin and writes the browser captures.
+
+[Multi-item Photos and Videos tray](evidence/mobile-workspace/media-import-tray-390.png) shows the selected file and ordered imports in the 390 px WebKit fixture.
 
 [Clipboard sharing disabled for a staged image](evidence/mobile-workspace/clipboard-sharing-390.png) shows the 390 px WebKit fixture. The fixture drives the native command boundary with a synthetic selection.
 

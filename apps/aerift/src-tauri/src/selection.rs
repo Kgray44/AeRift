@@ -124,6 +124,15 @@ impl SelectionRegistry {
         revision: u64,
         staged: StagedSelection,
     ) -> Result<Option<FileSelection>, TransferError> {
+        self.select_shared_staged(revision, Arc::new(staged))
+    }
+
+    #[cfg(target_os = "ios")]
+    pub(crate) fn select_shared_staged(
+        &self,
+        revision: u64,
+        staged: Arc<StagedSelection>,
+    ) -> Result<Option<FileSelection>, TransferError> {
         if staged.size_bytes > (1 << 53) - 1 {
             return Err(ErrorCode::InvalidRequest.into());
         }
@@ -140,7 +149,7 @@ impl SelectionRegistry {
             details: details.clone(),
             source: SelectionSource {
                 path: staged.path().to_owned(),
-                _staging: Arc::new(staged),
+                _staging: staged,
             },
         });
         Ok(Some(details))

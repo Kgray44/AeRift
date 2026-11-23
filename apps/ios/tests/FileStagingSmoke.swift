@@ -57,6 +57,26 @@ struct FileStagingSmoke {
             throw SmokeError.acceptedInvalidSource
         } catch StagingError.invalidFile {}
 
+        let batchInputs = [source, empty]
+        let batch = try FileStaging.stageBatch(batchInputs) {
+            try FileStaging.stage($0, in: imports)
+        }
+        guard batch.map({ $0.name }) == batchInputs.map({ $0.lastPathComponent }),
+              try Data(contentsOf: batch[0].url) == contents,
+              try Data(contentsOf: batch[1].url).isEmpty else {
+            throw SmokeError.invalidCopy
+        }
+        FileStaging.discard(batch)
+        do {
+            _ = try FileStaging.stageBatch([source, alias]) {
+                try FileStaging.stage($0, in: imports)
+            }
+            throw SmokeError.acceptedInvalidSource
+        } catch StagingError.invalidFile {}
+        guard try manager.contentsOfDirectory(atPath: imports.path).count == 3 else {
+            throw SmokeError.residualSelection
+        }
+
         let heldOutput = try FileHandle(forWritingTo: selected.url)
         try heldOutput.truncate(atOffset: UInt64(FileStaging.limitBytes))
         try heldOutput.close()

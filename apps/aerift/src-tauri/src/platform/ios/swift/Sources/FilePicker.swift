@@ -7,6 +7,7 @@ enum FilePickerError: Error {
     case unavailable
     case alreadyPresenting
     case badRepresentation
+    case tooManyItems
 }
 
 enum PickerSource: String, Decodable {
@@ -16,12 +17,15 @@ enum PickerSource: String, Decodable {
 
 @MainActor
 final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControllerDelegate {
-    private var completion: ((Result<StagedSelection?, Error>) -> Void)?
+    static let maximumBatch = 12
+    private var limit = 1
+    private var completion: ((Result<[StagedSelection], Error>) -> Void)?
 
     func present(
         from presenter: UIViewController,
         source: PickerSource?,
-        completion: @escaping (Result<StagedSelection?, Error>) -> Void
+        limit: Int,
+        completion: @escaping (Result<[StagedSelection], Error>) -> Void
     ) {
         guard self.completion == nil else {
             completion(.failure(FilePickerError.alreadyPresenting))
@@ -32,6 +36,11 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
             return
         }
 
+        guard (1...Self.maximumBatch).contains(limit) else {
+            completion(.failure(FilePickerError.tooManyItems))
+            return
+        }
+        self.limit = limit
         self.completion = completion
         if let source {
             open(source, from: presenter)
@@ -40,7 +49,7 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
         let sources = SourcePickerController { [weak self, weak presenter] source in
             guard let self else { return }
             guard let source else {
-                self.finish(.success(nil))
+                self.finish(.success([]))
                 return
             }
             guard let presenter, presenter.viewIfLoaded?.window != nil else {
@@ -58,13 +67,15 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
         switch source {
         case .files:
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: false)
+            picker.allowsMultipleSelection = limit > 1
             picker.delegate = self
             picker.isModalInPresentation = true
             presenter.present(picker, animated: true)
         case .photos:
             var configuration = PHPickerConfiguration()
             configuration.filter = .any(of: [.images, .videos])
-            configuration.selectionLimit = 1
+            configuration.selectionLimit = limit
+            if limit > 1 { configuration.selection = .ordered }
             configuration.preferredAssetRepresentationMode = .current
             let picker = PHPickerViewController(configuration: configuration)
             picker.delegate = self
@@ -74,56 +85,86 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        finish(.success(nil))
+        finish(.success([]))
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        guard let url = urls.first else {
-            finish(.success(nil))
+        guard urls.count <= limit else {
+            finish(.failure(FilePickerError.tooManyItems))
             return
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            var coordinationError: NSError?
-            var result: Result<StagedSelection?, Error> = .failure(FilePickerError.unavailable)
-            NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { file in
-                result = Result { try FileStaging.stage(file) as StagedSelection? }
-            }
-            let coordinatedResult = coordinationError.map { Result<StagedSelection?, Error>.failure($0) } ?? result
-            DispatchQueue.main.async { self.finish(coordinatedResult) }
-        }
-    }
-
-    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: true)
-        guard let provider = results.first?.itemProvider else {
-            finish(.success(nil))
-            return
-        }
-        guard let type = provider.registeredTypeIdentifiers.first(where: { identifier in
-            guard let type = UTType(identifier) else { return false }
-            return type.conforms(to: .image) || type.conforms(to: .movie)
-        }) else {
-            finish(.failure(FilePickerError.badRepresentation))
-            return
-        }
-        provider.loadFileRepresentation(forTypeIdentifier: type) { url, error in
-            // The system owns this URL and can remove it when this callback returns.
             let result = Result {
-                if let error { throw error }
-                guard let url else { throw FilePickerError.badRepresentation }
-                return try FileStaging.stage(url, preferredName: provider.suggestedName) as StagedSelection?
+                try FileStaging.stageBatch(urls) { url in
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    var coordinationError: NSError?
+                    var result: Result<StagedSelection, Error> = .failure(FilePickerError.unavailable)
+                    NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { file in
+                        result = Result { try FileStaging.stage(file) }
+                    }
+                    if let coordinationError {
+                        if case .success(let item) = result { FileStaging.discard([item]) }
+                        throw coordinationError
+                    }
+                    return try result.get()
+                }
             }
             DispatchQueue.main.async { self.finish(result) }
         }
     }
 
-    private func finish(_ result: Result<StagedSelection?, Error>) {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true) {
+            guard results.count <= self.limit else {
+                self.finish(.failure(FilePickerError.tooManyItems))
+                return
+            }
+            self.loadPhotos(results[...], staged: [])
+        }
+    }
+
+    private func loadPhotos(_ remaining: ArraySlice<PHPickerResult>, staged: [StagedSelection]) {
+        guard let next = remaining.first else {
+            finish(.success(staged))
+            return
+        }
+        let provider = next.itemProvider
+        guard let type = provider.registeredTypeIdentifiers.compactMap({ UTType($0) }).first(where: {
+            $0.conforms(to: .image) || $0.conforms(to: .movie)
+        }) else {
+            FileStaging.discard(staged)
+            finish(.failure(FilePickerError.badRepresentation))
+            return
+        }
+        let kind: StagedKind = type.conforms(to: .movie) ? .video : .photo
+        provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, error in
+            // The system owns this URL and may remove it after this callback.
+            let result = Result {
+                if let error { throw error }
+                guard let url else { throw FilePickerError.badRepresentation }
+                var item = try FileStaging.stage(url, preferredName: provider.suggestedName)
+                item.kind = kind
+                return item
+            }
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let item):
+                    self.loadPhotos(remaining.dropFirst(), staged: staged + [item])
+                case .failure(let error):
+                    FileStaging.discard(staged)
+                    self.finish(.failure(error))
+                }
+            }
+        }
+    }
+
+    private func finish(_ result: Result<[StagedSelection], Error>) {
         let callback = completion
         completion = nil
         callback?(result)
     }
+
 }
 
 @MainActor

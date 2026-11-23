@@ -23,6 +23,15 @@ tauri::ios_plugin_binding!(init_plugin_aerift_ios);
 
 struct IosPlatform<R: Runtime>(PluginHandle<R>);
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StagedKind {
+    #[default]
+    File,
+    Photo,
+    Video,
+}
+
 /// Owns a sandbox copy. Keep it alive while the selected file can be offered or
 /// read by a transfer. Only the display name and size may cross the AppPort.
 #[derive(Deserialize)]
@@ -31,6 +40,8 @@ pub struct StagedSelection {
     path: PathBuf,
     pub name: String,
     pub size_bytes: u64,
+    #[serde(default)]
+    pub kind: StagedKind,
 }
 
 impl StagedSelection {
@@ -51,6 +62,11 @@ impl Drop for StagedSelection {
 #[derive(Deserialize)]
 struct PickerResponse {
     selection: Option<StagedSelection>,
+}
+
+#[derive(Deserialize)]
+struct BatchPickerResponse {
+    selections: Vec<StagedSelection>,
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -81,6 +97,7 @@ pub enum PickerSource {
 #[derive(Serialize)]
 struct PickerArgs {
     source: Option<PickerSource>,
+    limit: usize,
 }
 
 /// Opens a native picker or the source chooser. Cancellation resolves to `Ok(None)`.
@@ -89,12 +106,20 @@ pub async fn pick_file<R: Runtime>(
     app: &AppHandle<R>,
     source: Option<PickerSource>,
 ) -> Result<Option<StagedSelection>, PluginInvokeError> {
+    Ok(pick_files(app, source, 1).await?.pop())
+}
+
+pub async fn pick_files<R: Runtime>(
+    app: &AppHandle<R>,
+    source: Option<PickerSource>,
+    limit: usize,
+) -> Result<Vec<StagedSelection>, PluginInvokeError> {
     let picker = app.state::<IosPlatform<R>>();
-    let response: PickerResponse = picker
+    let response: BatchPickerResponse = picker
         .0
-        .run_mobile_plugin_async("pickFile", PickerArgs { source })
+        .run_mobile_plugin_async("pickFile", PickerArgs { source, limit })
         .await?;
-    Ok(response.selection)
+    Ok(response.selections)
 }
 
 #[derive(Deserialize)]

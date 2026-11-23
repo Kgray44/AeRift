@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import type { AppPort, AppSnapshot, Transfer } from "@aerift/app-contract";
 import "../../apps/aerift/public/appearance-bootstrap.css";
+import type { ImportedMedia, MobileMediaPort } from "../../apps/aerift/src/ios/mobile-media";
 import { IosApp } from "../../apps/aerift/src/ios/IosApp";
 import "@aerift/ui/styles.css";
 import "../../apps/aerift/src/layout.css";
@@ -44,8 +45,40 @@ const port: AppPort = {
   },
 };
 
+const fixtureMedia = {
+  files: [
+    { id: "import-map", name: "Navigation chart.pdf", kind: "file", sizeBytes: 14890 },
+    { id: "import-log", name: "Harbor log.txt", kind: "file", sizeBytes: 2741 },
+  ],
+  photos: [
+    { id: "import-photo", name: "Harbor aerial.heic", kind: "photo", sizeBytes: 221402 },
+    { id: "import-video", name: "Harbor approach.mov", kind: "video", sizeBytes: 948962 },
+  ],
+} as const;
+
+let imports: ImportedMedia[] = [];
+const media: MobileMediaPort = {
+  async list() { return { ok: true, value: imports }; },
+  async import(source) {
+    imports = [...imports, ...fixtureMedia[source].filter(item => !imports.some(value => value.id === item.id))
+      .map(item => ({ ...item, assetId: item.id, schemaVersion: 1, ownership: "local" } as const))];
+    return { ok: true, value: imports };
+  },
+  async remove(id) {
+    imports = imports.filter(item => item.id !== id);
+    return { ok: true, value: imports };
+  },
+  async select(id) {
+    const item = imports.find(asset => asset.id === id);
+    if (!item) return { ok: false, error: { code: "invalid_request" } };
+    selection = { selectionId: id, sizeBytes: item.sizeBytes, name: item.name };
+    return { ok: true, value: selection };
+  },
+  async present() { return { ok: true, value: undefined }; },
+};
+
 createRoot(document.getElementById("root")!).render(
-  <IosApp port={port} pick={async source => {
+  <IosApp port={port} media={media} pick={async source => {
     selection = { ...(source === "photos" ? photo : file), selectionId: "fixture" };
     return { ok: true, value: selection };
   }} />,
