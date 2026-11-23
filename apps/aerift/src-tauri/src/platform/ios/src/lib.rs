@@ -97,6 +97,33 @@ pub async fn pick_file<R: Runtime>(
     Ok(response.selection)
 }
 
+#[derive(Deserialize)]
+struct ClipboardImageCapability {
+    supported: bool,
+}
+
+pub async fn clipboard_image_available<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<bool, PluginInvokeError> {
+    let response: ClipboardImageCapability = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("clipboardImageAvailable", ())
+        .await?;
+    Ok(response.supported)
+}
+
+pub async fn paste_clipboard_image<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Option<StagedSelection>, PluginInvokeError> {
+    let response: PickerResponse = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("pasteClipboardImage", ())
+        .await?;
+    Ok(response.selection)
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SelectionAction {

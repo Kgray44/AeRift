@@ -53,6 +53,10 @@ private struct PickerResponse: Encodable {
     let selection: Selection?
 }
 
+private struct ClipboardImageCapability: Encodable {
+    let supported: Bool
+}
+
 private struct CameraArgs: Decodable {
     let attemptId: String
     let events: Channel
@@ -146,6 +150,39 @@ final class AeRiftPlugin: Plugin {
                     invoke.reject(message)
                 }
             }
+        }
+    }
+
+    @objc func clipboardImageAvailable(_ invoke: Invoke) {
+        if #available(iOS 16.0, *) {
+            invoke.resolve(ClipboardImageCapability(supported: true))
+        } else {
+            invoke.resolve(ClipboardImageCapability(supported: false))
+        }
+    }
+
+    @objc func pasteClipboardImage(_ invoke: Invoke) {
+        DispatchQueue.main.async {
+            guard #available(iOS 16.0, *), UIApplication.shared.applicationState == .active,
+                  let presenter = self.manager.viewController,
+                  presenter.viewIfLoaded?.window != nil, presenter.presentedViewController == nil else {
+                invoke.reject("The image paste sheet is unavailable.")
+                return
+            }
+            if let attempt = self.cameraAttempt {
+                self.stopCameraAttempt(attempt.attemptId)
+            }
+            let picker = ClipboardImagePicker { result in
+                switch result {
+                case .success(let selected):
+                    invoke.resolve(PickerResponse(selection: selected.map {
+                        .init(path: $0.url.path, name: $0.name, sizeBytes: $0.sizeBytes)
+                    }))
+                case .failure:
+                    invoke.reject("AeRift could not prepare the pasted image.")
+                }
+            }
+            presenter.present(picker, animated: true)
         }
     }
 

@@ -10,7 +10,7 @@ export const pickerSources = ["files", "photos"] as const;
 export type PickerSource = typeof pickerSources[number];
 export type ModuleVisibility = Record<PickerSource | LocalModule, boolean>;
 
-export function MobileWorkspace({ regions, modules, pick, received, openRift, objects, save }: {
+export function MobileWorkspace({ regions, modules, pick, received, openRift, objects, save, clipboardSharing, markClipboardSelection }: {
   regions: TransferWorkspaceRegions;
   modules: ModuleVisibility;
   pick: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
@@ -18,6 +18,8 @@ export function MobileWorkspace({ regions, modules, pick, received, openRift, ob
   openRift: () => void;
   objects: readonly MobileObject[] | undefined;
   save: (next: readonly MobileObject[]) => boolean;
+  clipboardSharing: boolean;
+  markClipboardSelection: (id: string) => void;
 }) {
   const [presenting, setPresenting] = useState<"preview" | "export">();
   const [presentationError, setPresentationError] = useState("");
@@ -69,7 +71,8 @@ export function MobileWorkspace({ regions, modules, pick, received, openRift, ob
     </section>}
     {current && current !== "files" && current !== "photos" && (objects
       ? <LocalObjectWorkspace key={current} module={current} objects={objects} save={save}
-        regions={regions} openRift={openRift} />
+        regions={regions} openRift={openRift} clipboardSharing={clipboardSharing}
+        markClipboardSelection={markClipboardSelection} />
       : <p role="alert">AeRift couldn't read the saved workspace. Files and Photos are still available.</p>)}
     {regions.selecting && <p role="status">Opening picker or preparing item…</p>}
   </>;

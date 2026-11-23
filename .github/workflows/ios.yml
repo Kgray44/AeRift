@@ -33,6 +33,7 @@ jobs:
           sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
           xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
             -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/ClipboardImagePicker.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift" \
