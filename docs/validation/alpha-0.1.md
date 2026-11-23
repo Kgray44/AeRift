@@ -74,6 +74,8 @@ The first protected upload used merged app source `5e92b82d0169a66912ce26bc3eade
 
 The Integration Commander independently read build `0.1.0 (1)` back from App Store Connect. Its internal build state was `MISSING_EXPORT_COMPLIANCE`, the `usesNonExemptEncryption` field was unset and the app had zero internal tester groups. An Account Holder, Admin or App Manager must complete Apple's encryption questionnaire or attach applicable approved documentation. After Apple clears the compliance gate, confirm the authorized internal group, tester access and visibility of this exact build in TestFlight. [Apple beta export compliance instructions](https://developer.apple.com/help/app-store-connect/test-a-beta-version/provide-export-compliance-information-for-beta-builds/)
 
+Use the installer built directly from delivery SHA `5e92b82d0169a66912ce26bc3eade7f6e645bb0c` for the physical session. Independent readback confirmed install, picker enabled and Settings rendered, and matched the installer SHA-256 `aa6c362bde724ca9b83e42793b89d69bd656692eb4a38042b69276fe68b8da89`. Both native captures showed the expected workspace and Settings. [Matching Windows installer and evidence](https://github.com/Kgray44/AeRift/actions/runs/45132951973/artifacts/14798572809)
+
 ## Physical Windows laptop ↔ iPhone run
 
 1. Record the SHA, package/artifact checksums, build commands, OS/device models, architecture, WebView2 and Xcode versions, signing or distribution method, and network topology without private addresses. Install fresh builds on both devices. Launch both and verify they work without cloud sign-in.
