@@ -6,7 +6,7 @@ import type { FileSelection } from "@aerift/app-contract";
 import type { ObservedMediaPort } from "./mobile-media-observer";
 import type { ImportedMedia } from "./mobile-media";
 import {
-  maxTextLength, normalWebUrl, portableCollection, portableText, removeMobileObject, type MobileObject,
+  addBrowserLinks, maxTextLength, normalWebUrl, portableCollection, portableText, removeMobileObject, type BrowserLink, type MobileObject,
 } from "./local-objects";
 
 export const localModules = ["notes", "browser", "clipboard", "collections"] as const;
@@ -47,6 +47,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const [mediaFailed, setMediaFailed] = useState(false);
   const [mediaRetry, setMediaRetry] = useState(0);
   const [previewing, setPreviewing] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [confirmRemoval, setConfirmRemoval] = useState<string>();
   const notes = module === "notes";
@@ -160,10 +161,21 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   }
 
   async function browse(value: string) {
+    if (browsing) return;
     const url = normalWebUrl(value);
     if (!url) { setFeedback("Enter a valid web address."); return; }
-    const result = await command("open_ios_browser", { url });
-    setFeedback(result.ok ? "" : "The browser couldn't open this address.");
+    setFeedback("");
+    setBrowsing(true);
+    const result = await command<BrowserLink[]>("open_ios_browser", { url });
+    setBrowsing(false);
+    if (!result.ok) {
+      setFeedback("The browser couldn't open this address.");
+      return;
+    }
+    const next = addBrowserLinks(objects, result.value, () => newObject("").id);
+    const added = next.length - objects.length;
+    if (added > 0 && save(next)) setFeedback(added === 1 ? "Link collected." : `${added} links collected.`);
+    else if (result.value.length > 0 && added === 0) setFeedback("These links are already saved.");
   }
 
   async function stage(object: Entry | Collection) {
@@ -217,7 +229,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
 
   return <section className="ios-section ios-object-editor" aria-label={module}>
     {notes && <p>Save plain text or Markdown and attach imported files, photos, or videos.</p>}
-    {browser && <p>Open a page in Safari’s in-app browser or collect its address to send later.</p>}
+    {browser && <p>In the in-app browser, choose Share → Collect in AeRift, then Done. You can also enter an address here.</p>}
     {clips && <>
       <p>Use the system Paste menu for text. AeRift keeps text only when you pin it.</p>
       {imagePasteSupported === true &&
@@ -269,7 +281,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       <div className="ae-actions">
         <Button type="submit">{editing ? "Save changes" : clips ? "Pin text" : browser ? "Collect link" :
           collections ? "Create collection" : "Save note"}</Button>
-        {browser && <Button variant="quiet" disabled={!draft.trim()} onClick={() => void browse(draft)}>Open page</Button>}
+        {browser && <Button variant="quiet" disabled={browsing || !draft.trim()} onClick={() => void browse(draft)}>Open page</Button>}
         {editing && <Button variant="quiet" onClick={reset}>Done editing</Button>}
       </div>
     </form>
@@ -331,7 +343,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
             <Button disabled={!regions.canSelect || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>
               {object.kind === "note" && object.attachmentIds?.length ? "Send note text" : "Send copy"}
             </Button>}
-          {object.kind === "url" && <Button variant="quiet" onClick={() => void browse(object.url)}>Open</Button>}
+          {object.kind === "url" && <Button variant="quiet" disabled={browsing} onClick={() => void browse(object.url)}>Open</Button>}
           <Button variant="quiet" onClick={() => edit(object)}>Edit</Button>
           {confirmRemoval === object.id ? <>
             <Button variant="danger" onClick={() => {

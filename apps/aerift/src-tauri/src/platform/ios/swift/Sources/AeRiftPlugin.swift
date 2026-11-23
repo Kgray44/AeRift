@@ -39,6 +39,10 @@ private struct BrowserArgs: Decodable {
     let url: String
 }
 
+private struct BrowserResponse: Encodable {
+    let links: [BrowserLink]
+}
+
 private struct PickerArgs: Decodable {
     let source: PickerSource?
     let limit: Int
@@ -117,6 +121,7 @@ private struct DiscoveryArgs: Decodable {
 
 final class AeRiftPlugin: Plugin {
     @MainActor private var selectionPreview: SelectionPreview?
+    @MainActor private var browserCapture: BrowserLinkCapture?
     @MainActor private lazy var filePicker = FilePicker()
     @MainActor private var mediaLibrary: MediaLibrary?
 
@@ -332,11 +337,7 @@ final class AeRiftPlugin: Plugin {
 
     @objc func openBrowser(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(BrowserArgs.self)
-        guard let components = URLComponents(string: args.url),
-              let scheme = components.scheme?.lowercased(), ["https", "http"].contains(scheme),
-              let host = components.host, !host.isEmpty,
-              components.user == nil, components.password == nil,
-              let url = components.url else {
+        guard let url = BrowserLink.webURL(args.url) else {
             invoke.reject("Enter a valid web address.")
             return
         }
@@ -347,8 +348,21 @@ final class AeRiftPlugin: Plugin {
                 invoke.reject("The browser is unavailable.")
                 return
             }
-            presenter.present(SFSafariViewController(url: url), animated: true)
-            invoke.resolve()
+            guard self.browserCapture == nil else {
+                invoke.reject("The browser is already open.")
+                return
+            }
+            let controller = SFSafariViewController(url: url)
+            let capture = BrowserLinkCapture { [weak self] links in
+                self?.browserCapture = nil
+                invoke.resolve(BrowserResponse(links: links))
+            }
+            self.browserCapture = capture
+            controller.delegate = capture
+            controller.presentationController?.delegate = capture
+            presenter.present(controller, animated: true) {
+                controller.presentationController?.delegate = capture
+            }
         }
     }
 

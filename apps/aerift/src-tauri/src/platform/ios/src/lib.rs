@@ -277,14 +277,27 @@ struct BrowserArgs<'a> {
     url: &'a str,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct BrowserLink {
+    url: String,
+    title: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BrowserResponse {
+    links: Vec<BrowserLink>,
+}
+
 pub async fn open_browser<R: Runtime>(
     app: &AppHandle<R>,
     url: &str,
-) -> Result<(), PluginInvokeError> {
-    app.state::<IosPlatform<R>>()
+) -> Result<Vec<BrowserLink>, PluginInvokeError> {
+    let response: BrowserResponse = app
+        .state::<IosPlatform<R>>()
         .0
         .run_mobile_plugin_async("openBrowser", BrowserArgs { url })
-        .await
+        .await?;
+    Ok(response.links)
 }
 
 #[derive(Deserialize, Serialize)]

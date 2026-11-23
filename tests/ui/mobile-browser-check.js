@@ -256,5 +256,33 @@ async (page) => {
   await notes.getByRole("button", { name: "Detach Attachment 1", exact: true }).click();
   await notes.getByRole("button", { name: "Save changes", exact: true }).click();
   await notes.getByText("1 attachment", { exact: true }).waitFor();
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, collection copy staging, clipboard sharing and revocation, durable multi-item imports, note attachments, saved Activity, and responsive bounds.";
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__ = { invoke: (command, args) => {
+      if (command !== "open_ios_browser" || args.url !== "https://example.test/start") {
+        throw new Error("Unexpected browser request");
+      }
+      return Promise.resolve([{ url: "https://example.test/reached", title: "Harbor guide" }]);
+    } };
+  });
+  await page.getByLabel("Address", { exact: true }).fill("example.test/start");
+  await page.getByRole("button", { name: "Open page", exact: true }).click();
+  await page.getByRole("status").filter({ hasText: "Link collected." }).waitFor();
+  await page.reload();
+  await go("Workspace");
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  const browser = page.getByRole("region", { name: "browser", exact: true });
+  const currentLink = browser.getByRole("listitem").filter({ hasText: "Harbor guide" });
+  await currentLink.waitFor();
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__ = { invoke: (command, args) => {
+      if (command !== "stage_ios_text" || args.text !== "https://example.test/reached") {
+        throw new Error("Unexpected link staging request");
+      }
+      return Promise.resolve({ name: args.name, sizeBytes: args.text.length, selectionId: "fixture-browser-link" });
+    } };
+  });
+  await currentLink.getByRole("button", { name: "Send copy", exact: true }).click();
+  await page.locator(".ae-dock-file").getByText("AeRift - Harbor guide.txt", { exact: true }).waitFor();
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, collection copy staging, clipboard sharing and revocation, durable multi-item imports, note attachments, Browser link capture, saved Activity, and responsive bounds.";
 }

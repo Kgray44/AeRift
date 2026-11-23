@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeMobileObjects, normalWebUrl, noteAttachmentStorageKey, objectStorageKey, persistMobileObjects,
+import { addBrowserLinks, decodeMobileObjects, normalWebUrl, noteAttachmentStorageKey, objectStorageKey, persistMobileObjects,
   portableCollection, portableText, readMobileObjects, removeMobileObject } from "../../apps/aerift/src/ios/local-objects.ts";
 
 const base = { schemaVersion: 1, ownership: "local" };
@@ -79,4 +79,20 @@ test("a failed note write restores its previous attachment references", () => {
   assert.deepEqual(readMobileObjects(storage), [attached]);
   storage.setItem(noteAttachmentStorageKey, "invalid index");
   assert.deepEqual(readMobileObjects(storage), [note]);
+});
+
+test("explicit browser captures are normalized, deduplicated, and remain inert links", () => {
+  const result = addBrowserLinks([note, link], [
+    { url: "https://example.com", title: "Same link" },
+    { url: "javascript:alert(1)", title: "Script" },
+    { url: "https://user:secret@example.com/", title: "Credentials" },
+    { url: "https://example.test/saved", title: "  Harbor   Guide  " },
+    { url: "https://example.test/saved", title: "Duplicate" },
+    { url: "https://example.test/station" },
+  ], (() => { let next = 1; return () => `capture-${next++}`; })());
+  assert.deepEqual(result, [
+    { ...base, kind: "url", id: "capture-1", name: "Harbor Guide", url: "https://example.test/saved" },
+    { ...base, kind: "url", id: "capture-2", name: "example.test", url: "https://example.test/station" },
+    note, link,
+  ]);
 });

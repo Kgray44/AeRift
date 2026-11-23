@@ -107,6 +107,26 @@ export function normalWebUrl(value: string): string | undefined {
   }
 }
 
+export interface BrowserLink {
+  url: string;
+  title?: string | null;
+}
+
+export function addBrowserLinks(
+  objects: readonly MobileObject[], captures: readonly BrowserLink[], createId: () => string,
+): MobileObject[] {
+  const seen = new Set(objects.flatMap(object => object.kind === "url" ? [object.url] : []));
+  const links: MobileObject[] = [];
+  for (const capture of captures) {
+    const url = normalWebUrl(capture.url);
+    if (!url || seen.has(url)) continue;
+    const name = capture.title?.trim().replace(/\s+/g, " ").slice(0, 100) || new URL(url).hostname;
+    seen.add(url);
+    links.push({ schemaVersion: 1, ownership: "local", id: createId(), kind: "url", url, name });
+  }
+  return [...links, ...objects];
+}
+
 function portableName(name: string, extension: "txt" | "md") {
   const slug = name.normalize("NFKD").replace(/[^a-z0-9 -]/gi, "").trim().slice(0, 72);
   return "AeRift - " + (slug || "Object") + "." + extension;

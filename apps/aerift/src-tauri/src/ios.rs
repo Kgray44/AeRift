@@ -200,7 +200,7 @@ pub(crate) async fn stage_ios_clipboard_image(
 pub(crate) async fn open_ios_browser(
     window: WebviewWindow,
     url: String,
-) -> Result<(), TransferError> {
+) -> Result<Vec<tauri_plugin_aerift_ios::BrowserLink>, TransferError> {
     if window.label() != "main" || url.len() > 4096 {
         return Err(ErrorCode::InvalidRequest.into());
     }
