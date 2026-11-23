@@ -13,6 +13,12 @@ test("unsigned mode pins the source and disables the protected job", () => {
   assert.match(workflow, /  protected:\n    if: false\n    environment: aerift-testflight/);
 });
 
+test("Windows checkout line endings render the same workflow", () => {
+  const lf = template.replaceAll("\r\n", "\n");
+  const crlf = lf.replaceAll("\n", "\r\n");
+  assert.equal(renderWorkflow(crlf, request), renderWorkflow(lf, request));
+});
+
 test("signed validation and upload are distinct protected modes", () => {
   for (const mode of ["signed", "upload", "observe"]) {
     const workflow = renderWorkflow(template, { ...request, mode });

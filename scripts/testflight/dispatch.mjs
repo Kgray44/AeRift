@@ -22,7 +22,7 @@ export function renderWorkflow(template, input) {
     __UPLOAD__: String(values.mode !== "unsigned"),
     __UNSIGNED__: String(values.mode === "unsigned"),
   };
-  let result = template;
+  let result = template.replaceAll("\r\n", "\n");
   for (const [key, value] of Object.entries(replacements)) result = result.replaceAll(key, value);
   if (/__[A-Z_]+__/.test(result)) throw new Error("AERIFT_TEMPLATE_UNRESOLVED");
   return result;
