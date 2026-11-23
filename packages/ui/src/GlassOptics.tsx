@@ -22,28 +22,46 @@ export function opticalViewportScale(width: number, height: number, dpr: number)
   return Math.min(Math.max(1, dpr), 800 / width, Math.sqrt(390000 / (width * height)));
 }
 
-function backdrop(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, light: boolean) {
-  const scene = ctx.createLinearGradient(0, 0, w, h);
-  const stops = light ? ["#e0f1f7", "#e6e7f8", "#cfe8ef"] : ["#12273f", "#202751", "#173240"];
-  scene.addColorStop(0, stops[0]); scene.addColorStop(.48, stops[1]); scene.addColorStop(1, stops[2]);
-  ctx.fillStyle = scene; ctx.fillRect(0, 0, w, h);
-  const drift = Math.sin(t * .86) * R.drift / 100;
-  const glow = (x: number, y: number, radius: number, solid: string, clear: string) => {
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    gradient.addColorStop(0, solid); gradient.addColorStop(1, clear);
-    ctx.fillStyle = gradient; ctx.fillRect(0, 0, w, h);
+function backdrop(ctx: CanvasRenderingContext2D, t: number, light: boolean, style: CSSStyleDeclaration,
+  sceneWidth: number, sceneHeight: number, left: number, top: number) {
+  const { width: w, height: h } = ctx.canvas;
+  ctx.fillStyle = style.getPropertyValue("--ae-base").trim();
+  ctx.fillRect(0, 0, w, h);
+  // Keep the original shell palette aligned with its CSS background when scrolling.
+  const glow = (x: number, y: number, stop: number, color: string) => {
+    const centerX = sceneWidth * x - left, centerY = sceneHeight * y - top;
+    const radiusX = Math.SQRT2 * sceneWidth * Math.max(x, 1 - x);
+    const radiusY = Math.SQRT2 * sceneHeight * Math.max(Math.abs(y), 1 - y);
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.scale(radiusX, radiusY);
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, stop);
+    const tint = style.getPropertyValue(color).trim();
+    gradient.addColorStop(0, tint);
+    gradient.addColorStop(1, tint + "00");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(-centerX / radiusX, -centerY / radiusY, w / radiusX, h / radiusY);
+    ctx.restore();
   };
-  glow(w * (.77 + .11 * drift), h * .21, Math.max(w * .45, 100), light ? "#c4e2e9b0" : "#21485ac9", "#3687bd00");
-  glow(w * (.24 - .08 * drift), h * .71, Math.max(w * .47, 120), light ? "#c9c8ee8a" : "#3c346eb0", "#725db300");
+  glow(.23, .75, .59, "--ae-optical-depth");
+  glow(.03, .32, .44, "--ae-ambient-b");
+  glow(.88, .27, .34, "--ae-optical-bloom");
+  glow(.55, -.18, .53, "--ae-optical-lamp");
+  const drift = Math.sin(t * .86) * R.drift / 100;
   const colors = light ? ["#6b9bb23b", "#fff9", "#6c65ab31", "#f8fbffbf"] : ["#6ecbd025", "#c8f8fa28", "#a696de27", "#8fb7ff32"];
+  ctx.save();
+  ctx.globalAlpha = .10;
   ctx.lineCap = "round";
   for (let i = -8; i < 21; i++) {
-    const x = w * (.075 * i + .10 * drift), y = h * (i % 2 ? -.12 : -.13);
+    const x = sceneWidth * (.075 * i + .10 * drift) - left;
+    const y = sceneHeight * (i % 2 ? -.12 : -.13) - top;
     ctx.beginPath(); ctx.moveTo(x, y);
-    ctx.bezierCurveTo(x + .50 * w, .34 * h, x - .22 * w, .64 * h, x + .97 * w, h * 1.15);
+    ctx.bezierCurveTo(x + .50 * sceneWidth, .34 * sceneHeight - top, x - .22 * sceneWidth,
+      .64 * sceneHeight - top, x + .97 * sceneWidth, 1.15 * sceneHeight - top);
     ctx.lineWidth = Math.max(.75, w / 1050) * (i % 7 === 0 ? 2 : 1);
     ctx.strokeStyle = colors[(i + 40) % colors.length]; ctx.stroke();
   }
+  ctx.restore();
   // The studio exposure applies to the background, not foreground labels.
   ctx.fillStyle = light ? `rgb(255 255 255 / ${(R.exposure - 100) * .0075})` : `rgb(143 183 224 / ${(R.exposure - 100) * .0044})`;
   ctx.fillRect(0, 0, w, h);
@@ -197,7 +215,10 @@ export function GlassOptics() {
       try {
         const light = explicit.scheme === "light" || (explicit.scheme !== "dark" && media[4].matches);
         const t = reduced ? 0 : phase;
-        backdrop(paint, pw, ph, t, light);
+        const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+        const backdropHeight = Math.min(88 * rootFontSize, window.innerHeight * 1.45);
+        backdrop(paint, t, light, getComputedStyle(shell), bounds.width * scale, backdropHeight * scale,
+          left * scale, top * scale);
         const source = paint.getImageData(0, 0, pw, ph).data;
         if (!output) output = ctx.createImageData(pw, ph);
         output.data.set(source);

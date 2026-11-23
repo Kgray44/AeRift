@@ -8,6 +8,7 @@
   --ae-blur-chrome: 13px;
   --ae-blur-overlay: 20px;
   --ae-saturation: 1.42;
+  --ae-glass-tint: 9%;
   --ae-optical-rim: rgb(223 244 255 / 56%);
   --ae-optical-sheen: rgb(229 246 255 / 20%);
   --ae-optical-cool: rgb(120 181 255 / 27%);
@@ -534,17 +535,35 @@
 
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
   .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens] {
-  background: transparent;
+  background: color-mix(in srgb, var(--ae-material-solid, var(--ae-content)) var(--ae-glass-tint), transparent);
   border-color: transparent;
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-surface[data-material="raised"][data-ae-lens] {
+  background:
+    linear-gradient(150deg, color-mix(in srgb, var(--ae-optical-sheen) var(--ae-glass-tint), transparent),
+      transparent 44%, color-mix(in srgb, var(--ae-optical-cool) var(--ae-glass-tint), transparent)),
+    color-mix(in srgb, var(--ae-raised) var(--ae-glass-tint), transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--ae-optical-rim) 48%, transparent),
+    0 9px 22px color-mix(in srgb, var(--ae-optical-shade) 45%, transparent);
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens] {
+  background:
+    radial-gradient(ellipse at 85% 34%, color-mix(in srgb, var(--ae-optical-glow) var(--ae-glass-tint), transparent), transparent 33%),
+    radial-gradient(ellipse at 70% 2%, color-mix(in srgb, var(--ae-optical-lamp) var(--ae-glass-tint), transparent), transparent 57%),
+    linear-gradient(145deg, color-mix(in srgb, var(--ae-optical-stage) var(--ae-glass-tint), transparent) 30%,
+      color-mix(in srgb, var(--ae-optical-bloom) var(--ae-glass-tint), transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ae-control-edge) 48%, transparent);
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
   .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens]::before,
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
   .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens]::after {
-  display: none;
+  opacity: var(--ae-glass-tint);
 }
 
 /* Top-layer overlays and sticky chrome keep true WebView backdrop sampling.
@@ -569,9 +588,10 @@
     display: none;
   }
   .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-    .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens] {
+    .ae-shell[data-ae-optics="ready"] :is(.ae-surface[data-material], .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens] {
     background: var(--ae-material-solid, var(--ae-content));
     border-color: var(--ae-display-edge, var(--ae-edge));
+    box-shadow: none;
   }
   .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
     :is(.ae-toolbar, .ae-surface[data-material="overlay"]) {
