@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AeRift photographic gesture replay</title>
+<video width="320" height="240"></video>
+<script type="module">
+import { GestureIntent } from "/dist/gestures/packages/gestures/src/intent.js";
+import { WebGestureCamera } from "/dist/gestures/packages/gestures/src/web-camera.js";
+
+const image = new Image();
+image.src = "/pointing_up.jpg";
+await image.decode();
+const canvas = document.createElement("canvas");
+canvas.width = 640;
+canvas.height = 480;
+const context = canvas.getContext("2d");
+const paint = setInterval(() => {
+  context.fillStyle = "black";
+  context.fillRect(0, 0, 640, 480);
+  const width = image.width * 460 / image.height;
+  context.drawImage(image, (640 - width) / 2, 10, width, 460);
+}, 32);
+
+const stream = canvas.captureStream(30);
+const track = stream.getVideoTracks()[0];
+Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+  value: async () => stream,
+});
+const originalWorker = window.Worker;
+const ages = [];
+const handCounts = [];
+let workerTerminated = false;
+window.Worker = class extends originalWorker {
+  constructor(url) {
+    super(url);
+    this.addEventListener("message", ({ data }) => {
+      if (data.type === "ERROR") console.error("Worker stage " + data.reason);
+      if (data.type === "RESULT") {
+        ages.push(performance.now() - data.capture);
+        handCounts.push(data.hands.length);
+      }
+    });
+  }
+  terminate() {
+    workerTerminated = true;
+    super.terminate();
+  }
+};
+const commands = [];
+const video = document.querySelector("video");
+const intent = new GestureIntent("replay", { kind: "send", selectionId: "fixture", deviceId: "fixture" },
+  ({ action }) => commands.push(action));
+const camera = new WebGestureCamera(intent, video, () => {});
+await camera.start({ workerUrl: new URL("/gesture-assets/hand-worker.js", location.href) });
+const started = performance.now();
+while (ages.length < 32 && performance.now() - started < 18_000 &&
+       intent.feedback.phase !== "interrupted") {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+const beforeLoss = intent.feedback;
+const handFrames = handCounts.filter((count) => count === 1).length;
+track.dispatchEvent(new Event("ended"));
+clearInterval(paint);
+const sorted = ages.slice().sort((a, b) => a - b);
+const outcome = {
+  state: beforeLoss.camera,
+  phase: beforeLoss.phase,
+  pose: beforeLoss.posture,
+  frames: ages.length,
+  oneHandFrames: handFrames,
+  captureToWorkerResultP95Ms: sorted[Math.ceil(sorted.length * .95) - 1],
+  framesOlderThan150ms: ages.filter((age) => age > 150).length,
+  finalCamera: intent.feedback.camera,
+  trackEnded: track.readyState === "ended",
+  workerTerminated,
+  previewDetached: video.srcObject === null,
+  commands,
+};
+const pass = beforeLoss.camera === "ready" && ages.length >= 32 && handFrames >= 25 &&
+  intent.feedback.camera === "suspended" && outcome.trackEnded && outcome.workerTerminated &&
+  outcome.previewDetached && commands.join(",") === "interrupt";
+window.replayResult = { pass, ...outcome };
+</script>
