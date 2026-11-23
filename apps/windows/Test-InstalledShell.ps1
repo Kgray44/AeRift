@@ -65,7 +65,7 @@ try {
 
     $socket.ConnectAsync([uri]$target.webSocketDebuggerUrl, $deadline.Token).GetAwaiter().GetResult() | Out-Null
     $assertion = @{
-        expression = "document.querySelector('h1')?.textContent === 'AeRift' && document.querySelector('main')?.textContent.includes('Disconnected')"
+        expression = "document.querySelector('h1')?.textContent === 'AeRift' && document.querySelector('main')?.textContent.includes('New transfer') && [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Choose a file' && !button.disabled)"
         returnByValue = $true
     }
     $id = 0
@@ -80,6 +80,24 @@ try {
     $imageBytes = [Convert]::FromBase64String($image.data)
     if ($imageBytes.Length -lt 100) { throw 'WebView returned an empty screenshot.' }
     [IO.File]::WriteAllBytes((Join-Path $evidence 'windows-launch.png'), $imageBytes)
+    $id += 2
+    $settings = Invoke-Cdp $socket $id 'Runtime.evaluate' @{
+        expression = "[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Settings').click()"
+        returnByValue = $true
+    } $deadline.Token
+    if ($settings.exceptionDetails) { throw 'The Settings control did not open.' }
+    do {
+        $id += 1
+        $settings = Invoke-Cdp $socket $id 'Runtime.evaluate' @{
+            expression = "document.querySelector('dialog[open]')?.textContent.includes('Choose receive folder')"
+            returnByValue = $true
+        } $deadline.Token
+        if (-not $settings.result.value) { Start-Sleep -Milliseconds 250 }
+    } until ($settings.result.value -or $deadline.IsCancellationRequested)
+    if (-not $settings.result.value) { throw 'The Settings sheet did not render.' }
+
+    $settingsImage = Invoke-Cdp $socket ($id + 1) 'Page.captureScreenshot' @{ format = 'png'; fromSurface = $true } $deadline.Token
+    [IO.File]::WriteAllBytes((Join-Path $evidence 'windows-settings.png'), [Convert]::FromBase64String($settingsImage.data))
     $version = Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/version" -TimeoutSec 5
     $receipt = [ordered]@{
         commit = (git rev-parse HEAD)
@@ -88,7 +106,8 @@ try {
         installer = $installer.Name
         sha256 = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash
         installed = $true
-        disconnectedScreenRendered = $true
+        nativePickerEnabled = $true
+        settingsRendered = $true
     }
     $receipt | ConvertTo-Json | Tee-Object -FilePath (Join-Path $evidence 'windows-launch.json')
 } finally {
