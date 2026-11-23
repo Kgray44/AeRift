@@ -1,7 +1,9 @@
 # AeRift Experience Design: Orbit and Adaptive Workspaces
 
-Status: proposed governing experience addendum for review  
-Date: 2026-11-23  
+Status: proposed governing experience addendum for review
+
+Date: 2026-11-23
+
 Scope: iOS, Android, Windows, macOS and Linux target experiences; platform capability and release qualification remain separate.
 
 ## 1. Purpose and governing principles

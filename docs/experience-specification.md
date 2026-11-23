@@ -1,8 +1,11 @@
 # AeRift — Governing Experience Specification
 
-**Version:** 1.0 proposed  
-**Status:** Owner-approved design direction; governing adoption pending PR merge  
-**Scope:** All AeRift experiences, platforms, themes, components and future implementation work.  
+**Version:** 1.0 proposed
+
+**Status:** Owner-approved design direction; governing adoption pending PR merge
+
+**Scope:** All AeRift experiences, platforms, themes, components and future implementation work.
+
 **Date:** 2026-11-23
 
 ## 1. North star
