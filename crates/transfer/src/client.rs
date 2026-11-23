@@ -20,18 +20,20 @@ use hyper::{
     header,
 };
 use hyper_util::rt::TokioIo;
+use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, ReadBuf};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    ErrorCode, Offer, State, Status, TransferError,
+    ErrorCode, Offer, RECEIVER_READY_ROUTE, ReceiverReady, State, Status, TransferError,
     model::{BUFFER_SIZE, MAX_SAFE_SIZE},
     read_control,
 };
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+const READY_QUERY_TIMEOUT: Duration = Duration::from_millis(1200);
 type RequestBody = UnsyncBoxBody<Bytes, io::Error>;
 type Progress = Arc<dyn Fn(Uuid, Status) + Send + Sync>;
 
@@ -75,6 +77,24 @@ impl<C: Connector> Sender<C> {
         cancel: CancellationToken,
         progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
     ) -> Result<Status, TransferError> {
+        self.send_file_with_id(Uuid::new_v4(), path, name, cancel, progress)
+            .await
+    }
+
+    /// Use a v4 UUID allocated by the host for this transfer's local and remote receipts.
+    pub async fn send_file_with_id(
+        &self,
+        id: Uuid,
+        path: &Path,
+        name: &str,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
+        if id.get_version() != Some(uuid::Version::Random)
+            || id.get_variant() != uuid::Variant::RFC4122
+        {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
         let revoked = self.connector.trust_revoked().unwrap_or_default();
         let stop = async {
             tokio::select! {
@@ -86,9 +106,8 @@ impl<C: Connector> Sender<C> {
         let (offer, file) = tokio::select! {
             biased;
             _ = &mut stop => return Err(ErrorCode::Cancelled.into()),
-            result = prepare(path, name) => result?,
+            result = prepare(id, path, name) => result?,
         };
-        let id = offer.id;
         let sent = Arc::new(AtomicU64::new(0));
         let measured = Arc::clone(&sent);
         let progress: Progress = Arc::new(move |id, status| {
@@ -140,11 +159,29 @@ impl<C: Connector> Sender<C> {
     pub async fn status(&self, id: Uuid) -> Result<Status, TransferError> {
         self.control(Method::GET, &format!("/v1/transfers/{id}"), Vec::new())
             .await
+            .and_then(validate_status)
     }
 
     pub async fn cancel(&self, id: Uuid) -> Result<Status, TransferError> {
         self.control(Method::DELETE, &format!("/v1/transfers/{id}"), Vec::new())
             .await
+            .and_then(validate_status)
+    }
+
+    /// Read the peer's optional availability signal without sending file metadata.
+    pub async fn receiver_ready(&self) -> Result<bool, TransferError> {
+        let revoked = self.connector.trust_revoked().unwrap_or_default();
+        let request = self.control::<ReceiverReady>(Method::GET, RECEIVER_READY_ROUTE, Vec::new());
+        tokio::select! {
+            biased;
+            _ = revoked.cancelled() => Err(ErrorCode::PeerUntrusted.into()),
+            result = tokio::time::timeout(READY_QUERY_TIMEOUT, request) => match result {
+                Ok(Ok(reply)) => Ok(reply.ready),
+                Ok(Err(error)) if error.code == ErrorCode::PeerUnavailable => Ok(false),
+                Ok(Err(error)) => Err(error),
+                Err(_) => Ok(false),
+            },
+        }
     }
 
     async fn run(
@@ -155,7 +192,8 @@ impl<C: Connector> Sender<C> {
     ) -> Result<Status, TransferError> {
         let id = offer.id;
         let encoded = serde_json::to_vec(&offer).map_err(|_| ErrorCode::InvalidRequest)?;
-        let mut status = self.control(Method::POST, "/v1/transfers", encoded).await?;
+        let mut status =
+            validate_status(self.control(Method::POST, "/v1/transfers", encoded).await?)?;
         validate_progress(status, offer.size_bytes)?;
         progress(id, status);
         let deadline = tokio::time::Instant::now() + self.decision_timeout;
@@ -196,7 +234,8 @@ impl<C: Connector> Sender<C> {
                 body.boxed_unsync(),
                 self.upload_timeout,
             )
-            .await;
+            .await
+            .and_then(validate_status);
         match result {
             Ok(status) if status.state == State::Completed => Ok(status),
             Ok(_) => Err(ErrorCode::Conflict.into()),
@@ -227,12 +266,12 @@ impl<C: Connector> Sender<C> {
         Err(original)
     }
 
-    async fn control(
+    async fn control<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
         data: Vec<u8>,
-    ) -> Result<Status, TransferError> {
+    ) -> Result<T, TransferError> {
         let size = data.len() as u64;
         let body = Full::new(Bytes::from(data))
             .map_err(|never| match never {})
@@ -248,7 +287,7 @@ impl<C: Connector> Sender<C> {
         .await
     }
 
-    async fn request(
+    async fn request<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
@@ -256,7 +295,7 @@ impl<C: Connector> Sender<C> {
         size: u64,
         body: RequestBody,
         deadline: Duration,
-    ) -> Result<Status, TransferError> {
+    ) -> Result<T, TransferError> {
         let stream = tokio::time::timeout(CONTROL_TIMEOUT, self.connector.connect())
             .await
             .map_err(|_| ErrorCode::PeerUnavailable)??;
@@ -282,14 +321,7 @@ impl<C: Connector> Sender<C> {
                 .await
                 .map_err(|_| ErrorCode::NetworkError)?;
             if code == StatusCode::OK || (code == StatusCode::CREATED && method == Method::POST) {
-                let status: Status =
-                    serde_json::from_slice(&bytes).map_err(|_| ErrorCode::NetworkError)?;
-                if status.bytes_transferred > MAX_SAFE_SIZE
-                    || (status.state == State::Failed) != status.error.is_some()
-                {
-                    return Err(ErrorCode::NetworkError.into());
-                }
-                return Ok(status);
+                return serde_json::from_slice(&bytes).map_err(|_| ErrorCode::NetworkError.into());
             }
             Err(serde_json::from_slice(&bytes).unwrap_or_else(|_| ErrorCode::NetworkError.into()))
         };
@@ -308,6 +340,15 @@ impl<C: Connector> Sender<C> {
     }
 }
 
+fn validate_status(status: Status) -> Result<Status, TransferError> {
+    if status.bytes_transferred > MAX_SAFE_SIZE
+        || (status.state == State::Failed) != status.error.is_some()
+    {
+        return Err(ErrorCode::NetworkError.into());
+    }
+    Ok(status)
+}
+
 fn validate_progress(status: Status, offered_bytes: u64) -> Result<(), TransferError> {
     if status.bytes_transferred > offered_bytes
         || (matches!(status.state, State::Pending | State::Accepted)
@@ -318,7 +359,11 @@ fn validate_progress(status: Status, offered_bytes: u64) -> Result<(), TransferE
     Ok(())
 }
 
-async fn prepare(path: &Path, name: &str) -> Result<(Offer, tokio::fs::File), TransferError> {
+async fn prepare(
+    id: Uuid,
+    path: &Path,
+    name: &str,
+) -> Result<(Offer, tokio::fs::File), TransferError> {
     if !crate::model::safe_name(name) {
         return Err(ErrorCode::InvalidRequest.into());
     }
@@ -351,7 +396,7 @@ async fn prepare(path: &Path, name: &str) -> Result<(Offer, tokio::fs::File), Tr
     file.rewind().await.map_err(|_| ErrorCode::StorageFailed)?;
     Ok((
         Offer {
-            id: Uuid::new_v4(),
+            id,
             name: name.to_owned(),
             size_bytes: size,
             sha256: format!("{:x}", hash.finalize()),

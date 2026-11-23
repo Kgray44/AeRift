@@ -4,11 +4,12 @@ import { createIosCameraPort } from "../../dist/gestures/packages/gestures/src/i
 import { bindSendGesture } from "../../dist/gestures/packages/gestures/src/send-binding.js";
 import { NativeGestureCamera } from "../../dist/gestures/packages/gestures/src/native-camera.js";
 
-function fixture(clock) {
+function fixture(clock, authorized) {
   const attempts = [];
   const stops = [];
   const channels = [];
   const port = createIosCameraPort({
+    authorized,
     clockMs: async () => clock() + 10_000,
     createChannel: (onmessage) => ({ onmessage }),
     async registerEvents(events) { channels.push(events); },
@@ -17,6 +18,21 @@ function fixture(clock) {
   });
   return { port, attempts, channels, stops };
 }
+
+test("iOS permission queries are fresh and never acquire a camera subscription", async () => {
+  let granted = true;
+  const { port, attempts, channels, stops } = fixture(() => 0, async () => granted);
+  assert.equal(await port.isAuthorized(), true);
+  granted = false;
+  assert.equal(await port.isAuthorized(), false);
+  assert.deepEqual([attempts, channels, stops], [[], [], []]);
+});
+
+test("an unavailable iOS permission query cannot silently reacquire the camera", async () => {
+  const { port, attempts } = fixture(() => 0, async () => { throw new Error("native bridge unavailable"); });
+  assert.equal(await port.isAuthorized(), false);
+  assert.deepEqual(attempts, []);
+});
 
 function pose(closed) {
   const point = (x, y) => ({ x, y, z: 0, confidence: 0.92 });

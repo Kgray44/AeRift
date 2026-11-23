@@ -4,13 +4,40 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 
-const source = readFileSync(new URL("../../packages/ui/src/GlassOptics.tsx", import.meta.url), "utf8");
-const { outputText } = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
+function loadOpticsModule(filename, imports = {}) {
+  const source = readFileSync(new URL(`../../packages/ui/src/${filename}`, import.meta.url), "utf8");
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
+  });
+  const exports = {};
+  runInNewContext(outputText, { exports, require: name => imports[name] ?? {} });
+  return exports;
+}
+const atmosphere = loadOpticsModule("atmosphere.ts");
+const exports = loadOpticsModule("GlassOptics.tsx", { "./atmosphere": atmosphere });
+const { aeRiftGlassRecipe: recipe, glassAppearanceRecipes, opticalViewportScale, shadeLens } = exports;
+
+test("atmosphere focus follows reported bytes along the selected route", () => {
+  assert.equal(atmosphere.atmosphereTarget("transferring", 0, .79).x, .47);
+  assert.equal(atmosphere.atmosphereTarget("transferring", .5, .79).x, .63);
+  assert.equal(atmosphere.atmosphereTarget("transferring", 1, .79).x, .79);
 });
-const exports = {};
-runInNewContext(outputText, { exports, require: () => ({}) });
-const { aeRiftGlassRecipe: recipe, opticalViewportScale, shadeLens } = exports;
+
+test("an interrupted atmospheric transition preserves intermediate illumination", () => {
+  const held = atmosphere.atmosphereTarget("held");
+  const ready = atmosphere.atmosphereTarget("ready");
+  const blended = atmosphere.blendAtmosphere(held, ready, .08);
+  assert(blended.bend > held.bend && blended.bend < ready.bend);
+  const idle = atmosphere.atmosphereTarget();
+  assert(atmosphere.blendAtmosphere(blended, idle, .08).energy < blended.energy);
+});
+
+test("Light and Dark retain distinct optical softness, exposure and reflection calibration", () => {
+  assert.notEqual(glassAppearanceRecipes.light.softness, glassAppearanceRecipes.dark.softness);
+  assert.notEqual(glassAppearanceRecipes.light.exposure, glassAppearanceRecipes.dark.exposure);
+  assert.notDeepEqual(glassAppearanceRecipes.light.reflectionColor, glassAppearanceRecipes.dark.reflectionColor);
+  assert.equal(glassAppearanceRecipes.dark.softness, recipe.softness);
+});
 test("records the owner's approved calibration rather than the lab defaults", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(recipe)), {
     opacity: 2, warmth: 0, softness: 2, exposure: 108, depth: 9, radius: 26, roundness: 69,

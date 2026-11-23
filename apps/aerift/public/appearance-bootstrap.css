@@ -1,0 +1,10 @@
+:root {
+  color-scheme: dark;
+  background: #06060b;
+}
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; background: #f8f7f6; }
+}
+:root[data-startup-appearance="dark"] { color-scheme: dark; background: #06060b; }
+:root[data-startup-appearance="light"] { color-scheme: light; background: #f8f7f6; }
+body { margin: 0; }

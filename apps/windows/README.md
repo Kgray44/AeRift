@@ -19,8 +19,9 @@ Put the Windows PC and iPhone on the same trusted private network. If Windows Fi
 
 1. Open **Pair a device** on both apps. On either device, create an invitation and copy it to the other device. Connect, then approve the request on the invitation device.
 2. Choose a file or drop one regular file into the window. Select the online paired device and click **Send file**. The receiver sees an offer it can accept or decline.
-3. Use **Settings** to find the current receiving folder or choose one for the next app launch. The default is `Received` in AeRift's local app-data directory. Existing files keep their contents when a name conflicts.
-4. With a file and online paired device selected, click **Use camera gesture**. Wait for permission and preview. Show an open hand, make a fist, then open the hand when instructed. The same send action handles gesture release and the button. Use **Cancel gesture**, move focus away, or change the selection to release the camera. Settings offer two in-app camera shortcuts and an Off option.
+3. Open **Control Center** to find the current receiving folder or choose one for the next app launch. The default is `Received` in AeRift's local app-data directory. Existing files keep their contents when a name conflicts.
+4. In **Control Center**, opt in to **Enable camera gestures**. The foreground workspace starts listening when a file and paired destination are selected or an incoming offer is eligible. Choose an exact offer if prompted. Show an open hand, make a fist, then open your hand when instructed. The camera indicator shows when recognition is active. Control Center offers two in-app pause and resume shortcuts and an Off option.
+5. Use **Signal ready** to tell paired senders you are available for 45 seconds. Review and accept or decline each offer independently. Open **Activity** to see transfer receipts.
 
 ## Validate
 
@@ -34,4 +35,4 @@ The adapter test supplies loopback endpoints for two Windows-native sessions, re
 
 ## Alpha limits
 
-Windows currently uses IPv4 peer endpoints. Devices must share a LAN that allows discovery and direct connections. A receive folder change takes effect on the next launch. Camera gestures offer outgoing files. Incoming acceptance uses the visible button. The Windows package is unsigned.
+Windows currently uses IPv4 peer endpoints. Devices must share a LAN that allows discovery and direct connections. A receive folder change takes effect on the next launch. The Windows package is unsigned.

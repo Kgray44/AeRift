@@ -1,6 +1,6 @@
 import { useId, type PointerEvent, type ComponentPropsWithRef, type HTMLAttributes, type ReactNode } from "react";
 import type { Device, FileInfo, Transfer } from "@aerift/app-contract";
-import { GlassOptics } from "./GlassOptics";
+import { GlassOptics, type GlassAppearanceRecipe } from "./GlassOptics";
 import { useTheme } from "./theme";
 
 type SurfaceProps = HTMLAttributes<HTMLDivElement> & { material?: "content" | "raised" | "chrome" | "overlay" };
@@ -9,24 +9,28 @@ export function GlassSurface({ material = "content", className = "", ...props }:
   return <div {...props} data-material={material} className={`ae-surface ${className}`} />;
 }
 
-export function AppShell({ brand = "AeRift", toolbar, children }: {
-  brand?: ReactNode; toolbar?: ReactNode; children: ReactNode;
+export function AppBrand({ children = "AeRift" }: { children?: ReactNode }) {
+  return <div className="ae-brand">
+    <span className="ae-mark" aria-hidden="true"><span /></span>
+    {typeof children === "string" ? <h1>{children}</h1> : children}
+  </div>;
+}
+
+export function AppShell({ brand = "AeRift", toolbar, hideToolbar = false, glassRecipe, children }: {
+  brand?: ReactNode; toolbar?: ReactNode; hideToolbar?: boolean; glassRecipe?: Partial<GlassAppearanceRecipe>; children: ReactNode;
 }) {
   const mainId = useId();
   const theme = useTheme();
   return (
-    <div className="ae-shell">
-      {theme.id === "glass" && <GlassOptics />}
+    <div className="ae-shell" data-experience={hideToolbar ? "spatial" : undefined}>
+      {theme.id === "glass" && <GlassOptics appearanceRecipe={glassRecipe} />}
       <a className="ae-skip" href={`#${mainId}`}>Skip to content</a>
-      <header className="ae-header">
+      {!hideToolbar && <header className="ae-header">
         <GlassSurface material="chrome" className="ae-toolbar">
-          <div className="ae-brand">
-            <span className="ae-mark" aria-hidden="true"><span /></span>
-            {typeof brand === "string" ? <h1>{brand}</h1> : brand}
-          </div>
+          <AppBrand>{brand}</AppBrand>
           {toolbar && <div className="ae-actions">{toolbar}</div>}
         </GlassSurface>
-      </header>
+      </header>}
       <main id={mainId} tabIndex={-1} className="ae-main">{children}</main>
     </div>
   );
@@ -124,16 +128,23 @@ const transferLabels: Record<Transfer["state"], string> = {
   rejected: "Declined", cancelled: "Cancelled", completed: "Delivered", failed: "Transfer failed",
 };
 
-export function TransferProgress({ transfer, error, action }: { transfer: Transfer; error?: string; action?: ReactNode }) {
+export function TransferProgress({ transfer, deviceName, error, action }: {
+  transfer: Transfer; deviceName?: string; error?: string; action?: ReactNode;
+}) {
   const id = useId();
   const percent = transfer.state === "completed" ? 100 : transfer.file.sizeBytes > 0
     ? Math.min(100, Math.max(0, Math.round(transfer.bytesTransferred / transfer.file.sizeBytes * 100))) : 0;
   return <GlassSurface className="ae-transfer">
     <div className="ae-transfer-top">
-      <span className="ae-transfer-glyph" aria-hidden="true">{transfer.direction === "incoming" ? "↙" : "↗"}</span>
+      <span className="ae-transfer-glyph" aria-hidden="true">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+          strokeLinecap="round" strokeLinejoin="round" focusable="false">
+          <path d={transfer.direction === "incoming" ? "M18 6 6 18m10 0H6V8" : "M6 18 18 6M8 6h10v10"} />
+        </svg>
+      </span>
       <div className="ae-transfer-file">
         <strong id={id}>{transfer.file.name}</strong>
-        <small>{transfer.direction === "incoming" ? "Incoming" : "Outgoing"}</small>
+        <small>{transfer.direction === "incoming" ? "Incoming" : "Outgoing"}{deviceName && ` · ${deviceName}`}</small>
       </div>
     </div>
     <span className="ae-transfer-status" data-state={transfer.state} role="status">{transferLabels[transfer.state]}</span>

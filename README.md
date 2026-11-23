@@ -7,6 +7,7 @@ Alpha 0.1 is in device qualification. The matching Windows installer and TestFli
 - [Windows installer and development](apps/windows/README.md)
 - [iOS signing and TestFlight](docs/testflight.md)
 - [Integration and package ownership](docs/integration.md)
+- [Spatial experience and material principles](docs/spatial-experience.md)
 - [Version 1 protocol](contracts/v1/protocol.md)
 - [Version 1 app interface](packages/app-contract/src/v1.ts)
 - [Acceptance test harness](tests/README.md)

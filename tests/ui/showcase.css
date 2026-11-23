@@ -1,5 +1,4 @@
 body { margin: 0; }
-.demo-gesture { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
 
 .ae-theme[data-ae-theme="paper-preview"] {
   --ae-radius-content: .375rem;
