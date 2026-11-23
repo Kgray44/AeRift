@@ -30,6 +30,7 @@ jobs:
       - run: npm test
       - run: npm run test:gestures
       - run: npm run test:ui
+      - run: node --test tests/testflight/dispatch.test.mjs
 
   apple:
     name: macOS - iOS simulator Rust target
@@ -42,3 +43,4 @@ jobs:
       - run: xcodebuild -version
       - run: rustup target add aarch64-apple-ios-sim
       - run: cargo check -p aerift-protocol -p aerift-peers -p aerift-transfer --target aarch64-apple-ios-sim --locked
+      - run: python3 -B -c "import ast, pathlib; ast.parse(pathlib.Path('scripts/testflight/runner.py').read_text(encoding='utf-8'))"

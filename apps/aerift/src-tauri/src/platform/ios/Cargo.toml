@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-aerift-ios"
+version = "0.1.0"
+edition = "2021"
+links = "tauri-plugin-aerift-ios"
+publish = false
+
+[target.'cfg(target_os = "ios")'.dependencies]
+core-foundation = "0.10"
+security-framework-sys = "2"
+serde = { version = "1", features = ["derive"] }
+tauri = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
