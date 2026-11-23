@@ -1,4 +1,5 @@
-import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 
 export type ColorScheme = "system" | "light" | "dark";
 export type Preference = "system" | "increase";
@@ -31,6 +32,46 @@ export function createThemeRegistry(themes: readonly Theme[] = [glassTheme]): Re
 
 const builtInThemes = createThemeRegistry();
 const ThemeContext = createContext<Theme>(glassTheme);
+const systemLightQuery = "(prefers-color-scheme: light)";
+export const appearanceCommitEvent = "aerift-appearance-commit";
+let transition: ViewTransition | undefined;
+let revision = 0;
+
+export function transitionAppearance(change: () => void, motion: Reduction) {
+  const requested = ++revision;
+  transition?.skipTransition();
+  const commit = () => {
+    if (requested !== revision) return;
+    flushSync(change);
+    document.dispatchEvent(new Event(appearanceCommitEvent));
+  };
+  const root = document.documentElement;
+  if (motion === "reduce" || document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+    !document.startViewTransition) {
+    delete root.dataset.aeAppearanceTransition;
+    commit();
+    return;
+  }
+  root.dataset.aeAppearanceTransition = "";
+  try {
+    transition = document.startViewTransition(commit);
+  } catch {
+    delete root.dataset.aeAppearanceTransition;
+    commit();
+    return;
+  }
+  void transition.ready.catch(() => {});
+  const finish = () => {
+    if (requested !== revision) return;
+    transition = undefined;
+    delete root.dataset.aeAppearanceTransition;
+  };
+  void transition.finished.then(finish, finish);
+}
+
+function systemAppearance() {
+  return window.matchMedia(systemLightQuery).matches ? "light" : "dark";
+}
 
 export interface ThemeProviderProps {
   children: ReactNode;
@@ -48,10 +89,19 @@ export function ThemeProvider({
   contrast = "system", transparency = "system", motion = "system", overrides,
 }: ThemeProviderProps) {
   const selected = registry.get(theme) ?? glassTheme;
+  const watchSystem = useCallback((notify: () => void) => {
+    const query = window.matchMedia(systemLightQuery);
+    const update = () => scheme === "system" ? transitionAppearance(notify, motion) : notify();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, [scheme, motion]);
+  const system = useSyncExternalStore(watchSystem, systemAppearance, () => "dark");
+  const appearance = scheme === "system" ? system : scheme;
   const style: CSSProperties & ThemeOverrides = { ...selected.overrides, ...overrides };
   return (
     <ThemeContext.Provider value={selected}>
       <div className="ae-theme" data-ae-theme={selected.id} data-scheme={scheme}
+        data-appearance={appearance}
         data-contrast={contrast} data-transparency={transparency} data-motion={motion} style={style}>
         {children}
       </div>

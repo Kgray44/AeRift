@@ -2,7 +2,9 @@ use std::sync::Mutex;
 
 use tauri::{ipc::Channel, AppHandle, Runtime, State};
 
-use crate::{hand_camera_clock, start_hand_camera, stop_hand_camera, CameraUpdate};
+use crate::{
+    hand_camera_authorized, hand_camera_clock, start_hand_camera, stop_hand_camera, CameraUpdate,
+};
 
 #[derive(Default)]
 pub(crate) struct CameraUi(Mutex<CameraSubscription>);
@@ -21,6 +23,13 @@ impl CameraUi {
         }
         Ok(())
     }
+}
+
+#[tauri::command]
+pub(crate) async fn camera_authorized<R: Runtime>(app: AppHandle<R>) -> Result<bool, &'static str> {
+    hand_camera_authorized(&app)
+        .await
+        .map_err(|_| "Camera authorization unavailable.")
 }
 
 #[tauri::command]
