@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-function distribution(values) {
+export function distribution(values) {
   const sorted = values.slice().sort((a, b) => a - b);
   const percentile = (p) => sorted[Math.ceil(sorted.length * p) - 1];
   return { count: sorted.length, p50: percentile(0.5), p95: percentile(0.95), max: sorted.at(-1) };
