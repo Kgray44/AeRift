@@ -1,10 +1,13 @@
 use std::{
     collections::{BTreeSet, HashMap},
     net::{SocketAddr, SocketAddrV6},
+    time::Duration,
 };
 
 use aerift_transfer::{ErrorCode, PeerId, TransferError};
-use mdns_sd::{Receiver, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{
+    Receiver, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo, UnregisterStatus,
+};
 
 use crate::{Device, Platform, pairing::valid_name};
 
@@ -24,6 +27,7 @@ pub struct Discovery {
     fullname: String,
     own_id: PeerId,
     instances: HashMap<String, DiscoveredPeer>,
+    stopped: bool,
 }
 
 impl Discovery {
@@ -69,6 +73,7 @@ impl Discovery {
             fullname,
             own_id: device.id,
             instances: HashMap::new(),
+            stopped: false,
         })
     }
 
@@ -85,6 +90,33 @@ impl Discovery {
                 return Ok(self.snapshot());
             }
         }
+    }
+
+    /// Let the daemon transmit the DNS-SD goodbye, including its repeat, before
+    /// stopping it. Drop handles abrupt teardown on a best-effort basis.
+    pub async fn stop(mut self) -> Result<(), TransferError> {
+        let reply = self
+            .daemon
+            .unregister(&self.fullname)
+            .map_err(|_| ErrorCode::NetworkError)?;
+        let status = tokio::time::timeout(Duration::from_secs(2), reply.recv_async())
+            .await
+            .map_err(|_| ErrorCode::PeerUnavailable)?
+            .map_err(|_| ErrorCode::NetworkError)?;
+        if matches!(status, UnregisterStatus::OK) {
+            // mdns-sd 0.21 schedules one retry 120 ms after unregister.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        let reply = self
+            .daemon
+            .shutdown()
+            .map_err(|_| ErrorCode::NetworkError)?;
+        self.stopped = true;
+        tokio::time::timeout(Duration::from_secs(2), reply.recv_async())
+            .await
+            .map_err(|_| ErrorCode::PeerUnavailable)?
+            .map_err(|_| ErrorCode::NetworkError)?;
+        Ok(())
     }
 
     pub fn snapshot(&self) -> Vec<DiscoveredPeer> {
@@ -131,9 +163,10 @@ impl Discovery {
 
 impl Drop for Discovery {
     fn drop(&mut self) {
-        let _ = self.daemon.stop_browse(SERVICE_TYPE);
-        let _ = self.daemon.unregister(&self.fullname);
-        let _ = self.daemon.shutdown();
+        if !self.stopped {
+            // Shutdown already unregisters active services.
+            let _ = self.daemon.shutdown();
+        }
     }
 }
 

@@ -40,7 +40,7 @@ async fn multicast_advertise_resolve_and_remove() {
             .all(|endpoint| endpoint.port() == 48122)
     );
     assert!(!browse.snapshot().iter().any(|peer| peer.device.id == a.id));
-    drop(advertise);
+    advertise.stop().await.unwrap();
     tokio::time::timeout(Duration::from_secs(15), async {
         while browse
             .changed()
