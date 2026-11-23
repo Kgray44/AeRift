@@ -47,7 +47,7 @@ Windows x64 validation head `33010645231773815d47f6fbb874c561b7cfe536` passed th
 
 The focused iOS candidate `94d09497bfc67971b11f49a696c104d7feed9c4e` returned a passing simulator process receipt, but its capture showed only the iOS status bar over a blank app area. The smoke script checks the PID after five seconds. The exact candidate still needs a new capture with the transfer workspace visibly rendered. [Focused simulator artifact](https://github.com/Kgray44/AeRift/actions/runs/45128380074/artifacts/14796504666)
 
-An approved five-byte Windows TLS loopback transfer failed cleanly when an NTFS rule denied writes to the receiver-owned test directory. The receiver reported zero bytes and published no file. The sender handed five bytes to HTTP and both peers reported failure. The test verified restoration of the scratch directory's access rules. The same locked binary rejected missing and regular-file destinations before listener startup. The Rust sources and lockfile matched merged revision `260050f487eecab2dc8a2d95ac0fb9fddb3cead4`.
+An approved five-byte Windows TLS loopback transfer failed cleanly when an NTFS rule denied writes to the receiver-owned test directory. The receiver reported zero bytes and published no file. The sender handed five bytes to HTTP and both peers reported failure. The test verified restoration of the scratch directory's access rules. The same locked binary rejected missing and regular-file destinations before listener startup. The repeatable Windows permission check also passed for a 256-byte fixture with the same zero-byte receiver result. The Rust sources and lockfile matched merged revision `260050f487eecab2dc8a2d95ac0fb9fddb3cead4`.
 
 ## Internal TestFlight distribution
 

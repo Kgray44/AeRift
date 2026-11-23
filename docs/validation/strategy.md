@@ -27,6 +27,14 @@ The receipt includes pairing-request latency from writing the invitation to obse
 
 Append `disconnect` to the command to terminate the test's sender after observing bytes in the staging file. The driver checks the receiver's failed receipt and an unchanged destination, then creates a fresh pairing and checks the retry's saved hash. The result covers a fresh paired session on the same host.
 
+On Windows, run the storage permission check against a scratch folder on NTFS.
+
+```powershell
+./tests/acceptance/run-windows-peer-permission-check.ps1 -Executable <compiled-exe> -ScratchDirectory <scratch-folder> -SourceSha <source-sha>
+```
+
+The check rejects a missing directory and a regular file before receiver startup. It temporarily denies file creation in a new test directory, approves an ordinary paired transfer, and verifies failure on both peers with zero received bytes and no file in the directory. The receipt records sender bytes handed to HTTP separately. The script restores and tests the scratch directory's original permissions before writing the receipt.
+
 On Windows, append `windows-benchmark` for one observed 64 MiB transfer or use the series launcher with a compiled executable, scratch folder and source SHA.
 
 ```powershell
