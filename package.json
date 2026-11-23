@@ -3,11 +3,14 @@
   "private": true,
   "workspaces": [
     "packages/app-contract",
+    "apps/aerift",
+    "packages/ui",
     "packages/gestures"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsc && node --test tests/contracts/protocol.test.mjs",
+    "test:ui": "tsc -p packages/ui/tsconfig.json && node --test tests/ui/*.test.mjs && vite build --config tests/ui/vite.config.mts",
     "test:gestures": "tsc -p packages/gestures && node --test tests/gestures/*.test.mjs"
   },
   "devDependencies": {
