@@ -59,6 +59,7 @@ function readWorkspace() {
     files: settings.files !== false, photos: settings.photos !== false,
     notes: settings.notes !== false, browser: settings.browser !== false,
     clipboard: settings.clipboard === true, collections: settings.collections !== false,
+    clipboardShare: settings.clipboardShare === true,
     rememberActivity: settings.rememberActivity === true,
     gestures: typeof settings.gestures === "boolean" ? settings.gestures :
       readSettings("aerift.ios.gestures.enabled") === true,
@@ -92,6 +93,9 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const snapshot: IosSnapshot | undefined = connection.state === "ready" ? connection.snapshot : undefined;
   const [appearance, setAppearance] = useState(readAppearance);
   const [preferences, setPreferences] = useState(readWorkspace);
+  const canShareClipboard = preferences.clipboard && preferences.clipboardShare;
+  const clipboardAllowed = useRef(canShareClipboard);
+  const clipboardSelections = useRef(new Set<string>());
   const [objects, setObjects] = useState(readObjects);
   const [objectError, setObjectError] = useState("");
   const [history, setHistory] = useState(readHistory);
@@ -198,8 +202,9 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
     setDiscovering(false);
   }
 
-  function updatePreferences(key: keyof ModuleVisibility | "gestures" | "rememberActivity", checked: boolean) {
+  function updatePreferences(key: keyof ModuleVisibility | "gestures" | "rememberActivity" | "clipboardShare", checked: boolean) {
     const next = { ...preferences, [key]: checked };
+    clipboardAllowed.current = next.clipboard && next.clipboardShare;
     setPreferences(next);
     setSettingsError(!writeSettings(workspaceKey, next));
   }
@@ -252,6 +257,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
             actionsBlocked={settingsOpen} retryKey={cameraRetry} onStatus={setCameraStatus} />}
           mobile={{
             archivedTransfers: history,
+            offerBlockedReason: selection => clipboardSelections.current.has(selection.selectionId) && !clipboardAllowed.current
+              ? "Enable clipboard sharing in Control Center to offer this file." : undefined,
             view: destination === "rift" || destination === "activity" ? destination : "supplement",
             openRift: () => navigate("rift"),
             openActivity: () => navigate("activity"),
@@ -293,7 +300,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
               {destination === "workspace" && <>
                 <MobileWorkspace regions={regions} modules={preferences}
                   pick={pick} received={summary.received} openRift={() => navigate("rift")}
-                  objects={objects} save={saveObjects} />
+                  objects={objects} save={saveObjects} clipboardSharing={canShareClipboard}
+                  markClipboardSelection={id => { clipboardSelections.current.add(id); }} />
                 {objectError && <p role="alert">{objectError}</p>}
               </>}
               {destination === "devices" && <div className="ios-section">
@@ -321,7 +329,10 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
             <legend>Workspace modules</legend>
             {WORKSPACE_MODULES.map(({ id, label }) => <label key={id}><input type="checkbox" checked={preferences[id]}
                 onChange={event => updatePreferences(id, event.currentTarget.checked)} />{label}</label>)}
-            <p>Clipboard is off by default. AeRift saves only text you explicitly pin, and sends it only on request.</p>
+            <p>Clipboard is off by default. AeRift saves only text you explicitly pin.</p>
+            <label><input type="checkbox" checked={preferences.clipboardShare} disabled={!preferences.clipboard}
+              onChange={event => updatePreferences("clipboardShare", event.currentTarget.checked)} />
+              Allow sending clipboard copies through Rift</label>
             {pins.length > 0 && (confirmClearPins ? <div className="ae-actions">
               <Button variant="danger" onClick={() => {
                 if (!objects) return;
