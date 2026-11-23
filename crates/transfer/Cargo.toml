@@ -2,6 +2,7 @@
 name = "aerift-transfer"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
 publish = false
 
 # Standalone until Integration registers the crate in the root workspace.
@@ -22,5 +23,5 @@ uuid = { version = "1", features = ["serde", "v4"] }
 
 [dev-dependencies]
 rcgen = { version = "0.14", default-features = false, features = ["ring"] }
-tokio = { version = "1", features = ["net", "rt-multi-thread", "process"] }
+tokio = { version = "1", features = ["net", "rt-multi-thread"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }

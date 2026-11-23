@@ -2,14 +2,18 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{ErrorCode, Offer, PeerId, State, Status, TransferError};
+
+const OFFER_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TransferKey {
@@ -44,17 +48,26 @@ pub struct ReceiveLimits {
 struct Entry {
     transfer: IncomingTransfer,
     cancel: CancellationToken,
+    trust: CancellationToken,
+    deadline: Instant,
 }
 
 impl Receiver {
     /// The native host provides a private, receiver-owned directory.
     pub fn new(destination: &Path, limits: ReceiveLimits) -> Result<Self, TransferError> {
-        let destination = destination.canonicalize().map_err(|_| ErrorCode::StorageFailed)?;
+        let destination = destination
+            .canonicalize()
+            .map_err(|_| ErrorCode::StorageFailed)?;
         if !destination.is_dir() {
             return Err(ErrorCode::StorageFailed.into());
         }
         let (changes, _) = watch::channel(0);
-        Ok(Self { destination, limits, entries: Mutex::default(), changes })
+        Ok(Self {
+            destination,
+            limits,
+            entries: Mutex::default(),
+            changes,
+        })
     }
 
     /// Subscribe before enumerating transfers. A watch wakeup may represent multiple updates.
@@ -63,20 +76,34 @@ impl Receiver {
     }
 
     pub fn snapshot(&self) -> Vec<IncomingTransfer> {
-        self.entries().values().map(|entry| entry.transfer.clone()).collect()
+        let mut entries = self.entries();
+        self.reap(&mut entries);
+        entries
+            .values()
+            .map(|entry| entry.transfer.clone())
+            .collect()
     }
 
     pub fn respond(&self, key: TransferKey, accept: bool) -> Result<Status, TransferError> {
         let mut entries = self.entries();
-        let active = entries.values()
-            .filter(|entry| matches!(entry.transfer.status.state, State::Accepted | State::Transferring))
+        self.reap(&mut entries);
+        let active = entries
+            .values()
+            .filter(|entry| {
+                matches!(
+                    entry.transfer.status.state,
+                    State::Accepted | State::Transferring
+                )
+            })
             .map(|entry| entry.transfer.offer.size_bytes)
             .fold(0u64, u64::saturating_add);
         let entry = Self::entry(&mut entries, key)?;
         if entry.transfer.status.state != State::Pending {
             return Err(ErrorCode::Conflict.into());
         }
-        if accept && entry.transfer.offer.size_bytes > self.limits.active_bytes.saturating_sub(active) {
+        if accept
+            && entry.transfer.offer.size_bytes > self.limits.active_bytes.saturating_sub(active)
+        {
             entry.transfer.status = Status {
                 state: State::Failed,
                 bytes_transferred: 0,
@@ -85,7 +112,12 @@ impl Receiver {
             self.changed();
             return Err(ErrorCode::StorageFailed.into());
         }
-        entry.transfer.status.state = if accept { State::Accepted } else { State::Rejected };
+        entry.transfer.status.state = if accept {
+            State::Accepted
+        } else {
+            State::Rejected
+        };
+        entry.deadline = Instant::now() + OFFER_TIMEOUT;
         self.changed();
         Ok(entry.transfer.status)
     }
@@ -110,14 +142,35 @@ impl Receiver {
     }
 
     pub fn status(&self, key: TransferKey) -> Result<Status, TransferError> {
-        Ok(Self::entry(&mut self.entries(), key)?.transfer.status)
+        let mut entries = self.entries();
+        let entry = Self::entry(&mut entries, key)?;
+        if Self::reap_entry(entry, Instant::now()) {
+            self.changed();
+        }
+        Ok(entry.transfer.status)
     }
 
-    pub(crate) fn offer(&self, peer: PeerId, offer: Offer) -> Result<(bool, Status), TransferError> {
+    /// Call from the listener's housekeeping tick to expire offers while idle.
+    pub fn expire_offers(&self) {
+        self.reap(&mut self.entries());
+    }
+
+    pub(crate) fn offer(
+        &self,
+        peer: PeerId,
+        offer: Offer,
+        trust: &CancellationToken,
+    ) -> Result<(bool, Status), TransferError> {
         offer.validate()?;
         let key = TransferKey { peer, id: offer.id };
         let mut entries = self.entries();
-        if let Some(entry) = entries.get(&key) {
+        if trust.is_cancelled() {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        if let Some(entry) = entries.get_mut(&key) {
+            if Self::reap_entry(entry, Instant::now()) {
+                self.changed();
+            }
             if entry.transfer.offer == offer {
                 return Ok((false, entry.transfer.status));
             }
@@ -127,17 +180,34 @@ impl Receiver {
             return Err(ErrorCode::Conflict.into());
         }
         let status = Status::new(State::Pending);
-        entries.insert(key, Entry {
-            transfer: IncomingTransfer { key, offer, status, saved_path: None },
-            cancel: CancellationToken::new(),
-        });
+        entries.insert(
+            key,
+            Entry {
+                transfer: IncomingTransfer {
+                    key,
+                    offer,
+                    status,
+                    saved_path: None,
+                },
+                cancel: CancellationToken::new(),
+                trust: trust.clone(),
+                deadline: Instant::now() + OFFER_TIMEOUT,
+            },
+        );
         self.changed();
         Ok((true, status))
     }
 
-    pub(crate) fn start(self: &Arc<Self>, key: TransferKey, size: u64) -> Result<Upload, TransferError> {
+    pub(crate) fn start(
+        self: &Arc<Self>,
+        key: TransferKey,
+        size: u64,
+    ) -> Result<Upload, TransferError> {
         let mut entries = self.entries();
         let entry = Self::entry(&mut entries, key)?;
+        if Self::reap_entry(entry, Instant::now()) {
+            self.changed();
+        }
         match entry.transfer.status.state {
             State::Rejected => return Err(ErrorCode::TransferRejected.into()),
             State::Accepted => {}
@@ -153,19 +223,55 @@ impl Receiver {
             key,
             offer: entry.transfer.offer.clone(),
             cancel: entry.cancel.clone(),
+            trust: entry.trust.clone(),
         })
     }
 
     fn entries(&self) -> MutexGuard<'_, HashMap<TransferKey, Entry>> {
-        self.entries.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn entry(entries: &mut HashMap<TransferKey, Entry>, key: TransferKey) -> Result<&mut Entry, TransferError> {
-        entries.get_mut(&key).ok_or_else(|| ErrorCode::PeerUnavailable.into())
+    fn reap(&self, entries: &mut HashMap<TransferKey, Entry>) {
+        let now = Instant::now();
+        let mut changed = false;
+        for entry in entries.values_mut() {
+            changed |= Self::reap_entry(entry, now);
+        }
+        if changed {
+            self.changed();
+        }
+    }
+
+    fn reap_entry(entry: &mut Entry, now: Instant) -> bool {
+        if entry.trust.is_cancelled() {
+            return Self::cancel_entry(entry);
+        }
+        if matches!(
+            entry.transfer.status.state,
+            State::Pending | State::Accepted
+        ) && entry.deadline <= now
+        {
+            entry.transfer.status.state = State::Failed;
+            entry.transfer.status.error = Some(ErrorCode::PeerUnavailable.into());
+            return true;
+        }
+        false
+    }
+
+    fn entry(
+        entries: &mut HashMap<TransferKey, Entry>,
+        key: TransferKey,
+    ) -> Result<&mut Entry, TransferError> {
+        entries
+            .get_mut(&key)
+            .ok_or_else(|| ErrorCode::PeerUnavailable.into())
     }
 
     fn changed(&self) {
-        self.changes.send_modify(|generation| *generation = generation.wrapping_add(1));
+        self.changes
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
     fn cancel_entry(entry: &mut Entry) -> bool {
@@ -183,12 +289,15 @@ pub(crate) struct Upload {
     key: TransferKey,
     pub offer: Offer,
     pub cancel: CancellationToken,
+    pub trust: CancellationToken,
 }
 
 impl Upload {
     pub fn tempfile(&self) -> Result<NamedTempFile, TransferError> {
-        tempfile::Builder::new().prefix(".aerift-part-")
-            .tempfile_in(&self.receiver.destination).map_err(|_| ErrorCode::StorageFailed.into())
+        tempfile::Builder::new()
+            .prefix(".aerift-part-")
+            .tempfile_in(&self.receiver.destination)
+            .map_err(|_| ErrorCode::StorageFailed.into())
     }
 
     pub fn progress(&self, bytes: u64) -> Result<(), TransferError> {
@@ -205,6 +314,9 @@ impl Upload {
     pub fn publish(&self, mut file: NamedTempFile) -> Result<Status, TransferError> {
         let mut entries = self.receiver.entries();
         let entry = Receiver::entry(&mut entries, self.key)?;
+        if Receiver::reap_entry(entry, Instant::now()) {
+            self.receiver.changed();
+        }
         if entry.transfer.status.state != State::Transferring {
             return Err(ErrorCode::Cancelled.into());
         }
@@ -233,9 +345,13 @@ impl Upload {
 
     pub fn fail(&self, error: TransferError) {
         let mut entries = self.receiver.entries();
-        if let Ok(entry) = Receiver::entry(&mut entries, self.key)
-            && entry.transfer.status.state == State::Transferring
-        {
+        if let Ok(entry) = Receiver::entry(&mut entries, self.key) {
+            if Receiver::reap_entry(entry, Instant::now()) {
+                self.receiver.changed();
+            }
+            if entry.transfer.status.state != State::Transferring {
+                return;
+            }
             entry.transfer.status.state = State::Failed;
             entry.transfer.status.error = Some(error);
             self.receiver.changed();
@@ -246,5 +362,49 @@ impl Upload {
 impl Drop for Upload {
     fn drop(&mut self) {
         self.fail(ErrorCode::NetworkError.into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expired_accepted_offer_releases_storage_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let receiver = Receiver::new(
+            dir.path(),
+            ReceiveLimits {
+                active_bytes: 10,
+                session_offers: 4,
+            },
+        )
+        .unwrap();
+        let peer = PeerId::from_tls_leaf(b"fixture");
+        let reserve = |name: &str| {
+            let id = Uuid::new_v4();
+            receiver
+                .offer(
+                    peer,
+                    Offer {
+                        id,
+                        name: name.to_owned(),
+                        size_bytes: 10,
+                        sha256: "a".repeat(64),
+                    },
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            let key = TransferKey { peer, id };
+            receiver.respond(key, true).unwrap();
+            key
+        };
+        let first = reserve("first.bin");
+        receiver.entries().get_mut(&first).unwrap().deadline = Instant::now();
+        let next = reserve("next.bin");
+        let expired = receiver.status(first).unwrap();
+        assert_eq!(expired.state, State::Failed);
+        assert_eq!(expired.error.unwrap().code, ErrorCode::PeerUnavailable);
+        assert_eq!(receiver.status(next).unwrap().state, State::Accepted);
     }
 }

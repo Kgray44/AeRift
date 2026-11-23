@@ -3,15 +3,18 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{
-    Method, Request, Response, StatusCode, body::Incoming, header,
-    server::conn::http1, service::service_fn,
+    Method, Request, Response, StatusCode, body::Incoming, header, server::conn::http1,
+    service::service_fn,
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
 
-use crate::{ErrorCode, Offer, PeerId, Receiver, TransferError, TransferKey, parse_id, read_control};
 use crate::receiver::Upload;
+use crate::{
+    ErrorCode, Offer, PeerId, Receiver, TransferError, TransferKey, parse_id, read_control,
+};
 
 type Reply = Response<Full<Bytes>>;
 
@@ -31,22 +34,34 @@ where
         .timer(TokioTimer::new())
         .header_read_timeout(Duration::from_secs(10))
         .max_buf_size(32 * 1024)
-        .serve_connection(TokioIo::new(io), service_fn(|request| {
-            let trusted = is_trusted(peer);
-            let receiver = Arc::clone(&receiver);
-            async move {
-                Ok::<_, Infallible>(if trusted {
-                    route(request, peer, receiver).await
-                } else {
-                    error(ErrorCode::PeerUntrusted.into())
-                })
-            }
-        }))
+        .serve_connection(
+            TokioIo::new(io),
+            service_fn(|request| {
+                let trusted = is_trusted(peer);
+                let receiver = Arc::clone(&receiver);
+                async move {
+                    Ok::<_, Infallible>(if trusted {
+                        serve_request(request, peer, receiver, CancellationToken::new()).await
+                    } else {
+                        error(ErrorCode::PeerUntrusted.into())
+                    })
+                }
+            }),
+        )
         .await
         .map_err(|_| ErrorCode::NetworkError.into())
 }
 
-async fn route(request: Request<Incoming>, peer: PeerId, receiver: Arc<Receiver>) -> Reply {
+/// Dispatch after the caller has verified both TLS possession and local trust.
+pub async fn serve_request(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+) -> Reply {
+    if trust.is_cancelled() {
+        return error(ErrorCode::PeerUntrusted.into());
+    }
     let path = request.uri().path();
     if request.uri().query().is_some() || request.version() != hyper::Version::HTTP_11 {
         return error(ErrorCode::InvalidRequest.into());
@@ -55,7 +70,7 @@ async fn route(request: Request<Incoming>, peer: PeerId, receiver: Arc<Receiver>
         return error(ErrorCode::UnsupportedVersion.into());
     }
     if path == "/v1/transfers" && request.method() == Method::POST {
-        return offer(request, peer, &receiver).await;
+        return offer(request, peer, &receiver, &trust).await;
     }
     let Some(path) = path.strip_prefix("/v1/transfers/") else {
         return error(ErrorCode::PeerUnavailable.into());
@@ -94,17 +109,39 @@ async fn route(request: Request<Incoming>, peer: PeerId, receiver: Arc<Receiver>
     }
 }
 
-async fn offer(request: Request<Incoming>, peer: PeerId, receiver: &Receiver) -> Reply {
-    let body = match tokio::time::timeout(Duration::from_secs(10), read_control(request.into_body())).await {
+async fn offer(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: &Receiver,
+    trust: &CancellationToken,
+) -> Reply {
+    let body = match tokio::time::timeout(
+        Duration::from_secs(10),
+        read_control(request.into_body()),
+    )
+    .await
+    {
         Ok(Ok(body)) => body,
-        Ok(Err(true)) => return json(StatusCode::PAYLOAD_TOO_LARGE, &TransferError::from(ErrorCode::InvalidRequest)),
+        Ok(Err(true)) => {
+            return json(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &TransferError::from(ErrorCode::InvalidRequest),
+            );
+        }
         _ => return error(ErrorCode::InvalidRequest.into()),
     };
     let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
         return error(ErrorCode::InvalidRequest.into());
     };
-    match receiver.offer(peer, offer) {
-        Ok((created, status)) => json(if created { StatusCode::CREATED } else { StatusCode::OK }, &status),
+    match receiver.offer(peer, offer, trust) {
+        Ok((created, status)) => json(
+            if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            },
+            &status,
+        ),
         Err(failure) => error(failure),
     }
 }
@@ -117,7 +154,12 @@ fn content_length(request: &Request<Incoming>) -> Option<u64> {
     {
         return None;
     }
-    headers.get(header::CONTENT_LENGTH)?.to_str().ok()?.parse().ok()
+    headers
+        .get(header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
 }
 
 async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, TransferError> {
@@ -130,17 +172,22 @@ async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, T
         let frame = tokio::select! {
             biased;
             _ = upload.cancel.cancelled() => return Err(ErrorCode::Cancelled.into()),
+            _ = upload.trust.cancelled() => return Err(ErrorCode::Cancelled.into()),
             next = tokio::time::timeout(Duration::from_secs(30), body.frame()) =>
                 next.map_err(|_| ErrorCode::PeerUnavailable)?,
         };
         let Some(frame) = frame else { break };
-        let data = frame.map_err(|_| ErrorCode::IntegrityFailed)?
-            .into_data().map_err(|_| ErrorCode::InvalidRequest)?;
+        let data = frame
+            .map_err(|_| ErrorCode::IntegrityFailed)?
+            .into_data()
+            .map_err(|_| ErrorCode::InvalidRequest)?;
         bytes += data.len() as u64;
         if bytes > upload.offer.size_bytes {
             return Err(ErrorCode::IntegrityFailed.into());
         }
-        file.write_all(&data).await.map_err(|_| ErrorCode::StorageFailed)?;
+        file.write_all(&data)
+            .await
+            .map_err(|_| ErrorCode::StorageFailed)?;
         hash.update(&data);
         upload.progress(bytes)?;
     }
@@ -148,7 +195,9 @@ async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, T
         return Err(ErrorCode::IntegrityFailed.into());
     }
     file.flush().await.map_err(|_| ErrorCode::StorageFailed)?;
-    file.sync_all().await.map_err(|_| ErrorCode::StorageFailed)?;
+    file.sync_all()
+        .await
+        .map_err(|_| ErrorCode::StorageFailed)?;
     drop(file);
     upload.publish(temporary)
 }
@@ -156,11 +205,16 @@ async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, T
 fn error(failure: TransferError) -> Reply {
     let status = match failure.code {
         ErrorCode::InvalidRequest | ErrorCode::UnsupportedVersion => StatusCode::BAD_REQUEST,
-        ErrorCode::PeerUntrusted => StatusCode::FORBIDDEN,
+        ErrorCode::PeerUntrusted | ErrorCode::PairingRejected => StatusCode::FORBIDDEN,
+        ErrorCode::PairingExpired => StatusCode::GONE,
         ErrorCode::PeerUnavailable => StatusCode::NOT_FOUND,
-        ErrorCode::Conflict | ErrorCode::TransferRejected | ErrorCode::Cancelled => StatusCode::CONFLICT,
+        ErrorCode::Conflict | ErrorCode::TransferRejected | ErrorCode::Cancelled => {
+            StatusCode::CONFLICT
+        }
         ErrorCode::IntegrityFailed => StatusCode::UNPROCESSABLE_ENTITY,
-        ErrorCode::StorageFailed | ErrorCode::NetworkError => StatusCode::INTERNAL_SERVER_ERROR,
+        ErrorCode::StorageFailed | ErrorCode::NetworkError | ErrorCode::InternalError => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     };
     json(status, &failure)
 }
