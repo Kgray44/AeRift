@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+from contextlib import contextmanager
 import datetime as dt
 import hashlib
 import json
@@ -13,6 +14,7 @@ import re
 import secrets
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -245,16 +247,51 @@ class Runner:
         self.api_key.chmod(0o600)
         self.run(["openssl", "pkey", "-in", str(self.api_key), "-noout", "-check"])
 
-    def xcode_settings(self, project, scheme):
+    def xcode_settings(self, project, scheme, configuration):
         output = self.run([
             "xcodebuild", "-quiet", "-showBuildSettings", "-json", "-project", str(project),
-            "-scheme", scheme, "-configuration", "Release", "-destination", "generic/platform=iOS",
+            "-scheme", scheme, "-configuration", configuration, "-destination", "generic/platform=iOS",
         ])
         apps = [row for row in json.loads(output)
                 if row["buildSettings"].get("PRODUCT_BUNDLE_IDENTIFIER") == BUNDLE
                 and row["buildSettings"].get("WRAPPER_EXTENSION") == "app"]
         require(len(apps) == 1, "EXACT_IOS_TARGET_REQUIRED")
         return apps[0]
+
+    @contextmanager
+    def tauri_options(self, host, env):
+        """Keep the mobile CLI's Xcode options server alive for the archive."""
+        self.stage = "TAURI_XCODE_OPTIONS"
+        temporary = self.temp / "tauri-options"
+        temporary.mkdir(mode=0o700)
+        environment = {**env, "TMPDIR": str(temporary) + "/"}
+        address = temporary / f"{BUNDLE}-server-addr"
+        log_path = ((self.public if self.args.mode == "unsigned" else self.temp)
+                    / "tauri-xcode-options.log")
+        with log_path.open("wb") as log:
+            process = subprocess.Popen(
+                ["npm", "run", "tauri", "--", "ios", "build", "--ci", "--open",
+                 "--target", "aarch64", "--", "--locked"],
+                cwd=host, env=environment, stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            try:
+                deadline = time.monotonic() + 180
+                while not address.is_file() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.25)
+                require(address.is_file() and process.poll() is None, "TAURI_XCODE_OPTIONS_UNAVAILABLE")
+                require(re.fullmatch(r"127\.0\.0\.1:[0-9]+", address.read_text()), "TAURI_OPTIONS_ADDRESS_INVALID")
+                yield environment
+            finally:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
 
     def archive(self):
         self.stage = "TOOLCHAIN"
@@ -274,7 +311,6 @@ class Runner:
         public_env = {key: value for key, value in os.environ.items() if key not in SECRET_NAMES}
         host = self.root / "apps/aerift"
         self.run(["npm", "ci"], cwd=self.root, env=public_env, public_log=not signed)
-        self.run(["npm", "run", "build"], cwd=host, env=public_env, public_log=not signed)
         self.run(["bash", str(self.root / "apps/ios/prepare-apple.sh"), str(host)], env=public_env, public_log=not signed)
         project_root = host / "src-tauri/gen/apple"
         projects = sorted(project_root.glob("*.xcodeproj"))
@@ -284,43 +320,48 @@ class Runner:
         schemes = listed["project"].get("schemes", [])
         require(len(schemes) == 1, "ONE_TAURI_APP_SCHEME_REQUIRED")
         scheme = schemes[0]
+        releases = [name for name in listed["project"].get("configurations", [])
+                    if name.casefold() == "release"]
+        require(len(releases) == 1, "ONE_TAURI_RELEASE_CONFIGURATION_REQUIRED")
+        configuration = releases[0]
 
-        if signed:
-            self.configure_signing()
-            self.app_record()
-            self.stage = "SIGNING_SETTINGS_VALIDATION"
-            target = self.xcode_settings(project, scheme)["target"]
-            overrides = {
-                "CODE_SIGNING_ALLOWED": "YES", "CODE_SIGN_STYLE": "Manual", "DEVELOPMENT_TEAM": TEAM,
-                "CODE_SIGN_IDENTITY": self.identity, "PROVISIONING_PROFILE_SPECIFIER": self.profile_uuid,
-            }
-            overlay = {
-                "include": [{"path": str(project_root / "project.yml"), "relativePaths": True}],
-                "targets": {target: {"settings": {"configs": {"Release": overrides}}}},
-            }
-            spec = self.private_file("signed-project.json", json.dumps(overlay).encode())
-            self.run(["xcodegen", "generate", "--spec", str(spec), "--project-root", str(project_root),
-                      "--project", str(project_root)], env=public_env)
-            settings = self.xcode_settings(project, scheme)["buildSettings"]
-            for key, value in overrides.items():
-                require(settings.get(key) == value, f"APP_SIGNING_SETTING_INVALID_{key}")
-            self.receipt["appTargetSigningSettingsValidated"] = True
-            helper = subprocess.run(["xcrun", "altool", "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            help_text = (helper.stdout + helper.stderr).decode("utf-8", errors="replace")
-            self.explicit_p8 = "--p8-file-path" in help_text
-            require(self.explicit_p8 or "API_PRIVATE_KEYS_DIR" in help_text, "ALTOOL_KEY_LOOKUP_UNVERIFIED")
-
-        self.stage = "DEVICE_ARCHIVE"
         self.archive_path = self.temp / "AeRift.xcarchive"
-        command = [
-            "xcodebuild", "-quiet", "-project", str(project), "-scheme", scheme, "-configuration", "Release",
-            "-destination", "generic/platform=iOS", "-archivePath", str(self.archive_path),
-            "-derivedDataPath", str(self.temp / "DerivedData"), "archive",
-            f"MARKETING_VERSION={self.args.version}", f"CURRENT_PROJECT_VERSION={self.args.build}",
-        ]
-        if not signed:
-            command.extend(["CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO"])
-        self.run(command, env=public_env, public_log=not signed)
+        with self.tauri_options(host, public_env) as xcode_env:
+            if signed:
+                self.configure_signing()
+                self.app_record()
+                self.stage = "SIGNING_SETTINGS_VALIDATION"
+                target = self.xcode_settings(project, scheme, configuration)["target"]
+                overrides = {
+                    "CODE_SIGNING_ALLOWED": "YES", "CODE_SIGN_STYLE": "Manual", "DEVELOPMENT_TEAM": TEAM,
+                    "CODE_SIGN_IDENTITY": self.identity, "PROVISIONING_PROFILE_SPECIFIER": self.profile_uuid,
+                }
+                overlay = {
+                    "include": [{"path": str(project_root / "project.yml"), "relativePaths": True}],
+                    "targets": {target: {"settings": {"configs": {configuration: overrides}}}},
+                }
+                spec = self.private_file("signed-project.json", json.dumps(overlay).encode())
+                self.run(["xcodegen", "generate", "--spec", str(spec), "--project-root", str(project_root),
+                          "--project", str(project_root)], env=xcode_env)
+                settings = self.xcode_settings(project, scheme, configuration)["buildSettings"]
+                for key, value in overrides.items():
+                    require(settings.get(key) == value, f"APP_SIGNING_SETTING_INVALID_{key}")
+                self.receipt["appTargetSigningSettingsValidated"] = True
+                helper = subprocess.run(["xcrun", "altool", "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                help_text = (helper.stdout + helper.stderr).decode("utf-8", errors="replace")
+                self.explicit_p8 = "--p8-file-path" in help_text
+                require(self.explicit_p8 or "API_PRIVATE_KEYS_DIR" in help_text, "ALTOOL_KEY_LOOKUP_UNVERIFIED")
+
+            self.stage = "DEVICE_ARCHIVE"
+            command = [
+                "xcodebuild", "-quiet", "-project", str(project), "-scheme", scheme, "-configuration", configuration,
+                "-destination", "generic/platform=iOS", "-archivePath", str(self.archive_path),
+                "-derivedDataPath", str(self.temp / "DerivedData"), "archive",
+                f"MARKETING_VERSION={self.args.version}", f"CURRENT_PROJECT_VERSION={self.args.build}",
+            ]
+            if not signed:
+                command.extend(["CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO"])
+            self.run(command, env=xcode_env, public_log=not signed)
         self.stage = "ARCHIVE_VALIDATION"
         apps = list((self.archive_path / "Products/Applications").glob("*.app"))
         require(len(apps) == 1, "ONE_ARCHIVED_APP_REQUIRED")
