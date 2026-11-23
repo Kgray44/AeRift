@@ -92,12 +92,12 @@ try {
     if (-not $target) { throw 'AeRift WebView did not become available.' }
 
     $socket.ConnectAsync([uri]$target.webSocketDebuggerUrl, $deadline.Token).GetAwaiter().GetResult() | Out-Null
-    $home = @'
+    $homeCheck = @'
 document.querySelector('h1')?.textContent === 'AeRift' &&
 document.querySelector('#aerift-desktop-destination')?.textContent === 'Home' &&
 !!document.querySelector('.ae-orbit-trigger')
 '@
-    Wait-AppCondition $socket ([ref]$id) $home $deadline.Token 'AeRift did not render Simplified Home with Orbit.'
+    Wait-AppCondition $socket ([ref]$id) $homeCheck $deadline.Token 'AeRift did not render Simplified Home with Orbit.'
 
     $id += 1
     $image = Invoke-Cdp $socket $id 'Page.captureScreenshot' @{ format = 'png'; fromSurface = $true } $deadline.Token
