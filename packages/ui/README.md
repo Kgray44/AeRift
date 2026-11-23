@@ -4,7 +4,7 @@
 
 ## Host integration
 
-The shared Windows and iOS entry point imports the package and its stylesheet once. Provide a stable v1 `AppPort` from the host. The UI subscribes to snapshots and delegates native file picking and transfer requests to the port. The workspace supports paired device selection, outgoing offers, incoming accept or decline, and cancellation. Supply pairing controls through the shell toolbar.
+The shared Windows and iOS entry point imports the package and its stylesheet once. Provide a stable v1 `AppPort` from the host. The UI subscribes to snapshots and delegates native file picking and transfer requests to the port. The workspace supports paired device selection, outgoing offers, incoming accept or decline, cancellation, and the pairing sheet. Pairing supports invitation creation, code redemption and explicit approval or denial of incoming requests. The native AppPort owns trust and reports pending requests and saved devices in its snapshots.
 
 ```tsx
 import { AppShell, ThemeProvider, TransferWorkspace } from "@aerift/ui";
@@ -22,7 +22,7 @@ export function App() {
 }
 ```
 
-The optional `gesture` render prop supplies `intent`, `busy` and `send(intent)`. The gesture controller captures the intent when arming, discards it on interruption or target change, and calls the same send action as the button after a valid release. The workspace checks the captured IDs against the current file and paired online device and serializes composer operations independently of each transfer row. The native adapter remains responsible for authorization. `GestureIndicator` displays state supplied by the caller.
+The optional `gesture` render prop supplies `intent`, `busy` and `send(intent)`. The gesture controller captures the intent when arming, discards it on interruption or target change, and calls the same send action as the button after a valid release. The workspace checks the captured IDs against the current file and paired online device and serializes composer operations independently of each transfer row. The slot also exposes `incoming` and `accept(intent)`. Bind a gesture only to an incoming offer the user explicitly selected. Acceptance rechecks the transfer ID, peer and pending state and calls the same action as the Accept button. The native adapter remains responsible for authorization. `GestureIndicator` displays state supplied by the caller.
 
 The host should resolve `transfer({ action: "offer", ... })` as soon as it has allocated and published the pending transfer receipt. Stream progress and terminal results through `watch`. Keep the native command handler able to process consent and cancellation while a stream is active. The UI keeps each transfer row independently actionable even when another command receipt is delayed.
 

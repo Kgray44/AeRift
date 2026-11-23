@@ -13,6 +13,8 @@ Open the localhost URL printed by Vite. Use **Scenarios** to switch between conn
 
 In **Delayed offer receipt**, send a file, cancel another transfer and accept or decline the incoming request before pressing **Resolve demo offer**. The fixture holds the offer promise until that final step.
 
+In **Pairing request**, open **Review pairing request**. Create and copy the demo invitation, submit it through the redemption form, or approve or deny the incoming request. Submitting a different code exercises the expiry error.
+
 ```sh
 npx tsc -p packages/ui/tsconfig.json
 node --test tests/ui/send-action.test.mjs

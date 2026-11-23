@@ -283,3 +283,28 @@
   .ae-progress > span { background: Highlight; forced-color-adjust: none; }
   .ae-dot, .ae-gesture-mark span { background: CanvasText; forced-color-adjust: none; }
 }
+
+.ae-pairing, .ae-pair-section, .ae-pair-request { display: grid; gap: var(--ae-space-2); }
+.ae-pairing { gap: var(--ae-space-4); }
+.ae-pairing > p:empty, .ae-pairing [role="status"]:empty { position: absolute; inline-size: 1px; block-size: 1px; }
+.ae-pairing [role="alert"] { color: var(--ae-error); }
+.ae-pair-section + .ae-pair-section { border-block-start: 1px solid var(--ae-display-edge, var(--ae-edge)); padding-block-start: var(--ae-space-4); }
+.ae-pair-request {
+  padding: var(--ae-space-3);
+  border: 1px solid var(--ae-display-edge, var(--ae-edge));
+  border-radius: var(--ae-radius-content);
+  background: var(--ae-content);
+  overflow-wrap: anywhere;
+}
+.ae-pairing .ae-button { justify-self: start; }
+.ae-pairing :is(input, textarea) {
+  inline-size: 100%;
+  min-block-size: var(--ae-target);
+  padding: var(--ae-space-2) var(--ae-space-3);
+  border: 1px solid var(--ae-display-edge, var(--ae-control-edge));
+  border-radius: var(--ae-radius-control);
+  background: var(--ae-content);
+  color: var(--ae-text);
+  font: inherit;
+}
+.ae-pairing textarea { resize: vertical; }
