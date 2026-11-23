@@ -1,4 +1,4 @@
-import { useId, type ComponentPropsWithRef, type HTMLAttributes, type ReactNode } from "react";
+import { useId, type PointerEvent, type ComponentPropsWithRef, type HTMLAttributes, type ReactNode } from "react";
 import type { Device, FileInfo, Transfer } from "@aerift/app-contract";
 
 type SurfaceProps = HTMLAttributes<HTMLDivElement> & { material?: "content" | "raised" | "chrome" | "overlay" };
@@ -16,7 +16,10 @@ export function AppShell({ brand = "AeRift", toolbar, children }: {
       <a className="ae-skip" href={`#${mainId}`}>Skip to content</a>
       <header className="ae-header">
         <GlassSurface material="chrome" className="ae-toolbar">
-          <div className="ae-brand"><span className="ae-mark" aria-hidden="true">◇</span>{brand}</div>
+          <div className="ae-brand">
+            <span className="ae-mark" aria-hidden="true"><span /></span>
+            {typeof brand === "string" ? <h1>{brand}</h1> : brand}
+          </div>
           {toolbar && <div className="ae-actions">{toolbar}</div>}
         </GlassSurface>
       </header>
@@ -31,11 +34,22 @@ export interface ButtonProps extends ComponentPropsWithRef<"button"> {
   loadingLabel?: string;
 }
 
+function setPressOrigin(event: PointerEvent<HTMLButtonElement>) {
+  if (event.currentTarget.closest("[data-ae-theme='glass']") === null) return;
+  const { left, top, width, height } = event.currentTarget.getBoundingClientRect();
+  if (!width || !height) return;
+  const percent = (value: number) => `${Math.min(100, Math.max(0, value * 100))}%`;
+  event.currentTarget.style.setProperty("--ae-press-x", percent((event.clientX - left) / width));
+  event.currentTarget.style.setProperty("--ae-press-y", percent((event.clientY - top) / height));
+}
+
 export function Button({ variant = "secondary", loading = false, loadingLabel = "Please wait",
   disabled, type = "button", children, className = "", ...props }: ButtonProps) {
   return (
     <button {...props} type={type} disabled={disabled} aria-disabled={loading || props["aria-disabled"]}
       aria-busy={loading || props["aria-busy"]} data-variant={variant} className={`ae-button ${className}`}
+      onPointerEnter={event => { setPressOrigin(event); props.onPointerEnter?.(event); }}
+      onPointerDown={event => { setPressOrigin(event); props.onPointerDown?.(event); }}
       onClick={loading ? (event) => { event.preventDefault(); event.stopPropagation(); } : props.onClick}>
       {loading ? <><span className="ae-spinner" aria-hidden="true" />{loadingLabel}</> : children}
     </button>
@@ -111,8 +125,13 @@ export function TransferProgress({ transfer, error, action }: { transfer: Transf
   const percent = transfer.state === "completed" ? 100 : transfer.file.sizeBytes > 0
     ? Math.min(100, Math.max(0, Math.round(transfer.bytesTransferred / transfer.file.sizeBytes * 100))) : 0;
   return <GlassSurface className="ae-transfer">
-    <div className="ae-transfer-top"><strong id={id}>{transfer.file.name}</strong>
-      <span>{transfer.direction === "incoming" ? "Incoming" : "Outgoing"}</span></div>
+    <div className="ae-transfer-top">
+      <span className="ae-transfer-glyph" aria-hidden="true">{transfer.direction === "incoming" ? "↙" : "↗"}</span>
+      <div className="ae-transfer-file">
+        <strong id={id}>{transfer.file.name}</strong>
+        <small>{transfer.direction === "incoming" ? "Incoming" : "Outgoing"}</small>
+      </div>
+    </div>
     <span className="ae-transfer-status" data-state={transfer.state} role="status">{transferLabels[transfer.state]}</span>
     {["accepted", "transferring", "completed"].includes(transfer.state) && <>
       <div className="ae-progress" role="progressbar" aria-labelledby={id} aria-valuenow={percent}>

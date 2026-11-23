@@ -56,6 +56,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
 }) {
   const titleId = useId();
   const activityId = useId();
+  const [destination, setDestination] = useState<"send" | "activity">("send");
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
   const [watchError, setWatchError] = useState<string>();
   const [watchAttempt, setWatchAttempt] = useState(0);
@@ -70,6 +71,15 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const [pairError, setPairError] = useState<string>();
   const [toast, setToast] = useState<{ message: string; kind: "success" | "error" }>();
   const active = useRef<{ port: AppPort; snapshot?: AppSnapshot; selection: FileSelection | null; selectedId?: string; operations: Map<string, Operation>; watchFailed: boolean } | undefined>(undefined);
+
+  useEffect(() => {
+    function syncDestination() {
+      setDestination(window.location.hash === `#${activityId}` ? "activity" : "send");
+    }
+    syncDestination();
+    window.addEventListener("hashchange", syncDestination);
+    return () => window.removeEventListener("hashchange", syncDestination);
+  }, [activityId]);
 
   useEffect(() => {
     let disposed = false;
@@ -171,6 +181,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const pairingBusy = operations.get("pairing");
   const pairingDisabled = !snapshot || !!watchError;
   const pairs = snapshot?.devices.filter(device => device.paired) ?? [];
+  const online = pairs.filter(device => device.online).length;
   const target = pairs.find(device => device.id === selectedId && device.online);
   const intent = target && selection ? { deviceId: target.id, selectionId: selection.selectionId } : null;
 
@@ -244,15 +255,31 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   }
 
   return <>
+    <div className="ae-workspace-heading">
+      <div>
+        <h2>Transfer files</h2>
+        <p>Send a file to a paired device on your local network.</p>
+      </div>
+      <nav className="ae-workspace-nav ae-surface" data-material="chrome" data-destination={destination}
+        aria-label="Transfer workspace">
+        <a href={`#${titleId}`} onClick={() => setDestination("send")}
+          aria-current={destination === "send" ? "location" : undefined}>Send</a>
+        <a href={`#${activityId}`} onClick={() => setDestination("activity")}
+          aria-current={destination === "activity" ? "location" : undefined}>Activity</a>
+      </nav>
+    </div>
     <div className="ae-workspace">
       <section aria-labelledby={titleId}>
         <GlassSurface material="raised" className="ae-panel">
-          <h2 id={titleId}>New transfer</h2>
-          <div className="ae-file-slot">{selection
+          <div className="ae-panel-heading">
+            <h3 id={titleId} tabIndex={-1}>New transfer</h3>
+            {snapshot && !watchError && <small>{online} paired {online === 1 ? "device" : "devices"} online</small>}
+          </div>
+          <div className="ae-file-slot" data-selected={!!selection}>{selection
             ? <FileCard file={selection} action={<Button variant="quiet" onClick={chooseFile}
               disabled={pending !== undefined && pending !== "file"} loading={pending === "file"} loadingLabel="Opening…">Change</Button>} />
             : <Button onClick={chooseFile} loading={pending === "file"} loadingLabel="Opening picker…"
-              disabled={!snapshot || !!watchError || (pending !== undefined && pending !== "file")}>Choose a file</Button>}
+              disabled={!snapshot || !!watchError || (pending !== undefined && pending !== "file")}><span className="ae-file-slot-glyph" aria-hidden="true" />Choose a file</Button>}
           </div>
           <DevicePicker devices={pairs} selectedId={selectedId} onSelect={selectDevice}
             loading={!snapshot && !watchError} error={watchError} disabled={pending !== undefined} />
@@ -273,7 +300,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       </section>
       <section aria-labelledby={activityId}>
         <GlassSurface material="raised" className="ae-panel">
-          <h2 id={activityId}>Activity</h2>
+          <div className="ae-panel-heading"><h3 id={activityId} tabIndex={-1}>Activity</h3></div>
           {snapshot?.transfers.length ? snapshot.transfers.map(transfer => {
             const active = ["pending", "accepted", "transferring"].includes(transfer.state);
             const incoming = transfer.state === "pending" && transfer.direction === "incoming";
@@ -293,7 +320,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
                   loading={operation === "cancel"} loadingLabel="Cancelling…"
                   onClick={() => void updateTransfer({ action: "cancel", transferId: transfer.id })}>Cancel transfer</Button>}
               </div>} />;
-          }) : <p>No transfers yet.</p>}
+          }) : <div className="ae-activity-empty"><span aria-hidden="true">↕</span><p>No transfers yet.</p></div>}
           {activityFooter}
         </GlassSurface>
       </section>

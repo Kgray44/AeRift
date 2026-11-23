@@ -1,0 +1,515 @@
+.ae-theme[data-ae-theme="glass"] {
+  --ae-radius-control: 999px;
+  --ae-radius-content: 1.25rem;
+  --ae-radius-panel: 2rem;
+  --ae-size-title: 1.3125rem;
+  --ae-size-display: clamp(2.5rem, 6vw, 4.625rem);
+  --ae-press-scale: .955;
+  --ae-blur-chrome: 13px;
+  --ae-blur-overlay: 20px;
+  --ae-saturation: 1.42;
+  --ae-optical-rim: rgb(223 244 255 / 56%);
+  --ae-optical-sheen: rgb(229 246 255 / 20%);
+  --ae-optical-cool: rgb(120 181 255 / 27%);
+  --ae-optical-shade: rgb(3 10 27 / 38%);
+  --ae-optical-panel: rgb(15 25 47 / 79%);
+  --ae-optical-card: rgb(15 23 42 / 79%);
+  --ae-optical-toolbar: rgb(20 32 57 / 57%);
+  --ae-optical-overlay: rgb(19 29 48 / 86%);
+  --ae-optical-stage: #182b50;
+  --ae-optical-lamp: #587db8;
+  --ae-optical-bloom: #584983;
+  --ae-optical-depth: #121b35;
+  --ae-optical-glow: #97dafa;
+  --ae-optical-primary: #ade5fb;
+  --ae-optical-on-primary: #12283b;
+}
+
+.ae-theme[data-ae-theme="glass"][data-scheme="light"] {
+  --ae-optical-rim: rgb(255 255 255 / 96%);
+  --ae-optical-sheen: rgb(255 255 255 / 66%);
+  --ae-optical-cool: rgb(102 151 221 / 26%);
+  --ae-optical-shade: rgb(44 72 130 / 22%);
+  --ae-optical-panel: rgb(246 249 255 / 76%);
+  --ae-optical-card: rgb(248 251 255 / 84%);
+  --ae-optical-toolbar: rgb(247 249 255 / 62%);
+  --ae-optical-overlay: rgb(247 250 255 / 88%);
+  --ae-optical-stage: #d5e5fc;
+  --ae-optical-lamp: #a8cafa;
+  --ae-optical-bloom: #d6bcf1;
+  --ae-optical-depth: #e3ebfb;
+  --ae-optical-glow: #f7fdff;
+  --ae-optical-primary: #204777;
+  --ae-optical-on-primary: #fff;
+}
+
+@media (prefers-color-scheme: light) {
+  .ae-theme[data-ae-theme="glass"][data-scheme="system"] {
+    --ae-optical-rim: rgb(255 255 255 / 96%);
+    --ae-optical-sheen: rgb(255 255 255 / 66%);
+    --ae-optical-cool: rgb(102 151 221 / 26%);
+    --ae-optical-shade: rgb(44 72 130 / 22%);
+    --ae-optical-panel: rgb(246 249 255 / 76%);
+    --ae-optical-card: rgb(248 251 255 / 84%);
+    --ae-optical-toolbar: rgb(247 249 255 / 62%);
+    --ae-optical-overlay: rgb(247 250 255 / 88%);
+    --ae-optical-stage: #d5e5fc;
+    --ae-optical-lamp: #a8cafa;
+    --ae-optical-bloom: #d6bcf1;
+    --ae-optical-depth: #e3ebfb;
+    --ae-optical-glow: #f7fdff;
+    --ae-optical-primary: #204777;
+    --ae-optical-on-primary: #fff;
+  }
+}
+
+.ae-theme[data-ae-theme="glass"] .ae-shell {
+  --ae-shell-inset: clamp(.75rem, 4vw, 2.25rem);
+  padding-inline: max(var(--ae-shell-inset), env(safe-area-inset-left))
+    max(var(--ae-shell-inset), env(safe-area-inset-right));
+  padding-block-start: max(.75rem, env(safe-area-inset-top));
+  background:
+    radial-gradient(ellipse at 55% -18%, var(--ae-optical-lamp), transparent 53%),
+    radial-gradient(ellipse at 88% 27%, var(--ae-optical-bloom), transparent 34%),
+    radial-gradient(ellipse at 3% 32%, var(--ae-ambient-b), transparent 44%),
+    radial-gradient(ellipse at 23% 75%, var(--ae-optical-depth), transparent 59%),
+    var(--ae-base);
+  background-size: 100% min(88rem, 145vh);
+  background-repeat: no-repeat;
+}
+
+.ae-theme[data-ae-theme="glass"] .ae-header {
+  position: sticky;
+  inset-block-start: max(.5rem, env(safe-area-inset-top));
+}
+
+.ae-theme[data-ae-theme="glass"] .ae-toolbar {
+  flex-wrap: wrap;
+  min-block-size: 3.875rem;
+  padding: .45rem .55rem .45rem .875rem;
+}
+.ae-theme[data-ae-theme="glass"] .ae-toolbar > .ae-actions { gap: .25rem; }
+.ae-theme[data-ae-theme="glass"] .ae-toolbar .ae-status {
+  border-inline-end: 1px solid var(--ae-edge);
+  margin-inline-end: .25rem;
+  padding-inline-end: .55rem;
+}
+.ae-theme[data-ae-theme="glass"] .ae-brand h1 { font-size: inherit; letter-spacing: -.03em; }
+.ae-theme[data-ae-theme="glass"] .ae-mark {
+  position: relative;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border-radius: .875rem;
+  border: 1px solid var(--ae-optical-rim);
+  background: linear-gradient(150deg, var(--ae-optical-sheen), transparent 70%), var(--ae-optical-stage);
+  box-shadow: inset 0 1px 3px var(--ae-optical-rim), inset 0 -2px 5px var(--ae-optical-shade);
+}
+.ae-theme[data-ae-theme="glass"] .ae-mark span,
+.ae-theme[data-ae-theme="glass"] .ae-mark span::after {
+  inline-size: .85rem;
+  block-size: .85rem;
+  border-radius: .32rem;
+  border: 1.5px solid var(--ae-text);
+  transform: rotate(34deg);
+}
+.ae-theme[data-ae-theme="glass"] .ae-mark span { translate: -.125rem 0; }
+.ae-theme[data-ae-theme="glass"] .ae-mark span::after {
+  content: "";
+  position: absolute;
+  inset: -.2rem auto auto .18rem;
+  opacity: .58;
+  transform: none;
+}
+
+.ae-theme[data-ae-theme="glass"] .ae-surface[data-material="chrome"],
+.ae-theme[data-ae-theme="glass"] .ae-surface[data-material="overlay"] {
+  --ae-rim-light: inset 0 1px 1px var(--ae-optical-rim), inset 0 -1px 2px var(--ae-optical-cool);
+  border: 1px solid var(--ae-display-edge, var(--ae-optical-rim));
+  background-image: linear-gradient(157deg, var(--ae-optical-sheen), transparent 36%, transparent 76%, var(--ae-optical-cool));
+  box-shadow: var(--ae-rim-light), 0 8px 26px var(--ae-optical-shade);
+}
+.ae-theme[data-ae-theme="glass"] .ae-surface[data-material="chrome"] { border-radius: 2rem; }
+.ae-theme[data-ae-theme="glass"] .ae-surface[data-material="overlay"] {
+  box-shadow: var(--ae-rim-light), inset 0 -6px 22px var(--ae-optical-cool), var(--ae-shadow-overlay);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ae-theme[data-ae-theme="glass"] .ae-surface[data-material="chrome"],
+  .ae-theme[data-ae-theme="glass"] .ae-surface[data-material="overlay"] {
+    background-color: var(--ae-material-tint, var(--ae-optical-overlay));
+    -webkit-backdrop-filter: var(--ae-material-filter, var(--ae-default-filter));
+    backdrop-filter: var(--ae-material-filter, var(--ae-default-filter));
+  }
+  .ae-theme[data-ae-theme="glass"] .ae-surface[data-material="chrome"] {
+    background-color: var(--ae-material-tint, var(--ae-optical-toolbar));
+  }
+}
+.ae-theme[data-ae-theme="glass"] .ae-surface[data-material="raised"] {
+  background:
+    linear-gradient(150deg, var(--ae-optical-sheen), transparent 44%, var(--ae-optical-cool)),
+    var(--ae-optical-panel);
+  border-color: var(--ae-display-edge, var(--ae-edge));
+  box-shadow: inset 0 1px var(--ae-optical-rim), 0 13px 34px var(--ae-optical-shade);
+}
+.ae-theme[data-ae-theme="glass"] .ae-surface[data-material="content"] {
+  background: var(--ae-optical-card);
+}
+
+.ae-theme[data-ae-theme="glass"] .ae-button {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--ae-radius-control);
+  gap: .5rem;
+  padding-inline: 1rem;
+}
+.ae-theme[data-ae-theme="glass"] .ae-button:not([data-variant="quiet"]) {
+  background-image: linear-gradient(158deg, var(--ae-optical-sheen), transparent 57%, var(--ae-optical-cool));
+  box-shadow: inset 0 1px var(--ae-optical-rim), inset 0 -2px 4px var(--ae-optical-shade);
+}
+.ae-theme[data-ae-theme="glass"] .ae-button[data-variant="primary"] {
+  background-color: var(--ae-optical-primary);
+  color: var(--ae-optical-on-primary);
+  border-color: transparent;
+  box-shadow: inset 0 1px 1px var(--ae-optical-rim), 0 7px 16px var(--ae-optical-shade);
+}
+.ae-theme[data-ae-theme="glass"] .ae-button::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at var(--ae-press-x, 50%) var(--ae-press-y, 0%),
+    var(--ae-optical-rim), transparent 66%);
+  opacity: 0;
+  transition: opacity var(--ae-duration-quick) var(--ae-ease);
+}
+.ae-theme[data-ae-theme="glass"] .ae-button:not(:disabled, [aria-disabled="true"]):active::before { opacity: .55; }
+@media (hover: hover) and (pointer: fine) {
+  .ae-theme[data-ae-theme="glass"] .ae-button:not(:disabled, [aria-disabled="true"]):hover::before { opacity: .23; }
+}
+.ae-theme[data-ae-theme="glass"] .ae-button[data-variant="primary"]:disabled {
+  color: var(--ae-muted);
+  background: var(--ae-content);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.ae-theme[data-ae-theme="glass"] .ae-workspace-heading {
+  padding-inline: clamp(.25rem, 2vw, 1.25rem);
+  padding-block: 1.5rem 1.875rem;
+}
+.ae-theme[data-ae-theme="glass"] .ae-workspace-heading h2 {
+  margin-block: .25rem .5rem;
+  font-size: var(--ae-size-display);
+  line-height: 1.005;
+  letter-spacing: -.068em;
+  font-weight: 680;
+}
+.ae-theme[data-ae-theme="glass"] .ae-workspace-nav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  position: relative;
+  isolation: isolate;
+  justify-self: end;
+  align-self: end;
+  padding: .2rem;
+  border-radius: 99px;
+}
+.ae-theme[data-ae-theme="glass"] .ae-workspace-nav a {
+  min-block-size: var(--ae-target);
+  padding: .5rem 1rem;
+  align-content: center;
+  border-radius: inherit;
+  color: var(--ae-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+.ae-theme[data-ae-theme="glass"] .ae-workspace-nav::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  inset: .2rem auto .2rem .2rem;
+  width: calc(50% - .2rem);
+  border-radius: inherit;
+  background: linear-gradient(160deg, var(--ae-optical-sheen), transparent 80%), var(--ae-optical-panel);
+  box-shadow: inset 0 1px var(--ae-optical-rim);
+  transition: transform var(--ae-duration-enter) var(--ae-ease);
+}
+.ae-theme[data-ae-theme="glass"] .ae-workspace-nav[data-destination="activity"]::before { transform: translateX(100%); }
+.ae-theme[data-ae-theme="glass"] .ae-workspace-nav a { text-align: center; }
+.ae-theme[data-ae-theme="glass"] .ae-workspace-nav a:hover { text-decoration: underline; }
+.ae-theme[data-ae-theme="glass"] .ae-workspace {
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, .92fr);
+  gap: clamp(.875rem, 3vw, 1.75rem);
+}
+.ae-theme[data-ae-theme="glass"] .ae-panel { gap: .875rem; }
+.ae-theme[data-ae-theme="glass"] .ae-panel-heading h3 {
+  font-size: var(--ae-size-title);
+  letter-spacing: -.035em;
+}
+.ae-theme[data-ae-theme="glass"] .ae-file-slot {
+  --ae-stage-radius: calc(var(--ae-radius-panel) - .42rem);
+  min-height: 7.25rem;
+  display: grid;
+  align-content: center;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: var(--ae-stage-radius);
+  padding: .75rem;
+  background:
+    radial-gradient(ellipse at 85% 34%, var(--ae-optical-glow), transparent 33%),
+    radial-gradient(ellipse at 70% 2%, var(--ae-optical-lamp), transparent 57%),
+    linear-gradient(145deg, var(--ae-optical-stage) 30%, var(--ae-optical-bloom));
+  box-shadow: inset 0 0 0 1px var(--ae-control-edge), inset 0 1px var(--ae-optical-rim);
+}
+.ae-theme[data-ae-theme="glass"] .ae-file-slot::before,
+.ae-theme[data-ae-theme="glass"] .ae-file-slot::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  aspect-ratio: 2 / 1;
+  width: 76%;
+  inset: -14% -18% auto auto;
+  border-radius: 50%;
+  border: 1px solid var(--ae-optical-rim);
+  background: linear-gradient(120deg, var(--ae-optical-sheen), transparent 45%, var(--ae-optical-cool));
+  box-shadow: inset 0 1px 5px var(--ae-optical-rim), inset 0 -5px 14px var(--ae-optical-cool),
+    0 7px 18px var(--ae-optical-shade);
+  transform: rotate(-26deg);
+}
+.ae-theme[data-ae-theme="glass"] .ae-file-slot::after {
+  width: 64%;
+  inset: -2% -17% auto auto;
+}
+.ae-theme[data-ae-theme="glass"] .ae-file-slot > .ae-button {
+  width: auto;
+  justify-self: start;
+  min-block-size: 3.125rem;
+  border: 1px solid var(--ae-display-edge, var(--ae-control-edge));
+  padding-inline: .7rem 1.05rem;
+  background-color: var(--ae-chrome-solid);
+}
+.ae-theme[data-ae-theme="glass"] .ae-file-slot[data-selected="true"] > .ae-file {
+  border-radius: calc(var(--ae-stage-radius) - .55rem);
+}
+.ae-theme[data-ae-theme="glass"] .ae-file-slot-glyph {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 50%;
+  background:
+    linear-gradient(currentColor, currentColor) center / .72rem 1px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 1px .72rem no-repeat,
+    var(--ae-optical-panel);
+  box-shadow: inset 0 1px var(--ae-optical-rim), inset 0 0 0 1px var(--ae-edge);
+}
+.ae-theme[data-ae-theme="glass"] .ae-devices {
+  border-radius: calc(var(--ae-radius-panel) - .625rem);
+  overflow: clip;
+  gap: 1px;
+  border: 1px solid var(--ae-display-edge, var(--ae-control-edge));
+  background: var(--ae-edge);
+}
+.ae-theme[data-ae-theme="glass"] .ae-device-body {
+  border: 1px solid transparent;
+  border-radius: 0;
+  background-color: var(--ae-content);
+  min-block-size: 3.85rem;
+}
+.ae-theme[data-ae-theme="glass"] .ae-device input:checked + .ae-device-body {
+  border-color: var(--ae-focus);
+  box-shadow: inset 0 0 0 1px var(--ae-focus);
+}
+.ae-theme[data-ae-theme="glass"] .ae-device input:focus-visible + .ae-device-body { outline-offset: -3px; }
+.ae-theme[data-ae-theme="glass"] .ae-device-icon,
+.ae-theme[data-ae-theme="glass"] .ae-file-icon {
+  border: 1px solid var(--ae-edge);
+  border-radius: .8rem;
+  box-shadow: inset 0 1px var(--ae-optical-rim);
+}
+.ae-theme[data-ae-theme="glass"] .ae-send > .ae-button { min-block-size: 3rem; }
+.ae-theme[data-ae-theme="glass"] .ae-transfer {
+  padding: .875rem 1rem;
+  border-radius: calc(var(--ae-radius-panel) - .65rem);
+}
+.ae-theme[data-ae-theme="glass"] .ae-transfer-glyph {
+  border-radius: .85rem;
+  border: 1px solid var(--ae-edge);
+  background-image: linear-gradient(155deg, var(--ae-optical-sheen), transparent 74%);
+  box-shadow: inset 0 1px var(--ae-optical-rim);
+}
+.ae-theme[data-ae-theme="glass"] .ae-progress { block-size: .4375rem; }
+.ae-theme[data-ae-theme="glass"] .ae-progress > span {
+  background: linear-gradient(90deg, var(--ae-focus), var(--ae-accent));
+}
+.ae-theme[data-ae-theme="glass"] .ae-activity-empty {
+  min-block-size: 9rem;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: .75rem;
+  text-align: center;
+  border-radius: var(--ae-radius-content);
+  background: var(--ae-optical-card);
+}
+.ae-theme[data-ae-theme="glass"] .ae-activity-empty span {
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--ae-control-edge);
+  box-shadow: inset 0 1px var(--ae-optical-rim);
+  background: var(--ae-field);
+  color: var(--ae-text);
+  font-size: 1.25rem;
+}
+
+.ae-theme[data-ae-theme="glass"] .ae-sheet { border-radius: 2.15rem; }
+.ae-theme[data-ae-theme="glass"] .ae-sheet-header {
+  padding-block-end: .75rem;
+  border-block-end: 1px solid var(--ae-edge);
+}
+.ae-theme[data-ae-theme="glass"] .ae-sheet-header h2 { font-size: 1.45rem; letter-spacing: -.035em; }
+.ae-theme[data-ae-theme="glass"] .ae-pair-request {
+  border-radius: calc(var(--ae-radius-content) + .15rem);
+  background: var(--ae-optical-card);
+  box-shadow: inset 0 1px var(--ae-optical-rim);
+}
+.ae-theme[data-ae-theme="glass"] .ae-settings-group {
+  padding: .25rem .75rem;
+  border: 1px solid var(--ae-display-edge, var(--ae-edge));
+  border-radius: var(--ae-radius-content);
+  background: var(--ae-optical-card);
+}
+.ae-theme[data-ae-theme="glass"] .ae-settings-group label { width: 100%; min-height: 3rem; }
+.ae-theme[data-ae-theme="glass"] .ae-settings-group label + label { border-block-start: 1px solid var(--ae-edge); }
+.ae-theme[data-ae-theme="glass"] .ae-settings select {
+  border-radius: var(--ae-radius-control);
+  min-height: var(--ae-target);
+}
+.ae-theme[data-ae-theme="glass"] .ae-setting-switch { position: relative; justify-content: space-between; }
+.ae-theme[data-ae-theme="glass"] .ae-setting-switch input { position: absolute; opacity: 0; }
+.ae-theme[data-ae-theme="glass"] .ae-switch-track {
+  --ae-knob: 1.125rem;
+  position: relative;
+  width: 2.6rem;
+  height: 1.5rem;
+  flex: none;
+  border: 1px solid var(--ae-display-edge, var(--ae-control-edge));
+  border-radius: 99px;
+  background: var(--ae-track);
+}
+.ae-theme[data-ae-theme="glass"] .ae-switch-track::before {
+  content: "";
+  position: absolute;
+  inset: .125rem auto auto .125rem;
+  width: var(--ae-knob);
+  height: var(--ae-knob);
+  border-radius: 50%;
+  background: #f7faff;
+  box-shadow: 0 1px 3px var(--ae-optical-shade);
+  transition: transform var(--ae-duration-quick) var(--ae-ease);
+}
+.ae-theme[data-ae-theme="glass"] .ae-setting-switch input:checked + .ae-switch-track {
+  background: var(--ae-optical-primary);
+}
+.ae-theme[data-ae-theme="glass"] .ae-setting-switch input:checked + .ae-switch-track::before { transform: translateX(1.08rem); }
+.ae-theme[data-ae-theme="glass"] .ae-setting-switch input:focus-visible + .ae-switch-track {
+  outline: 2px solid var(--ae-focus);
+  outline-offset: 3px;
+}
+.ae-theme[data-ae-theme="glass"] .ae-popover:popover-open {
+  animation-name: ae-lens-in;
+}
+@keyframes ae-lens-in {
+  from { opacity: 0; transform: translateY(var(--ae-enter-distance)) scale(var(--ae-press-scale)); }
+}
+.ae-theme[data-ae-theme="glass"] .ae-gesture-mark {
+  background: var(--ae-optical-panel);
+  box-shadow: inset 0 1px var(--ae-optical-rim);
+}
+.ae-theme[data-ae-theme="glass"] .ae-toast { border-radius: 1.5rem; }
+
+@media (max-width: 42rem) {
+  .ae-theme[data-ae-theme="glass"] .ae-workspace { grid-template-columns: minmax(0, 1fr); }
+  .ae-theme[data-ae-theme="glass"] .ae-workspace-heading {
+    padding-block: 1.2rem 1rem;
+    padding-inline: .5rem;
+  }
+  .ae-theme[data-ae-theme="glass"] .ae-workspace-nav { justify-self: start; }
+  .ae-theme[data-ae-theme="glass"] .ae-toolbar { min-block-size: 3.5rem; padding-inline: .6rem .35rem; }
+  .ae-theme[data-ae-theme="glass"] .ae-toolbar .ae-status {
+    border-inline-end: 0;
+    margin-inline-end: 0;
+    padding-inline-end: 0;
+    white-space: nowrap;
+  }
+  .ae-theme[data-ae-theme="glass"] .ae-toolbar .ae-button { padding-inline: .65rem; }
+  .ae-theme[data-ae-theme="glass"] .ae-surface[data-material="chrome"] { --ae-blur-chrome: 8px; }
+  .ae-theme[data-ae-theme="glass"] .ae-file-slot { min-height: 6.5rem; }
+  .ae-theme[data-ae-theme="glass"] .ae-sheet {
+    inset-inline: .5rem;
+    bottom: max(.5rem, env(safe-area-inset-bottom));
+    width: auto;
+    border-radius: 1.95rem;
+    padding-block-start: .5rem;
+    translate: 0 var(--ae-sheet-swipe, 0px);
+    transition: translate var(--ae-duration-enter) var(--ae-ease);
+  }
+  .ae-theme[data-ae-theme="glass"] .ae-sheet[data-dragging] { transition: none; }
+  .ae-theme[data-ae-theme="glass"] .ae-sheet[open] { animation-name: ae-sheet-rise; }
+
+  .ae-theme[data-ae-theme="glass"] .ae-sheet-grip {
+    display: grid;
+    place-items: center;
+    width: 5rem;
+    min-height: 2rem;
+    margin-inline: auto;
+    touch-action: none;
+    cursor: grab;
+  }
+  .ae-theme[data-ae-theme="glass"] .ae-sheet-grip::after {
+    content: "";
+    width: 2rem;
+    height: .25rem;
+    border-radius: 99px;
+    background: var(--ae-control-edge);
+  }
+}
+@keyframes ae-sheet-rise {
+  from { opacity: 0; transform: translateY(calc(var(--ae-enter-distance) * 3)); }
+}
+
+.ae-theme[data-ae-theme="glass"][data-motion="reduce"] .ae-sheet { translate: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ae-theme[data-ae-theme="glass"] .ae-sheet { translate: none; }
+}
+.ae-theme[data-ae-theme="glass"]:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-surface[data-material] {
+  background: var(--ae-material-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.ae-theme[data-ae-theme="glass"]:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-file-slot {
+  background: var(--ae-content);
+}
+.ae-theme[data-ae-theme="glass"]:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-file-slot::before,
+.ae-theme[data-ae-theme="glass"]:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-file-slot::after { display: none; }
+
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .ae-theme[data-ae-theme="glass"] .ae-surface[data-material] {
+    background: var(--ae-material-solid);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .ae-theme[data-ae-theme="glass"] .ae-file-slot { background: var(--ae-content); }
+  .ae-theme[data-ae-theme="glass"] .ae-file-slot::before,
+  .ae-theme[data-ae-theme="glass"] .ae-file-slot::after { display: none; }
+}
+@media (forced-colors: active) {
+  .ae-theme[data-ae-theme="glass"] .ae-setting-switch input { position: static; opacity: 1; }
+  .ae-theme[data-ae-theme="glass"] .ae-switch-track,
+  .ae-theme[data-ae-theme="glass"] .ae-button::before { display: none; }
+}
