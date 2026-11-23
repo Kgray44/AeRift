@@ -1,6 +1,7 @@
 import {
-  AppShell, Button, ConnectionStatus, SettingsPanel, Sheet, ThemeProvider,
-  TransferProgress, TransferWorkspace, type AppearanceSettings, type WorkspaceConnection,
+  AppBrand, AppShell, Button, GestureCameraIndicator, GlassSurface, SettingsPanel, Sheet,
+  SpatialIcon, ThemeProvider, TransferProgress, TransferWorkspace,
+  type AppearanceSettings, type DiscoveryState, type GestureCameraStatus, type WorkspaceConnection,
 } from "@aerift/ui";
 import type { AppPort, AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift/app-contract/experience";
@@ -14,8 +15,8 @@ import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileO
 import { mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
 import "./ios.css";
 
-type DiscoveryState = "disabled" | "starting" | "ready" | "suspended" | "unavailable";
-type IosSnapshot = AppSnapshot & { localNetwork?: DiscoveryState };
+type BonjourState = "disabled" | "starting" | "ready" | "suspended" | "unavailable";
+type IosSnapshot = AppSnapshot & { localNetwork?: BonjourState };
 
 const appearanceDefaults: AppearanceSettings = {
   theme: "glass", scheme: "system", contrast: "system", transparency: "system", motion: "system",
@@ -57,7 +58,8 @@ function readWorkspace() {
     files: settings.files !== false, photos: settings.photos !== false,
     notes: settings.notes !== false, browser: settings.browser !== false,
     clipboard: settings.clipboard === true, collections: settings.collections !== false,
-    gestures: settings.gestures === true,
+    gestures: typeof settings.gestures === "boolean" ? settings.gestures :
+      readSettings("aerift.ios.gestures.enabled") === true,
   };
 }
 
@@ -88,20 +90,25 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const [destination, setDestination] = useState<MobileDestination>("home");
   const [discoveryError, setDiscoveryError] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
+  const [cameraRetry, setCameraRetry] = useState(0);
   const [discovering, setDiscovering] = useState(false);
   const destinationHeading = useRef<HTMLHeadingElement>(null);
   const navigationRequested = useRef(false);
   const summary = summarizeMobile(snapshot);
   const discoveryUnavailable = discoveryError || snapshot?.localNetwork === "unavailable";
   const connectionFailed = connection.state === "disconnected";
-  const searching = !connectionFailed && !discoveryUnavailable;
+  const discoveryDisabled = snapshot?.localNetwork === "disabled";
+  const discovery: DiscoveryState = connection.state === "connecting" ? "connecting"
+    : connectionFailed ? "interrupted"
+    : discovering || snapshot?.localNetwork === "starting" ? "searching"
+    : discoveryUnavailable || snapshot?.localNetwork === "suspended" ? "interrupted"
+    : discoveryDisabled ? "disabled"
+    : summary.available ? "available" : "empty";
   const latestObject = objects?.find(item => item.kind !== "text" && preferences[
     item.kind === "note" ? "notes" : item.kind === "url" ? "browser" : "collections"
   ]);
   const pins = objects?.filter(item => item.kind === "text") ?? [];
-  const hasRetryableTransfer = snapshot?.transfers.some(item => item.direction === "outgoing" &&
-    (item.state === "failed" || item.state === "cancelled" || item.state === "rejected"));
-
   function closeSettings() {
     setConfirmClearPins(false);
     setSettingsOpen(false);
@@ -178,123 +185,133 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
 
   return <div className="aerift-ios" data-keyboard={keyboardOpen ? "open" : undefined}>
     <ThemeProvider {...appearance}>
-      <AppShell brand={<h1 className="aerift-title">AeRift</h1>} toolbar={
-        <>
-          <ConnectionStatus state={summary.trustedOnline ? "connected" : searching ? "searching" : "offline"}
-            label={summary.trustedOnline ? "Connected" : !searching ? "Offline" : snapshot ? "Searching" : "Connecting"} />
-          <Button variant="quiet" onClick={() => setSettingsOpen(true)}>Settings</Button>
-        </>
-      }>
-        {connectionFailed && <div className="aerift-ios-network">
-          <p role="status">AeRift lost its connection to the local transfer service.</p>
-          <Button onClick={retryConnection}>Retry connection</Button>
-        </div>}
-        {discoveryUnavailable && <div className="aerift-ios-network">
-          <p role="status">Check Local Network access in iPhone Settings to find nearby devices.</p>
-          <Button loading={discovering} onClick={() => void discover()}>Retry discovery</Button>
-        </div>}
-        <div className="ios-alerts">
-          {summary.incomingOffers > 0 && destination !== "activity" &&
-            <Button onClick={() => navigate("activity")}>
-              Review {summary.incomingOffers === 1 ? "incoming transfer" : "incoming transfers"} ({summary.incomingOffers})
-            </Button>}
-          {summary.pairRequests > 0 && destination !== "devices" &&
-            <Button onClick={() => navigate("devices")}>Review pairing requests ({summary.pairRequests})</Button>}
-        </div>
-        <div className="ios-destination-heading">
-          <h2 ref={destinationHeading} tabIndex={-1}>{DESTINATIONS[destination].label}</h2>
-          {destination === "rift" && <p>Send an item to a paired device on your local network.</p>}
-        </div>
+      <AppShell hideToolbar>
         <TransferWorkspace
           port={port}
-          connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
-          activityFooter={<>
-            {hasRetryableTransfer && <div>
-              <Button variant="quiet" onClick={() => navigate("rift")}>Start a new transfer</Button>
+          platform="ios"
+          discovery={discovery}
+          discoveryNotice={(discoveryUnavailable || discoveryDisabled) &&
+            <div className="aerift-shell-notice aerift-ios-network">
+              <p role="status">Allow Local Network access in iOS Settings to find AeRift devices nearby.</p>
+              <Button variant="quiet" loading={discovering} loadingLabel="Retrying discovery…"
+                onClick={() => void discover()}>Retry discovery</Button>
             </div>}
-            <p>Delivered files are available in Files → On My iPhone → AeRift → Received.</p>
+          navigationStart={<AppBrand />}
+          navigationEnd={<>
+            <GestureCameraIndicator status={cameraStatus} />
+            <Button className="ae-control-gear" variant="quiet" aria-label="Control Center"
+              aria-haspopup="dialog" title="Control Center" onClick={() => setSettingsOpen(true)}>
+              <SpatialIcon name="settings" />
+            </Button>
           </>}
-          gesture={preferences.gestures && !settingsOpen ? controls => <IosGestureCamera controls={controls} enabled /> : undefined}
-          layout={regions => <div key={destination} className="ios-page" data-destination={destination}>
-            {destination === "home" && <>
-              <section className="ios-overview" aria-label="Connection overview">
-                <div>
-                  <h3>{summary.trustedOnline ? "Connected space" : "Your portable workspace"}</h3>
-                  <p>{snapshot ? `${summary.trustedOnline} trusted online · ${summary.available} nearby` :
-                    connectionFailed ? "Transfer service disconnected" : "Connecting to AeRift…"}</p>
-                </div>
-                <Button variant="quiet" onClick={() => navigate("devices")}>View devices</Button>
-              </section>
-              <div className="ios-home-grid">
-                <section className="ios-section" aria-labelledby="ios-home-workspace">
-                  <h3 id="ios-home-workspace">Workspace</h3>
-                  <p>{regions.selection ? regions.selection.name : latestObject?.name ?? summary.received[0]?.file.name ?? "Start with a file, photo or video."}</p>
-                  <Button onClick={() => navigate("workspace")}>Open Workspace</Button>
-                </section>
-                <section className="ios-section" aria-labelledby="ios-home-activity">
-                  <h3 id="ios-home-activity">Activity</h3>
-                  <p>{summary.active.length ? `${summary.active.length} in progress` : snapshot?.transfers.length ? "Recent transfers" : "No transfers yet."}</p>
-                  {(summary.active.length ? summary.active : snapshot?.transfers)?.slice(0, 2).map(transfer =>
-                    <TransferProgress key={transfer.id} transfer={transfer} />)}
-                  <Button variant="quiet" onClick={() => navigate("activity")}>View Activity</Button>
-                </section>
+          connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
+          activityFooter={<p>Open the AeRift Received folder under On My iPhone in Files.</p>}
+          gesture={controls => <IosGestureCamera controls={controls} enabled={preferences.gestures}
+            actionsBlocked={settingsOpen} retryKey={cameraRetry} onStatus={setCameraStatus} />}
+          mobile={{
+            view: destination === "rift" || destination === "activity" ? destination : "supplement",
+            openRift: () => navigate("rift"),
+            openActivity: () => navigate("activity"),
+            render: regions => <div key={destination} className="ios-page" data-destination={destination}>
+              {summary.pairRequests > 0 && destination !== "devices" &&
+                <Button className="ios-pair-notice" variant="quiet" onClick={() => navigate("devices")}>
+                  <SpatialIcon name="pair" size={17} />Review pairing requests ({summary.pairRequests})
+                </Button>}
+              <div className="ios-destination-heading">
+                <h2 ref={destinationHeading} tabIndex={-1}>{DESTINATIONS[destination].label}</h2>
               </div>
-              <p>{summary.trustedOnline > 0 && "Paired transfers are encrypted. "}
-                {preferences.gestures ? "Camera gestures are available in Rift with a file and a device selected." : "Camera gestures are off."}</p>
-            </>}
-            {destination === "workspace" && <>
-              <MobileWorkspace regions={regions} modules={preferences}
-                pick={pick} received={summary.received} openRift={() => navigate("rift")}
-                objects={objects} save={saveObjects} />
-              {objectError && <p role="alert">{objectError}</p>}
-            </>}
-            {destination === "rift" && regions.composer}
-            {destination === "devices" && <div className="ios-section">
-              <DeviceTrust snapshot={snapshot} port={port} />
-              {regions.pairingAction}
-              <p>Pair only with devices you recognize. Removing trust stops future transfers until you pair again.</p>
-            </div>}
-            {destination === "activity" && regions.activity}
-          </div>}
+              {destination === "home" && <>
+                <GlassSurface material="content" className="ios-overview" role="region" aria-label="Connection overview">
+                  <div>
+                    <h3>{summary.trustedOnline ? "Connected space" : "Your portable workspace"}</h3>
+                    <p>{snapshot ? `${summary.trustedOnline} trusted online · ${summary.available} nearby` :
+                      connectionFailed ? "Transfer service disconnected" : "Connecting to AeRift…"}</p>
+                  </div>
+                  <Button variant="quiet" onClick={() => navigate("devices")}>View devices</Button>
+                </GlassSurface>
+                <div className="ios-home-grid">
+                  <section className="ios-section" aria-labelledby="ios-home-workspace">
+                    <h3 id="ios-home-workspace">Workspace</h3>
+                    <p>{regions.selection ? regions.selection.name : latestObject?.name ?? summary.received[0]?.file.name ?? "Start with a file, photo or video."}</p>
+                    <Button onClick={() => navigate("workspace")}>Open Workspace</Button>
+                  </section>
+                  <section className="ios-section" aria-labelledby="ios-home-activity">
+                    <h3 id="ios-home-activity">Activity</h3>
+                    <p>{summary.active.length ? `${summary.active.length} in progress` : snapshot?.transfers.length ? "Recent transfers" : "No transfers yet."}</p>
+                    <div className="ae-activity-list">{(summary.active.length ? summary.active : snapshot?.transfers)?.slice(0, 2).map(transfer =>
+                      <TransferProgress key={transfer.id} transfer={transfer}
+                        deviceName={snapshot?.devices.find(device => device.id === transfer.deviceId)?.name} />)}</div>
+                    <Button variant="quiet" onClick={() => navigate("activity")}>View Activity</Button>
+                  </section>
+                </div>
+                <p>{summary.trustedOnline > 0 && "Paired transfers are encrypted. "}
+                  {preferences.gestures ? "Camera gestures are enabled in Rift." : "Camera gestures are off."}</p>
+              </>}
+              {destination === "workspace" && <>
+                <MobileWorkspace regions={regions} modules={preferences}
+                  pick={pick} received={summary.received} openRift={() => navigate("rift")}
+                  objects={objects} save={saveObjects} />
+                {objectError && <p role="alert">{objectError}</p>}
+              </>}
+              {destination === "devices" && <div className="ios-section">
+                <DeviceTrust snapshot={snapshot} port={port} />
+                {regions.pairingAction}
+                <p>Pair only with devices you recognize. Removing trust stops future transfers until you pair again.</p>
+              </div>}
+            </div>,
+          }}
         />
         <MobileNavigation destination={destination} navigate={navigate}
           attention={{ devices: summary.pairRequests > 0, activity: summary.active.length > 0 }} />
       </AppShell>
-      <Sheet open={settingsOpen} title="Settings" onClose={closeSettings}>
-        <SettingsPanel value={appearance} themes={[{ id: "glass", label: "GLASS" }]}
-          onChange={value => {
-            setAppearance(value);
-            setSettingsError(!writeSettings(appearanceKey, value));
-          }} />
-        <fieldset className="ae-settings">
-          <legend>Workspace modules</legend>
-          {WORKSPACE_MODULES.map(({ id, label }) => <label key={id}><input type="checkbox" checked={preferences[id]}
-              onChange={event => updatePreferences(id, event.currentTarget.checked)} />{label}</label>)}
-          <p>Clipboard is off by default. AeRift saves only text you explicitly pin, and sends it only on request.</p>
-          {pins.length > 0 && (confirmClearPins ? <div className="ae-actions">
-            <Button variant="danger" onClick={() => {
-              if (!objects) return;
-              const next = pins.reduce((items, pin) => removeMobileObject(items, pin.id), objects);
-              if (saveObjects(next)) setConfirmClearPins(false);
-            }}>Remove all saved pins</Button>
-            <Button variant="quiet" onClick={() => setConfirmClearPins(false)}>Keep pins</Button>
-          </div> : <div>
-            <Button variant="quiet" onClick={() => setConfirmClearPins(true)}>Clear saved clipboard pins</Button>
-          </div>)}
-          {objectError && <p role="alert">{objectError}</p>}
-        </fieldset>
-        <fieldset className="ae-settings">
-          <legend>Gesture recognition</legend>
-          <label><input type="checkbox" checked={preferences.gestures}
-            onChange={event => updatePreferences("gestures", event.currentTarget.checked)} />Enable camera gestures in Rift</label>
-          <p>The camera starts only when you begin an attempt in Rift. Recognition runs on this iPhone.</p>
-        </fieldset>
-        <section aria-label="Privacy and storage">
-          <p>Local Network access lets AeRift find nearby devices. Keep AeRift open until your transfer finishes.</p>
-          <p>Find accepted transfers under AeRift → Received in the Files app.</p>
-          <Button variant="quiet" onClick={() => { closeSettings(); navigate("devices"); }}>Manage trusted devices</Button>
-        </section>
-        {settingsError && <p role="alert">AeRift could not save this preference for your next session.</p>}
+      <Sheet open={settingsOpen} title="Control Center" onClose={closeSettings}>
+        {settingsOpen && <div className="aerift-control-center">
+          <section aria-label="Appearance and accessibility">
+          <h3>Appearance and accessibility</h3>
+          <SettingsPanel value={appearance} themes={[{ id: "glass", label: "GLASS" }]}
+            onChange={value => {
+              setAppearance(value);
+              setSettingsError(!writeSettings(appearanceKey, value));
+            }} />
+          </section>
+          <fieldset className="ae-settings">
+            <legend>Workspace modules</legend>
+            {WORKSPACE_MODULES.map(({ id, label }) => <label key={id}><input type="checkbox" checked={preferences[id]}
+                onChange={event => updatePreferences(id, event.currentTarget.checked)} />{label}</label>)}
+            <p>Clipboard is off by default. AeRift saves only text you explicitly pin, and sends it only on request.</p>
+            {pins.length > 0 && (confirmClearPins ? <div className="ae-actions">
+              <Button variant="danger" onClick={() => {
+                if (!objects) return;
+                const next = pins.reduce((items, pin) => removeMobileObject(items, pin.id), objects);
+                if (saveObjects(next)) setConfirmClearPins(false);
+              }}>Remove all saved pins</Button>
+              <Button variant="quiet" onClick={() => setConfirmClearPins(false)}>Keep pins</Button>
+            </div> : <div>
+              <Button variant="quiet" onClick={() => setConfirmClearPins(true)}>Clear saved clipboard pins</Button>
+            </div>)}
+            {objectError && <p role="alert">{objectError}</p>}
+          </fieldset>
+          <fieldset className="ae-settings">
+            <legend>Gesture recognition</legend>
+            <label className="ae-camera-toggle">Enable camera gestures in Rift
+              <input type="checkbox" checked={preferences.gestures}
+                onChange={event => updatePreferences("gestures", event.currentTarget.checked)} />
+            </label>
+            <p>The front camera listens in Rift with a selected file and recipient or an incoming offer while AeRift is open in portrait. Recognition stays on this iPhone.</p>
+            {preferences.gestures && <p role="status"><strong>{cameraStatus?.label ?? "Camera standby"}</strong> {cameraStatus?.detail}</p>}
+            {preferences.gestures && (cameraStatus?.state === "permission" || cameraStatus?.state === "unavailable" ||
+              cameraStatus?.state === "paused") && <div>
+                <p>Allow camera access for AeRift in iOS Settings, then return to Rift.</p>
+                <Button onClick={() => setCameraRetry(value => value + 1)}>Retry camera</Button>
+              </div>}
+          </fieldset>
+          <section aria-label="Privacy and storage">
+            <p>Local Network access lets AeRift find nearby devices. Keep AeRift open until your transfer finishes.</p>
+            <p>Find accepted transfers under AeRift → Received in the Files app.</p>
+            <Button variant="quiet" onClick={() => { closeSettings(); navigate("devices"); }}>Manage trusted devices</Button>
+          </section>
+          {settingsError && <p role="alert">AeRift could not save this preference for your next session.</p>}
+        </div>}
       </Sheet>
     </ThemeProvider>
   </div>;

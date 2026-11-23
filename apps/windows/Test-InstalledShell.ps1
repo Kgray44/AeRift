@@ -65,7 +65,7 @@ try {
 
     $socket.ConnectAsync([uri]$target.webSocketDebuggerUrl, $deadline.Token).GetAwaiter().GetResult() | Out-Null
     $assertion = @{
-        expression = "document.querySelector('h1')?.textContent === 'AeRift' && document.querySelector('main')?.textContent.includes('New transfer') && [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Choose a file' && !button.disabled)"
+        expression = "document.querySelector('h1')?.textContent === 'AeRift' && document.querySelector('[aria-label=\x22Spatial workspace\x22]:not([hidden])') && [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Choose file' && !button.disabled)"
         returnByValue = $true
     }
     $id = 0
@@ -82,7 +82,7 @@ try {
     [IO.File]::WriteAllBytes((Join-Path $evidence 'windows-launch.png'), $imageBytes)
     $id += 2
     $settings = Invoke-Cdp $socket $id 'Runtime.evaluate' @{
-        expression = "[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Settings').click()"
+        expression = "[...document.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === 'Control Center').click()"
         returnByValue = $true
     } $deadline.Token
     if ($settings.exceptionDetails) { throw 'The Settings control did not open.' }

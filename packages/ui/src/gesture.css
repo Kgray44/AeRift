@@ -1,0 +1,147 @@
+.ae-camera-indicator {
+  --ae-camera-signal: var(--ae-display-muted, var(--ae-muted));
+  display: inline-flex;
+  align-items: center;
+  gap: .42rem;
+  min-width: 0;
+  color: var(--ae-display-muted, var(--ae-muted));
+  font-size: var(--ae-size-caption);
+  line-height: 1.15;
+}
+
+.ae-camera-indicator:is([data-state="listening"], [data-state="detected"]) { --ae-camera-signal: var(--ae-accent); }
+.ae-camera-indicator[data-state="held"] { --ae-camera-signal: var(--ae-focus); }
+.ae-camera-indicator:is([data-state="permission"], [data-state="paused"]) { --ae-camera-signal: var(--ae-warning); }
+.ae-camera-indicator[data-state="unavailable"] { --ae-camera-signal: var(--ae-error); }
+
+.ae-camera-light {
+  display: grid;
+  flex: 0 0 .82rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid var(--ae-camera-signal);
+  border-radius: 50%;
+  transition: box-shadow var(--ae-duration-quick) var(--ae-ease);
+}
+
+.ae-camera-light::before {
+  inline-size: .37rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--ae-camera-signal);
+  opacity: .38;
+  content: "";
+}
+
+.ae-camera-indicator:is([data-state="listening"], [data-state="detected"], [data-state="held"]) .ae-camera-light::before {
+  opacity: 1;
+}
+
+[data-ae-theme="glass"] .ae-camera-indicator:is([data-state="detected"], [data-state="held"]) .ae-camera-light {
+  box-shadow: 0 0 .6rem var(--ae-camera-signal);
+  animation: ae-camera-signal var(--ae-duration-expressive, 460ms) var(--ae-ease) both;
+}
+
+@keyframes ae-camera-signal {
+  from { transform: scale(.88); }
+  45% { transform: scale(1.22); }
+  to { transform: scale(1); }
+}
+
+.ae-gesture-control {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .35rem .75rem;
+  margin-inline: auto;
+  max-inline-size: min(100%, 38rem);
+}
+
+.ae-gesture-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5rem;
+  color: var(--ae-display-muted, var(--ae-muted));
+  font-size: var(--ae-size-caption);
+}
+
+.ae-gesture-offers {
+  min-block-size: var(--ae-target);
+  inline-size: min(15rem, 100%);
+  padding-inline: .6rem;
+  border: 1px solid var(--ae-control-edge);
+  border-radius: var(--ae-radius-control);
+  background: var(--ae-content);
+  color: var(--ae-text);
+  font: inherit;
+}
+
+.ae-gesture-guide {
+  display: grid;
+  justify-items: center;
+  gap: .25rem;
+  min-inline-size: 0;
+  padding: .25rem .65rem;
+  text-align: center;
+  animation: ae-enter var(--ae-duration-enter) var(--ae-ease) both;
+}
+
+.ae-gesture-status {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ae-text);
+  font-size: var(--ae-size-caption);
+  line-height: 1.35;
+}
+
+.ae-gesture-control[data-state="failed"] .ae-gesture-status { color: var(--ae-error); }
+.ae-gesture-control[data-state="interrupted"] .ae-gesture-status { color: var(--ae-warning); }
+
+.ae-gesture-progress {
+  inline-size: min(100%, 10rem);
+  block-size: .17rem;
+  accent-color: var(--ae-accent);
+}
+
+.ae-gesture-preview {
+  position: absolute;
+  z-index: var(--ae-layer-feedback);
+  inset-block-end: calc(100% + .75rem);
+  inset-inline-end: 0;
+  inline-size: min(9rem, 50vw);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border: 1px solid var(--ae-edge);
+  border-radius: var(--ae-radius-control);
+  background: var(--ae-overlay-solid);
+  box-shadow: var(--ae-shadow-overlay);
+}
+
+.ae-gesture-control[hidden], .ae-gesture-control [hidden] { display: none; }
+
+.ae-camera-toggle, .ae-settings .ae-camera-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  min-block-size: var(--ae-target);
+}
+
+.ae-camera-toggle input {
+  inline-size: 1.2rem;
+  block-size: 1.2rem;
+  accent-color: var(--ae-accent);
+}
+
+@media (max-width: 38rem) {
+  .ae-camera-indicator { font-size: .7rem; gap: .25rem; }
+  .ae-camera-indicator span:last-child { max-inline-size: 11ch; }
+  .ae-gesture-preview { inset-inline-end: 50%; margin-inline-end: -4.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ae-gesture-guide, .ae-camera-indicator .ae-camera-light { animation: none !important; transition: none; }
+}

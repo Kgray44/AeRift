@@ -21,6 +21,8 @@ struct Harness {
     receiver: Arc<Receiver>,
     peer: PeerId,
     lose_completion: bool,
+    trusted: bool,
+    old_receiver: bool,
 }
 
 impl Connector for Harness {
@@ -38,13 +40,20 @@ impl Connector for Harness {
                 let signal = signal.clone();
                 let test = test.clone();
                 async move {
-                    let reply = aerift_transfer::serve_request(
-                        request,
-                        test.peer,
-                        receiver,
-                        CancellationToken::new(),
-                    )
-                    .await;
+                    let trust = CancellationToken::new();
+                    if !test.trusted {
+                        trust.cancel();
+                    }
+                    let request =
+                        if test.old_receiver && request.uri().path() == "/v1/receiver-ready" {
+                            let mut request = request;
+                            *request.uri_mut() = "/v1/unknown".parse().unwrap();
+                            request
+                        } else {
+                            request
+                        };
+                    let reply =
+                        aerift_transfer::serve_request(request, test.peer, receiver, trust).await;
                     if is_upload && test.lose_completion && reply.status() == StatusCode::OK {
                         signal.cancel();
                         std::future::pending::<()>().await;
@@ -90,6 +99,8 @@ fn setup() -> (tempfile::TempDir, Harness) {
             receiver,
             peer,
             lose_completion: false,
+            trusted: true,
+            old_receiver: false,
         },
     )
 }
@@ -137,6 +148,79 @@ async fn approve(receiver: Arc<Receiver>) {
         }
         updates.changed().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn readiness_defaults_off_and_expires_without_creating_a_transfer() {
+    let (_dir, harness) = setup();
+    let receiver = harness.receiver.clone();
+    let sender = Sender::new(harness, Duration::from_secs(4), Duration::from_secs(5));
+    assert!(!sender.receiver_ready().await.unwrap());
+    receiver.set_ready_until(Some(tokio::time::Instant::now() + Duration::from_secs(45)));
+    assert!(sender.receiver_ready().await.unwrap());
+    assert!(receiver.snapshot().is_empty());
+    receiver.set_ready_until(None);
+    assert!(!sender.receiver_ready().await.unwrap());
+    receiver.set_ready_until(Some(tokio::time::Instant::now()));
+    assert!(!sender.receiver_ready().await.unwrap());
+}
+
+#[tokio::test]
+async fn readiness_requires_trust_and_unavailable_route_defaults_off() {
+    let (_dir, mut harness) = setup();
+    harness
+        .receiver
+        .set_ready_until(Some(tokio::time::Instant::now() + Duration::from_secs(45)));
+    harness.trusted = false;
+    let sender = Sender::new(
+        harness.clone(),
+        Duration::from_secs(4),
+        Duration::from_secs(5),
+    );
+    assert_eq!(
+        sender.receiver_ready().await.unwrap_err().code,
+        ErrorCode::PeerUntrusted
+    );
+    harness.trusted = true;
+    harness.old_receiver = true;
+    let sender = Sender::new(harness, Duration::from_secs(4), Duration::from_secs(5));
+    assert!(!sender.receiver_ready().await.unwrap());
+}
+
+#[tokio::test]
+async fn a_preassigned_id_reaches_the_receiver_but_readiness_cannot_accept_an_offer() {
+    let (dir, harness) = setup();
+    let file = dir.path().join("sample.txt");
+    std::fs::write(&file, b"only after consent").unwrap();
+    let id = Uuid::new_v4();
+    let cancel = CancellationToken::new();
+    let receiver = harness.receiver.clone();
+    receiver.set_ready_until(Some(tokio::time::Instant::now() + Duration::from_secs(45)));
+    let mut changes = receiver.subscribe();
+    let expected = cancel.clone();
+    let sender = tokio::spawn(async move {
+        Sender::new(harness, Duration::from_secs(4), Duration::from_secs(5))
+            .send_file_with_id(id, &file, "sample.txt", expected, move |wire_id, _| {
+                assert_eq!(wire_id, id)
+            })
+            .await
+    });
+    let pending = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(entry) = receiver.snapshot().into_iter().next() {
+                break entry;
+            }
+            changes.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(pending.key.id, id);
+    assert_eq!(pending.status.state, State::Pending);
+    assert_eq!(pending.status.bytes_transferred, 0);
+    assert!(!dir.path().join("received/sample.txt").exists());
+    cancel.cancel();
+    assert_eq!(sender.await.unwrap().unwrap().state, State::Cancelled);
 }
 
 #[tokio::test]

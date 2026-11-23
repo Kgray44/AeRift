@@ -1,0 +1,202 @@
+import { useId, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import type { Device, Platform } from "@aerift/app-contract";
+import { Button, ConnectionStatus, GlassSurface } from "./components";
+import { devicePresence } from "./spatial-device";
+import { reconcilePeerSlots } from "./spatial-placement";
+import "./spatial.css";
+
+const icons = {
+  home: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zm6 11v-7h6v7" /></>,
+  desktop: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></>,
+  laptop: <><path d="M5 17V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v11M3 17h18l1 3H2z" /></>,
+  phone: <><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M10.5 5h3m-2.5 14h2" /></>,
+  tablet: <><rect x="4" y="3" width="16" height="18" rx="2.5" /><path d="M11 18.25h2" /></>,
+  settings: <><path d="m9.6 3-.5 2.1-1.8 1-2.1-.6-2.1 3.6 1.6 1.5v2.1l-1.6 1.5 2.1 3.6 2.1-.6 1.8 1 .5 2.1h4.2l.5-2.1 1.8-1 2.1.6 2.1-3.6-1.6-1.5v-2.1l1.6-1.5-2.1-3.6-2.1.6-1.8-1-.5-2.1z" /><circle cx="11.7" cy="11.65" r="2.65" /></>,
+  pair: <><path d="m9 15 6-6m-7.4 2.1-2.4 2.4a3.8 3.8 0 0 0 5.3 5.3l2.4-2.4m3.5-3.5 2.4-2.4a3.8 3.8 0 0 0-5.3-5.3L11.1 7.6" /></>,
+  activity: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M6 12h3l2-4 3 8 2-4h2" /></>,
+  file: <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10Zm0 0v7h7m-12 5h8m-8 3h6" /></>,
+  send: <><path d="m3 10 18-7-7 18-3-8Zm8 3L21 3" /></>,
+  close: <path d="m6 6 12 12M18 6 6 18" />,
+  workspace: <><circle cx="12" cy="12" r="2.5" /><circle cx="12" cy="12" r="8.5" /><path d="M12 1v2.5m0 17V23M1 12h2.5m17 0H23" /></>,
+  drop: <><path d="M12 3v12m-4-4 4 4 4-4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" /></>,
+  chevron: <path d="m9 6 6 6-6 6" />,
+  retry: <><path d="M21 4v5h-5M3 20v-5h5m12.4-6a8.5 8.5 0 0 0-14.6-3.3L3 9m18 6-2.8 3.3A8.5 8.5 0 0 1 3.6 15" /></>,
+};
+
+export function SpatialIcon({ name, size = 20, ...props }: Omit<ComponentPropsWithoutRef<"svg">, "name"> & {
+  name: keyof typeof icons;
+  size?: number;
+}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" {...props}>
+    {icons[name]}
+  </svg>;
+}
+
+export type DiscoveryState = "connecting" | "searching" | "available" | "empty" | "disabled" | "interrupted";
+const discoveryInfo = {
+  connecting: { label: "Connecting to AeRift", state: "searching" },
+  searching: { label: "Finding nearby devices", state: "searching" },
+  available: { label: "Nearby devices available", state: "connected" },
+  empty: { label: "No devices nearby", state: "offline" },
+  disabled: { label: "Discovery is off", state: "offline" },
+  interrupted: { label: "Discovery interrupted", state: "error" },
+} as const;
+
+type Position = { x: number; y: number };
+export interface SpatialAnchors {
+  width: number;
+  height: number;
+  local: Position;
+  peers: ReadonlyMap<string, Position>;
+  compact: boolean;
+}
+
+const platforms: Record<Platform, { label: string; icon: keyof typeof icons }> = {
+  windows: { label: "Windows", icon: "desktop" },
+  ios: { label: "iOS", icon: "phone" },
+  android: { label: "Android", icon: "phone" },
+  macos: { label: "macOS", icon: "desktop" },
+  linux: { label: "Linux", icon: "desktop" },
+};
+const spatialCapacity = 6;
+
+function midpoint(element: Element, stage: DOMRect): Position {
+  const rect = element.getBoundingClientRect();
+  return { x: rect.left - stage.left + rect.width / 2, y: rect.top - stage.top + rect.height / 2 };
+}
+
+function equalPosition(first: Position, second?: Position) {
+  return first.x === second?.x && first.y === second.y;
+}
+
+function equalAnchors(first: SpatialAnchors | undefined, second: SpatialAnchors) {
+  return first && first.width === second.width && first.height === second.height && first.compact === second.compact
+    && equalPosition(first.local, second.local) && first.peers.size === second.peers.size
+    && [...second.peers].every(([id, position]) => equalPosition(position, first.peers.get(id)));
+}
+
+function Peer({ device, slot, groupName, selected, busy, ready, offered, active, interrupted, onSelect }: {
+  device: Device; slot: number; groupName: string; selected: boolean; busy?: boolean; ready: boolean;
+  offered: boolean; active: boolean; interrupted: boolean; onSelect: (id: string) => void;
+}) {
+  const statusId = useId();
+  const titleId = useId();
+  const platform = platforms[device.platform];
+  const [state, presence] = devicePresence(device, { selected, ready, offered, active, interrupted });
+  const detail = `${platform.label}, ${device.paired ? "paired" : "unpaired"}, ${device.online ? "online" : "offline"}`;
+  return <label className="ae-spatial-peer" data-slot={slot} data-peer-state={state} data-selected={selected}
+    title={`${device.name} · ${detail}`}>
+    <input className="ae-spatial-radio" type="radio" name={groupName} checked={selected}
+      disabled={busy || !device.paired || !device.online} aria-labelledby={titleId} aria-describedby={statusId}
+      onChange={() => onSelect(device.id)} />
+    <span className="ae-surface ae-spatial-glyph" data-material="chrome" data-peer-anchor={device.id}>
+      <SpatialIcon name={platform.icon} size={30} />
+    </span>
+    <span className="ae-spatial-caption">
+      <strong id={titleId}>{device.name}</strong>
+      <small className="ae-spatial-presence">{presence}</small>
+      <span className="ae-spatial-detail" id={statusId}>{detail}
+        {state !== "available" && state !== "offline" && state !== "unpaired" && `, ${presence.toLowerCase()}`}
+      </span>
+    </span>
+  </label>;
+}
+
+export function SpatialScene({ devices, platform, discovery, selectedId, readinessPeerId, offeredPeerId, activePeerId, interruptedPeerId, receiverReady,
+  busy, onSelect, onPair, pairingDisabled, pairingLabel = "Pair a device", onRetry, retryLabel = "Retry connection", children }: {
+  devices: readonly Device[];
+  platform?: Platform;
+  discovery: DiscoveryState;
+  selectedId?: string;
+  readinessPeerId?: string;
+  offeredPeerId?: string;
+  activePeerId?: string;
+  interruptedPeerId?: string;
+  receiverReady?: boolean;
+  busy?: boolean;
+  onSelect: (id: string) => void;
+  onPair: () => void;
+  pairingDisabled?: boolean;
+  pairingLabel?: string;
+  onRetry?: () => void;
+  retryLabel?: string;
+  children?: ReactNode | ((anchors: SpatialAnchors) => ReactNode);
+}) {
+  const groupName = useId();
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [anchors, setAnchors] = useState<SpatialAnchors>();
+  const [previousSlots, setSlots] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const slots = reconcilePeerSlots(previousSlots, devices.map(device => device.id));
+  if (slots !== previousSlots) setSlots(slots);
+  const peers = [...devices].sort((first, second) => (slots.get(first.id) ?? 0) - (slots.get(second.id) ?? 0));
+  const occupiedSlots = new Set(slots.values());
+  const availableSlots = Array.from({ length: spatialCapacity }, (_, index) => index)
+    .filter(index => !occupiedSlots.has(index));
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    const local = stage?.querySelector("[data-local-anchor]");
+    if (!stage || !local) return;
+    const peerNodes = Array.from(stage.querySelectorAll<HTMLElement>("[data-peer-anchor]"));
+    function measure() {
+      if (!stage || !local) return;
+      const rect = stage.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const compact = getComputedStyle(stage).getPropertyValue("--ae-stage-compact").trim() === "1";
+      const next = { width: rect.width, height: rect.height, compact, local: midpoint(local, rect),
+        peers: new Map(peerNodes.map(node => [node.dataset.peerAnchor!, midpoint(node, rect)])) };
+      setAnchors(current => equalAnchors(current, next) ? current : next);
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    observer.observe(local);
+    peerNodes.forEach(node => observer.observe(node));
+    return () => observer.disconnect();
+  }, [slots]);
+
+  const localState = activePeerId ? "active" : offeredPeerId ? "offered" : receiverReady || readinessPeerId ? "ready" : "idle";
+  const localPresence = localState === "active" ? "Transfer active" : localState === "offered" ? "Offer pending"
+    : localState === "ready" ? receiverReady ? "Ready to receive" : "Receiver ready" : undefined;
+  const empty = !peers.some(device => device.paired);
+  const info = discoveryInfo[discovery];
+  return <div className="ae-spatial-scene" data-discovery={discovery}>
+    <div className="ae-spatial-stage" ref={stageRef} data-crowded={peers.length > spatialCapacity}>
+      <div className="ae-spatial-local" data-peer-state={localState} title={platform && platforms[platform].label}>
+        <span className="ae-spatial-field" aria-hidden="true"><span /><span /><span /></span>
+        <GlassSurface material="chrome" className="ae-spatial-glyph" data-local-anchor="">
+          <SpatialIcon name={platform ? platforms[platform].icon : "desktop"} size={38} />
+        </GlassSurface>
+        <span className="ae-spatial-caption">
+          <strong>This device</strong>
+          {localPresence && <small className="ae-spatial-presence">{localPresence}</small>}
+          {platform && <span className="ae-spatial-detail">{platforms[platform].label}</span>}
+        </span>
+      </div>
+      {peers.length > 0 && <div className="ae-spatial-peer-group" role="radiogroup" aria-label="Destination device">
+        {peers.map(device => {
+          const current = slots.get(device.id) ?? 0;
+          const slot = current >= spatialCapacity ? availableSlots.shift() ?? current : current;
+          return <Peer key={device.id} slot={slot} groupName={groupName} device={device}
+            selected={device.id === selectedId} busy={busy} ready={device.id === readinessPeerId}
+            offered={device.id === offeredPeerId} active={device.id === activePeerId}
+            interrupted={device.id === interruptedPeerId} onSelect={onSelect} />;
+        })}
+      </div>}
+      {children && <div className="ae-spatial-overlay">{typeof children === "function" ? anchors && children(anchors) : children}</div>}
+    </div>
+    <div className="ae-spatial-footer">
+      <div className="ae-spatial-status">
+        <ConnectionStatus {...info} announce />
+        {empty && discovery !== "connecting" && <p>Pair a nearby device to send and receive files.</p>}
+      </div>
+      <div className="ae-actions">
+        {onRetry && <Button variant="quiet" onClick={onRetry}><SpatialIcon name="retry" size={17} />{retryLabel}</Button>}
+        <Button variant={empty ? "secondary" : "quiet"} disabled={pairingDisabled} onClick={onPair}>
+          <SpatialIcon name="pair" size={17} />{pairingLabel}
+        </Button>
+      </div>
+    </div>
+  </div>;
+}

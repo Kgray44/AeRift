@@ -124,6 +124,7 @@ impl Session {
                 .filter_map(|peer| peer.try_into().ok())
                 .collect();
             if suspended {
+                self.receiver.set_ready_until(None);
                 for entry in &state.outgoing {
                     if !entry.view.status.state.is_terminal() {
                         entry.cancel.cancel();

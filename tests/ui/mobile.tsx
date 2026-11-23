@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import type { AppPort, AppSnapshot, Transfer } from "@aerift/app-contract";
+import "../../apps/aerift/public/appearance-bootstrap.css";
 import { IosApp } from "../../apps/aerift/src/ios/IosApp";
 import "@aerift/ui/styles.css";
 import "../../apps/aerift/src/layout.css";

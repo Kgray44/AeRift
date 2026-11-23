@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aerift_transfer::{ErrorCode, TransferError};
+use aerift_transfer::{ErrorCode, PeerId, TransferError};
 use tauri::{ipc::Channel, Manager, WebviewWindow};
 use uuid::Uuid;
 
@@ -12,13 +12,18 @@ use crate::{
 };
 
 async fn session(window: &WebviewWindow) -> Result<Arc<Session>, TransferError> {
-    if window.label() != "main" {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
+    require_main(window)?;
     window
         .state::<AppRuntime>()
         .ios_session(window.app_handle())
         .await
+}
+
+fn require_main(window: &WebviewWindow) -> Result<(), TransferError> {
+    if window.label() != "main" {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -50,9 +55,7 @@ pub(crate) async fn select_app_file(
     window: WebviewWindow,
     source: Option<tauri_plugin_aerift_ios::PickerSource>,
 ) -> Result<Option<FileSelection>, TransferError> {
-    if window.label() != "main" {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
+    require_main(&window)?;
     let registry = window.state::<SelectionRegistry>();
     let revision = registry.begin()?;
     match tauri_plugin_aerift_ios::pick_file(window.app_handle(), source).await {
@@ -68,9 +71,7 @@ pub(crate) async fn present_ios_selection(
     selection_id: String,
     action: tauri_plugin_aerift_ios::SelectionAction,
 ) -> Result<(), TransferError> {
-    if window.label() != "main" {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
+    require_main(&window)?;
     let (_, source) = window
         .state::<SelectionRegistry>()
         .lookup(&selection_id)
@@ -114,6 +115,34 @@ pub(crate) async fn open_ios_browser(
     tauri_plugin_aerift_ios::open_browser(window.app_handle(), &url)
         .await
         .map_err(|_| ErrorCode::InvalidRequest.into())
+}
+
+#[tauri::command]
+pub(crate) fn clear_app_file(
+    window: WebviewWindow,
+    selection_id: String,
+) -> Result<(), TransferError> {
+    require_main(&window)?;
+    window
+        .state::<SelectionRegistry>()
+        .consume(&selection_id)
+        .map(|_| ())
+}
+
+#[tauri::command]
+pub(crate) async fn set_receiver_ready(
+    window: WebviewWindow,
+    ready: bool,
+) -> Result<u64, TransferError> {
+    session(&window).await?.set_receiver_ready(ready)
+}
+
+#[tauri::command]
+pub(crate) async fn check_receiver(
+    window: WebviewWindow,
+    device_id: PeerId,
+) -> Result<bool, TransferError> {
+    session(&window).await?.check_receiver(device_id).await
 }
 
 #[tauri::command]

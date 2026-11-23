@@ -1,5 +1,6 @@
 import QuickLook
 import SafariServices
+import AVFoundation
 import Tauri
 import UIKit
 
@@ -63,6 +64,10 @@ private struct CameraStop: Decodable {
 
 private struct CameraClock: Encodable {
     let clockMs: Double
+}
+
+private struct CameraAuthorization: Encodable {
+    let authorized: Bool
 }
 
 private struct CameraUpdate: Encodable {
@@ -253,6 +258,10 @@ final class AeRiftPlugin: Plugin {
 
     @objc func cameraClock(_ invoke: Invoke) {
         invoke.resolve(CameraClock(clockMs: HandCamera.clockMs()))
+    }
+
+    @objc func cameraAuthorized(_ invoke: Invoke) {
+        invoke.resolve(CameraAuthorization(authorized: AVCaptureDevice.authorizationStatus(for: .video) == .authorized))
     }
 
     @objc func startCamera(_ invoke: Invoke) throws {

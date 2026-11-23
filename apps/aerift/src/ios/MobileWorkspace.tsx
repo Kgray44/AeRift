@@ -4,7 +4,7 @@ import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
 import { command } from "../nativeAppPort";
 import type { AppPort, Transfer } from "@aerift/app-contract";
-import { Button, FileCard, type TransferWorkspaceRegions } from "@aerift/ui";
+import { Button, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
 
 export const pickerSources = ["files", "photos"] as const;
 export type PickerSource = typeof pickerSources[number];
@@ -36,7 +36,7 @@ export function MobileWorkspace({ regions, modules, pick, received, openRift, ob
   return <>
     {regions.selection && <section className="ios-section" aria-label="Selected object">
       <h3>Ready for Rift</h3>
-      <FileCard file={regions.selection} />
+      <TransferObject files={[regions.selection]} objectId={regions.selection.selectionId} state="resting" />
       <p>Staged copy. The source item stays where it is.</p>
       <div className="ae-actions">
         <Button variant="quiet" disabled={!!presenting} onClick={() => void present("preview")}>Preview</Button>
