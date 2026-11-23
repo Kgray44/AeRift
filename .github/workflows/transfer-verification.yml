@@ -1,0 +1,28 @@
+name: Transfer verification
+on:
+  push:
+    branches: [ci/alpha-transfer-engine]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: cargo test --manifest-path crates/transfer/Cargo.toml -- --nocapture
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: rustup target add aarch64-apple-ios-sim
+      - run: cargo check --manifest-path crates/transfer/Cargo.toml --target aarch64-apple-ios-sim
