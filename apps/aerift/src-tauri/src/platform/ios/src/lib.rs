@@ -56,7 +56,7 @@ struct PickerResponse {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("aerift-ios")
         .invoke_handler(tauri::generate_handler![
-            camera_commands::camera_authorized,
+            camera_commands::camera_permission,
             camera_commands::camera_clock,
             camera_commands::register_camera_events,
             camera_commands::start_camera,
@@ -264,18 +264,26 @@ pub async fn hand_camera_clock<R: Runtime>(app: &AppHandle<R>) -> Result<f64, Pl
     Ok(clock.clock_ms)
 }
 
-#[derive(Deserialize)]
-struct CameraAuthorization {
-    authorized: bool,
+#[derive(Serialize)]
+struct CameraPermissionRequest {
+    request: bool,
 }
 
-async fn hand_camera_authorized<R: Runtime>(app: &AppHandle<R>) -> Result<bool, PluginInvokeError> {
-    let status: CameraAuthorization = app
+#[derive(Deserialize)]
+struct CameraPermission {
+    status: String,
+}
+
+async fn hand_camera_permission<R: Runtime>(
+    app: &AppHandle<R>,
+    request: bool,
+) -> Result<String, PluginInvokeError> {
+    let permission: CameraPermission = app
         .state::<IosPlatform<R>>()
         .0
-        .run_mobile_plugin_async("cameraAuthorized", ())
+        .run_mobile_plugin_async("cameraPermission", CameraPermissionRequest { request })
         .await?;
-    Ok(status.authorized)
+    Ok(permission.status)
 }
 
 /// Call only from an explicit foreground camera action. Reuse the app's
