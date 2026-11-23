@@ -353,6 +353,15 @@ class Runner:
                 require(self.explicit_p8 or "API_PRIVATE_KEYS_DIR" in help_text, "ALTOOL_KEY_LOOKUP_UNVERIFIED")
 
             self.stage = "DEVICE_ARCHIVE"
+            # Tauri's generated Info.plist uses literal version strings. Xcode
+            # build settings alone cannot override them when archiving directly.
+            bundle_plists = list(project_root.glob("*_iOS/Info.plist"))
+            require(len(bundle_plists) == 1, "ONE_GENERATED_APP_PLIST_REQUIRED")
+            bundle_plist = bundle_plists[0]
+            metadata = plistlib.loads(bundle_plist.read_bytes())
+            metadata["CFBundleShortVersionString"] = self.args.version
+            metadata["CFBundleVersion"] = self.args.build
+            bundle_plist.write_bytes(plistlib.dumps(metadata, sort_keys=False))
             command = [
                 "xcodebuild", "-quiet", "-project", str(project), "-scheme", scheme, "-configuration", configuration,
                 "-destination", "generic/platform=iOS", "-archivePath", str(self.archive_path),
@@ -376,6 +385,8 @@ class Runner:
         require(len(apps) == 1, "ONE_ARCHIVED_APP_REQUIRED")
         app = apps[0]
         info = plistlib.loads((app / "Info.plist").read_bytes())
+        self.receipt["archivedVersion"] = info.get("CFBundleShortVersionString")
+        self.receipt["archivedBuild"] = info.get("CFBundleVersion")
         require(info.get("CFBundleIdentifier") == BUNDLE, "ARCHIVE_BUNDLE_MISMATCH")
         require(info.get("CFBundleShortVersionString") == self.args.version and info.get("CFBundleVersion") == self.args.build, "ARCHIVE_VERSION_MISMATCH")
         require(info.get("NSCameraUsageDescription") and info.get("NSLocalNetworkUsageDescription"), "ARCHIVE_PRIVACY_STRINGS_REQUIRED")
