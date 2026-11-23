@@ -71,9 +71,38 @@ xcrun simctl spawn "$device" launchctl list | awk -v pid="$pid" \
   '$1 == pid && $3 ~ /com[.]kgamazing44[.]aerift/ { found=1 } END { exit !found }'
 echo "AeRift remained running on iPhone simulator $device"
 
+verification_dir="$(mktemp -d "${TMPDIR:-/tmp}/aerift-workspace.XXXXXX")"
+trap 'rm -f "$verification_dir/verify-workspace" "$verification_dir/launch.png"; rmdir "$verification_dir"' EXIT
+swiftc "$ios_dir/tests/VerifyWorkspace.swift" -o "$verification_dir/verify-workspace"
+
+deadline=$((SECONDS + 60))
+workspace_visible=0
+while (( SECONDS < deadline )); do
+  if xcrun simctl io "$device" screenshot "$verification_dir/launch.png" &&
+     "$verification_dir/verify-workspace" "$verification_dir/launch.png"; then
+    workspace_visible=1
+    break
+  fi
+  sleep 3
+done
+
 if [[ -n "${IOS_EVIDENCE_DIR:-}" ]]; then
   mkdir -p "$IOS_EVIDENCE_DIR"
-  xcrun simctl io "$device" screenshot "$IOS_EVIDENCE_DIR/launch.png"
+  if [[ -f "$verification_dir/launch.png" ]]; then
+    cp "$verification_dir/launch.png" "$IOS_EVIDENCE_DIR/launch.png"
+  fi
+fi
+if (( ! workspace_visible )); then
+  if [[ -n "${IOS_EVIDENCE_DIR:-}" ]]; then
+    xcrun simctl spawn "$device" log show --last 3m --style compact --info \
+      --predicate 'process == "aerift" OR process == "AeRift" OR subsystem BEGINSWITH "com.apple.WebKit"' \
+      2>&1 | tail -n 250 > "$IOS_EVIDENCE_DIR/workspace-launch.log" || true
+  fi
+  echo 'The iPhone workspace did not become visible after launch.' >&2
+  exit 1
+fi
+
+if [[ -n "${IOS_EVIDENCE_DIR:-}" ]]; then
   python3 - "$IOS_EVIDENCE_DIR/receipt.json" "$app/Info.plist" "$device" <<'PY'
 import json
 import os
@@ -106,6 +135,7 @@ receipt = {
     "appVersion": info["CFBundleShortVersionString"],
     "installed": True,
     "launchSmokePassed": True,
+    "workspaceVisible": True,
     "physicalDeviceValidated": False,
 }
 with open(output, "w", encoding="utf-8") as destination:
