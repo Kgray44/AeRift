@@ -513,3 +513,68 @@
   .ae-theme[data-ae-theme="glass"] .ae-switch-track,
   .ae-theme[data-ae-theme="glass"] .ae-button::before { display: none; }
 }
+
+/* The optical canvas is an app-owned, decorative backdrop, never a text or DOM
+   snapshot. Only surfaces with a current lens sample swap their fallback fill. */
+.ae-theme[data-ae-theme="glass"] .ae-shell {
+  position: relative;
+  isolation: isolate;
+}
+.ae-theme[data-ae-theme="glass"] .ae-glass-optics {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: -1;
+  pointer-events: none;
+  display: none;
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-glass-optics {
+  display: block;
+}
+
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens]::before,
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens]::after {
+  display: none;
+}
+
+/* Top-layer overlays and sticky chrome keep true WebView backdrop sampling.
+   The small, directional specular patches reserve the center for content. */
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  :is(.ae-toolbar, .ae-surface[data-material="overlay"]) {
+  background-image:
+    radial-gradient(ellipse at 8% 0%, var(--ae-optical-sheen), transparent 31%),
+    radial-gradient(ellipse at 96% 100%, var(--ae-optical-cool), transparent 32%);
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-workspace-nav[data-ae-lens]::before {
+  background:
+    radial-gradient(ellipse at 11% 0%, var(--ae-optical-rim), transparent 41%),
+    radial-gradient(ellipse at 93% 100%, var(--ae-optical-cool), transparent 49%),
+    color-mix(in srgb, var(--ae-optical-panel) 52%, transparent);
+  box-shadow: 0 2px 7px var(--ae-optical-shade);
+}
+/* Restore opaque glass during the frame before JS receives live media changes. */
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ae-glass-optics {
+    display: none;
+  }
+  .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+    .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens] {
+    background: var(--ae-material-solid, var(--ae-content));
+    border-color: var(--ae-display-edge, var(--ae-edge));
+  }
+  .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+    :is(.ae-toolbar, .ae-surface[data-material="overlay"]) {
+    background-image: none;
+  }
+}

@@ -1,5 +1,7 @@
 import { useId, type PointerEvent, type ComponentPropsWithRef, type HTMLAttributes, type ReactNode } from "react";
 import type { Device, FileInfo, Transfer } from "@aerift/app-contract";
+import { GlassOptics } from "./GlassOptics";
+import { useTheme } from "./theme";
 
 type SurfaceProps = HTMLAttributes<HTMLDivElement> & { material?: "content" | "raised" | "chrome" | "overlay" };
 
@@ -11,8 +13,10 @@ export function AppShell({ brand = "AeRift", toolbar, children }: {
   brand?: ReactNode; toolbar?: ReactNode; children: ReactNode;
 }) {
   const mainId = useId();
+  const theme = useTheme();
   return (
     <div className="ae-shell">
+      {theme.id === "glass" && <GlassOptics />}
       <a className="ae-skip" href={`#${mainId}`}>Skip to content</a>
       <header className="ae-header">
         <GlassSurface material="chrome" className="ae-toolbar">
