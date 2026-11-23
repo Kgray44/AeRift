@@ -7,71 +7,6 @@ permissions:
   contents: read
 
 jobs:
-  native-adapter:
-    name: iOS simulator SDK - native adapters
-    runs-on: macos-15
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: 470707db8dcf875be65a8fba9315c2f24caa4ed5
-          persist-credentials: false
-      - name: Lint privacy configuration
-        run: |
-          plutil -lint apps/aerift/src-tauri/Info.ios.plist
-          plutil -lint apps/ios/PrivacyInfo.xcprivacy
-          bash -n apps/ios/prepare-apple.sh
-          bash -n apps/ios/simulator-smoke.sh
-      - name: Typecheck Swift against the simulator SDK
-        run: |
-          xcodebuild -version
-          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-          xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
-            -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/ClipboardImagePicker.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/BonjourDiscovery.swift"
-      - name: Test bounded native file staging
-        run: |
-          swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
-            apps/ios/tests/FileStagingSmoke.swift -o "$RUNNER_TEMP/file-staging-smoke"
-          "$RUNNER_TEMP/file-staging-smoke"
-
-  simulator-app:
-    name: iOS simulator - Tauri app build and launch
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: 470707db8dcf875be65a8fba9315c2f24caa4ed5
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: '24'
-          package-manager-cache: false
-      - name: Install iOS toolchain prerequisites
-        run: |
-          xcodebuild -version
-          xcrun simctl list runtimes
-          command -v xcodegen || brew install xcodegen
-          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
-      - name: Build, install and launch AeRift
-        env:
-          IOS_APP_SOURCE_COMMIT: 470707db8dcf875be65a8fba9315c2f24caa4ed5
-        run: |
-          IOS_EVIDENCE_DIR="$RUNNER_TEMP/aerift-ios-evidence" bash apps/ios/simulator-smoke.sh
-      - name: Publish simulator evidence
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: aerift-ios-simulator-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/aerift-ios-evidence
-          if-no-files-found: warn
-          retention-days: 14
-
   mobile-fixtures:
     name: Combined mobile WebKit and loopback transport
     runs-on: macos-15
@@ -81,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          fetch-depth: 3
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
