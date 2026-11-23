@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/v1.ts"
+    ".": "./src/v1.ts",
+    "./digital-objects": "./src/digital-objects.ts",
+    "./experience": "./src/experience.ts"
   }
 }
