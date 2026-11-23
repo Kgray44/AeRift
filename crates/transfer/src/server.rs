@@ -1,0 +1,175 @@
+use std::{convert::Infallible, sync::Arc, time::Duration};
+
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::{
+    Method, Request, Response, StatusCode, body::Incoming, header,
+    server::conn::http1, service::service_fn,
+};
+use hyper_util::rt::{TokioIo, TokioTimer};
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+
+use crate::{ErrorCode, Offer, PeerId, Receiver, TransferError, TransferKey, parse_id, read_control};
+use crate::receiver::Upload;
+
+type Reply = Response<Full<Bytes>>;
+
+/// Serve one HTTP/1.1 connection. The caller owns the preceding TLS handshake and
+/// supplies its verified peer. The trust callback is evaluated on every request.
+pub async fn serve<I, T>(
+    io: I,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    is_trusted: T,
+) -> Result<(), TransferError>
+where
+    I: AsyncRead + AsyncWrite + Unpin,
+    T: Fn(PeerId) -> bool,
+{
+    http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(Duration::from_secs(10))
+        .max_buf_size(32 * 1024)
+        .serve_connection(TokioIo::new(io), service_fn(|request| {
+            let trusted = is_trusted(peer);
+            let receiver = Arc::clone(&receiver);
+            async move {
+                Ok::<_, Infallible>(if trusted {
+                    route(request, peer, receiver).await
+                } else {
+                    error(ErrorCode::PeerUntrusted.into())
+                })
+            }
+        }))
+        .await
+        .map_err(|_| ErrorCode::NetworkError.into())
+}
+
+async fn route(request: Request<Incoming>, peer: PeerId, receiver: Arc<Receiver>) -> Reply {
+    let path = request.uri().path();
+    if request.uri().query().is_some() || request.version() != hyper::Version::HTTP_11 {
+        return error(ErrorCode::InvalidRequest.into());
+    }
+    if !path.starts_with("/v1/") {
+        return error(ErrorCode::UnsupportedVersion.into());
+    }
+    if path == "/v1/transfers" && request.method() == Method::POST {
+        return offer(request, peer, &receiver).await;
+    }
+    let Some(path) = path.strip_prefix("/v1/transfers/") else {
+        return error(ErrorCode::PeerUnavailable.into());
+    };
+    let (raw_id, content) = match path.strip_suffix("/content") {
+        Some(raw_id) => (raw_id, true),
+        None => (path, false),
+    };
+    let Some(id) = parse_id(raw_id) else {
+        return error(ErrorCode::InvalidRequest.into());
+    };
+    let key = TransferKey { peer, id };
+    let result = match (request.method(), content) {
+        (&Method::GET, false) => receiver.status(key),
+        (&Method::DELETE, false) => receiver.cancel(key),
+        (&Method::PUT, true) => {
+            let Some(size) = content_length(&request) else {
+                return error(ErrorCode::InvalidRequest.into());
+            };
+            match receiver.start(key, size) {
+                Ok(upload) => {
+                    let result = receive(&upload, request.into_body()).await;
+                    if let Err(error) = result {
+                        upload.fail(error);
+                    }
+                    result
+                }
+                Err(error) => Err(error),
+            }
+        }
+        _ => return error(ErrorCode::InvalidRequest.into()),
+    };
+    match result {
+        Ok(status) => json(StatusCode::OK, &status),
+        Err(failure) => error(failure),
+    }
+}
+
+async fn offer(request: Request<Incoming>, peer: PeerId, receiver: &Receiver) -> Reply {
+    let body = match tokio::time::timeout(Duration::from_secs(10), read_control(request.into_body())).await {
+        Ok(Ok(body)) => body,
+        Ok(Err(true)) => return json(StatusCode::PAYLOAD_TOO_LARGE, &TransferError::from(ErrorCode::InvalidRequest)),
+        _ => return error(ErrorCode::InvalidRequest.into()),
+    };
+    let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
+        return error(ErrorCode::InvalidRequest.into());
+    };
+    match receiver.offer(peer, offer) {
+        Ok((created, status)) => json(if created { StatusCode::CREATED } else { StatusCode::OK }, &status),
+        Err(failure) => error(failure),
+    }
+}
+
+fn content_length(request: &Request<Incoming>) -> Option<u64> {
+    let headers = request.headers();
+    if headers.get(header::CONTENT_TYPE)?.as_bytes() != b"application/octet-stream"
+        || headers.contains_key(header::TRANSFER_ENCODING)
+        || headers.get_all(header::CONTENT_LENGTH).iter().count() != 1
+    {
+        return None;
+    }
+    headers.get(header::CONTENT_LENGTH)?.to_str().ok()?.parse().ok()
+}
+
+async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, TransferError> {
+    let temporary = upload.tempfile()?;
+    let handle = temporary.reopen().map_err(|_| ErrorCode::StorageFailed)?;
+    let mut file = tokio::fs::File::from_std(handle);
+    let mut hash = Sha256::new();
+    let mut bytes = 0u64;
+    loop {
+        let frame = tokio::select! {
+            biased;
+            _ = upload.cancel.cancelled() => return Err(ErrorCode::Cancelled.into()),
+            next = tokio::time::timeout(Duration::from_secs(30), body.frame()) =>
+                next.map_err(|_| ErrorCode::PeerUnavailable)?,
+        };
+        let Some(frame) = frame else { break };
+        let data = frame.map_err(|_| ErrorCode::IntegrityFailed)?
+            .into_data().map_err(|_| ErrorCode::InvalidRequest)?;
+        bytes += data.len() as u64;
+        if bytes > upload.offer.size_bytes {
+            return Err(ErrorCode::IntegrityFailed.into());
+        }
+        file.write_all(&data).await.map_err(|_| ErrorCode::StorageFailed)?;
+        hash.update(&data);
+        upload.progress(bytes)?;
+    }
+    if bytes != upload.offer.size_bytes || format!("{:x}", hash.finalize()) != upload.offer.sha256 {
+        return Err(ErrorCode::IntegrityFailed.into());
+    }
+    file.flush().await.map_err(|_| ErrorCode::StorageFailed)?;
+    file.sync_all().await.map_err(|_| ErrorCode::StorageFailed)?;
+    drop(file);
+    upload.publish(temporary)
+}
+
+fn error(failure: TransferError) -> Reply {
+    let status = match failure.code {
+        ErrorCode::InvalidRequest | ErrorCode::UnsupportedVersion => StatusCode::BAD_REQUEST,
+        ErrorCode::PeerUntrusted => StatusCode::FORBIDDEN,
+        ErrorCode::PeerUnavailable => StatusCode::NOT_FOUND,
+        ErrorCode::Conflict | ErrorCode::TransferRejected | ErrorCode::Cancelled => StatusCode::CONFLICT,
+        ErrorCode::IntegrityFailed => StatusCode::UNPROCESSABLE_ENTITY,
+        ErrorCode::StorageFailed | ErrorCode::NetworkError => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    json(status, &failure)
+}
+
+fn json(status: StatusCode, data: &impl serde::Serialize) -> Reply {
+    let body = serde_json::to_vec(data).expect("serializable v1 response");
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Full::new(Bytes::from(body)))
+        .expect("static response headers")
+}
