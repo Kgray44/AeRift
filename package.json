@@ -1,0 +1,14 @@
+{
+  "name": "aerift",
+  "private": true,
+  "workspaces": [
+    "packages/app-contract"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test tests/contracts/protocol.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
