@@ -51,7 +51,6 @@ struct BonjourUpdate: Encodable {
 
 enum BonjourError: Error {
     case busy
-    case inactive
     case invalidDevice
 }
 
@@ -63,13 +62,21 @@ final class BonjourDiscovery: NSObject, NetServiceBrowserDelegate, NetServiceDel
     private static let domain = "local."
     private static let platforms: Set<String> = ["windows", "ios", "android", "macos", "linux"]
 
+    private struct Request {
+        let id: String
+        let name: String
+        let port: UInt16
+        let onChange: (BonjourUpdate) -> Void
+    }
+
+    private var deferred: Request?
+    private var current: Request?
     private var browser: NetServiceBrowser?
     private var publisher: NetService?
     private var published = false
     private var ownId: String?
     private var resolved = [String: BonjourPeer]()
     private var services = [String: NetService]()
-    private var onChange: ((BonjourUpdate) -> Void)?
 
     override init() {
         super.init()
@@ -77,15 +84,29 @@ final class BonjourDiscovery: NSObject, NetServiceBrowserDelegate, NetServiceDel
             self, selector: #selector(didEnterBackground(_:)),
             name: UIApplication.didEnterBackgroundNotification, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(didBecomeActive(_:)),
+            name: UIApplication.didBecomeActiveNotification, object: nil
+        )
     }
 
     func start(
         id: String, name: String, port: UInt16, onChange: @escaping (BonjourUpdate) -> Void
     ) throws {
-        guard browser == nil else { throw BonjourError.busy }
-        guard UIApplication.shared.applicationState == .active else { throw BonjourError.inactive }
+        guard browser == nil, deferred == nil else { throw BonjourError.busy }
         guard Self.validId(id), Self.validName(name), port != 0 else { throw BonjourError.invalidDevice }
 
+        let request = Request(id: id, name: name, port: port, onChange: onChange)
+        guard UIApplication.shared.applicationState == .active else {
+            deferred = request
+            onChange(BonjourUpdate(state: "suspended", peers: []))
+            return
+        }
+        try run(request)
+    }
+
+    private func run(_ request: Request) throws {
+        let (id, name, port, onChange) = (request.id, request.name, request.port, request.onChange)
         let instance = "aerift-" + String(id.prefix(32))
         let publisher = NetService(domain: Self.domain, type: Self.type, name: instance, port: Int32(port))
         let records = [
@@ -102,7 +123,7 @@ final class BonjourDiscovery: NSObject, NetServiceBrowserDelegate, NetServiceDel
         browser.delegate = self
 
         self.ownId = id
-        self.onChange = onChange
+        current = request
         self.publisher = publisher
         self.browser = browser
         onChange(BonjourUpdate(state: "starting", peers: []))
@@ -111,11 +132,26 @@ final class BonjourDiscovery: NSObject, NetServiceBrowserDelegate, NetServiceDel
     }
 
     func stop() {
+        let waiting = deferred
+        deferred = nil
         stop(state: "disabled")
+        waiting?.onChange(BonjourUpdate(state: "disabled", peers: []))
     }
 
     @objc private func didEnterBackground(_ notification: Notification) {
+        guard let current else { return }
+        deferred = current
         stop(state: "suspended")
+    }
+
+    @objc private func didBecomeActive(_ notification: Notification) {
+        guard let request = deferred else { return }
+        deferred = nil
+        do {
+            try run(request)
+        } catch {
+            request.onChange(BonjourUpdate(state: "unavailable", peers: []))
+        }
     }
 
     func netServiceDidPublish(_ sender: NetService) {
@@ -182,12 +218,12 @@ final class BonjourDiscovery: NSObject, NetServiceBrowserDelegate, NetServiceDel
             let endpoints = instances.flatMap(\.endpoints).filter { seen.insert($0).inserted }.prefix(16)
             return BonjourPeer(id: id, name: first.name, platform: first.platform, endpoints: Array(endpoints))
         }
-        onChange?(BonjourUpdate(state: published ? "ready" : "starting", peers: peers))
+        current?.onChange(BonjourUpdate(state: published ? "ready" : "starting", peers: peers))
     }
 
     private func stop(state: String) {
-        let callback = onChange
-        onChange = nil
+        let callback = current?.onChange
+        current = nil
         browser?.delegate = nil
         browser?.stop()
         browser = nil

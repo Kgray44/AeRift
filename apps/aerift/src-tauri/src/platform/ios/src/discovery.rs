@@ -37,7 +37,7 @@ pub struct BonjourPeer {
     pub endpoints: Vec<BonjourEndpoint>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BonjourState {
     Starting,
