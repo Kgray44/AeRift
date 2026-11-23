@@ -20,7 +20,7 @@ export function MobileNavigation({ destination, navigate, attention }: {
         <span className="ios-nav-icon" aria-hidden="true">{icons[item]}</span>
         <span>{DESTINATIONS[item].label}</span>
         {((item === "devices" && attention.devices) || (item === "activity" && attention.activity)) &&
-          <span className="ios-attention"><span className="ios-sr-only">Needs attention</span></span>}
+          <span className="ios-attention"><span className="ios-sr-only">{item === "activity" ? "Transfers active" : "Pairing requests"}</span></span>}
       </button>)}
     </nav>
   </GlassSurface>;

@@ -20,6 +20,8 @@
 .aerift-ios .ae-toolbar { border-radius: var(--ae-radius-panel); }
 .aerift-ios .ae-toolbar .ae-actions { gap: .375rem; }
 .aerift-ios .ae-panel { padding: clamp(.85rem, 3vw, 1.5rem); }
+.aerift-ios .ae-settings { margin-block-end: 1rem; }
+.aerift-ios .aerift-camera button { justify-self: start; }
 .aerift-ios .ae-panel h3 { scroll-margin-block-start: 1rem; }
 
 .aerift-ios-network, .ios-alerts, .ios-section-head, .ios-overview {
@@ -32,7 +34,7 @@
 
 .aerift-ios-network, .ios-alerts:not(:empty) { margin-block-end: 1rem; }
 .ios-destination-heading { margin-block-end: 1rem; }
-.ios-destination-heading h2 {
+.aerift-ios .ios-destination-heading h2 {
   font-size: clamp(1.85rem, 4vw, 2.65rem);
   letter-spacing: -.035em;
   line-height: 1.1;
@@ -71,7 +73,7 @@
 .ios-section h3 { font-size: 1.14rem; }
 .ios-list { padding-inline-start: 1.3rem; }
 .ios-module-picker { display: flex; flex-wrap: wrap; gap: .3rem; }
-.ios-module-picker [aria-pressed="true"] { border-color: var(--ae-control-edge); background: var(--ae-field); }
+.aerift-ios .ios-module-picker [aria-pressed="true"] { border-color: var(--ae-control-edge); background: var(--ae-field); }
 .ios-object-editor { justify-items: stretch; }
 .ios-object-form, .ios-object-form label, .ios-object-list, .ios-collection { display: grid; gap: .55rem; }
 .ios-object-form .ios-check { display: flex; align-items: center; min-height: 44px; }
@@ -101,8 +103,9 @@
   z-index: var(--ae-layer-chrome);
 }
 
+.aerift-ios[data-keyboard="open"] .ios-dock { display: none; }
 .ios-dock nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .1rem; }
-.ios-dock button {
+.aerift-ios .ios-dock button {
   position: relative;
   display: grid;
   justify-items: center;
@@ -116,22 +119,23 @@
   background: transparent;
   color: var(--ae-text);
   font: inherit;
-  font-size: max(.625rem, 10px);
+  font-size: .6875rem;
   font-weight: 650;
-  overflow-wrap: anywhere;
+  line-height: 1.25;
   cursor: pointer;
   transition: transform var(--ae-duration-quick) var(--ae-ease);
 }
 
-.ios-dock button[aria-current="page"] {
+.aerift-ios .ios-dock button[aria-current="page"] {
   background: var(--ae-field);
   border-color: var(--ae-control-edge);
   color: var(--ae-text);
   box-shadow: inset 0 1px var(--ae-highlight);
 }
 
-.ios-dock button:active { transform: scale(var(--ae-press-scale)); }
+.aerift-ios .ios-dock button:active { transform: scale(var(--ae-press-scale)); }
 .ios-nav-icon { display: block; font-size: 1.32rem; line-height: 1.1; }
+.aerift-ios .ios-dock button > span:nth-child(2) { overflow-wrap: anywhere; }
 .ios-attention {
   position: absolute;
   inset-block-start: .35rem;
@@ -152,7 +156,7 @@
   white-space: nowrap;
 }
 
-.aerift-ios .ae-toast-slot { bottom: calc(5.25rem + env(safe-area-inset-bottom)); }
+.aerift-ios .ae-toast-slot { bottom: calc(5.75rem + env(safe-area-inset-bottom)); }
 
 @media (min-width: 42rem) {
   .ios-home-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -161,4 +165,5 @@
 @media (max-width: 23rem) {
   .aerift-ios .ae-toolbar { gap: .3rem; padding-inline: .55rem; }
   .aerift-ios .ae-toolbar .ae-button { padding-inline: .35rem; }
+  .aerift-ios .ios-dock button { font-size: .625rem; }
 }

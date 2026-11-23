@@ -2,6 +2,7 @@ import { useState } from "react";
 import { WORKSPACE_MODULES } from "@aerift/app-contract/experience";
 import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
+import { command } from "../nativeAppPort";
 import type { AppPort, Transfer } from "@aerift/app-contract";
 import { Button, FileCard, type TransferWorkspaceRegions } from "@aerift/ui";
 
@@ -18,13 +19,31 @@ export function MobileWorkspace({ regions, modules, pick, received, openRift, ob
   objects: readonly MobileObject[] | undefined;
   save: (next: readonly MobileObject[]) => boolean;
 }) {
+  const [presenting, setPresenting] = useState<"preview" | "export">();
+  const [presentationError, setPresentationError] = useState("");
   const [selected, setSelected] = useState<PickerSource | LocalModule>();
   const visible = WORKSPACE_MODULES.filter(({ id }) => modules[id]);
   const current = visible.some(({ id }) => id === selected) ? selected : visible[0]?.id;
+  async function present(action: "preview" | "export") {
+    if (!regions.selection || presenting) return;
+    setPresentationError("");
+    setPresenting(action);
+    const result = await command("present_ios_selection", { selectionId: regions.selection.selectionId, action });
+    setPresenting(undefined);
+    if (!result.ok) setPresentationError(action === "preview" ? "Quick Look couldn't preview this item." : "AeRift couldn't open sharing for this item.");
+  }
+
   return <>
     {regions.selection && <section className="ios-section" aria-label="Selected object">
       <h3>Ready for Rift</h3>
-      <FileCard file={regions.selection} action={<Button variant="quiet" onClick={openRift}>Open Rift</Button>} />
+      <FileCard file={regions.selection} />
+      <p>Staged copy. The source item stays where it is.</p>
+      <div className="ae-actions">
+        <Button variant="quiet" disabled={!!presenting} onClick={() => void present("preview")}>Preview</Button>
+        <Button variant="quiet" disabled={!!presenting} onClick={() => void present("export")}>Export copy</Button>
+        <Button onClick={openRift}>Open Rift</Button>
+      </div>
+      {presentationError && <p role="alert">{presentationError}</p>}
     </section>}
     {visible.length ? <nav className="ios-module-picker" aria-label="Workspace modules">
       {visible.map(({ id, label }) => <Button key={id} variant="quiet" aria-pressed={id === current}

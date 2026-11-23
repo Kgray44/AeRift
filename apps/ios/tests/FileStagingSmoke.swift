@@ -21,7 +21,7 @@ struct FileStagingSmoke {
         try contents.write(to: source)
         let selected = try FileStaging.stage(source, preferredName: "asset", in: imports)
         let stagedBytes = try Data(contentsOf: selected.url)
-        guard stagedBytes == contents, selected.name == "asset.dat",
+        guard stagedBytes == contents, selected.name == "asset.dat", selected.url.lastPathComponent == "asset.dat",
               selected.sizeBytes == contents.count else {
             throw SmokeError.invalidCopy
         }

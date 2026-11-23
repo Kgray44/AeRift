@@ -67,6 +67,13 @@ impl State {
     }
 }
 
+#[cfg(target_os = "ios")]
+impl SelectionSource {
+    pub(crate) fn staged_selection(&self) -> &StagedSelection {
+        &self._staging
+    }
+}
+
 impl SelectionRegistry {
     #[cfg(windows)]
     pub(crate) fn watch(&self, updates: Channel<SelectionUpdate>) -> Result<(), TransferError> {

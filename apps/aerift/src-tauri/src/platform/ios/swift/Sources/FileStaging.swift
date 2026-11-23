@@ -79,12 +79,20 @@ enum FileStaging {
         let selections = try manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
         var remainingBudget = limitBytes
         for selection in selections {
-            let file = selection.appendingPathComponent("content")
-            // Native owners can delete earlier selections while a new item is being imported.
-            if let bytes = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                remainingBudget -= min(remainingBudget, bytes)
-            } else if manager.fileExists(atPath: file.path) {
-                throw StagingError.invalidFile
+            let files: [URL]
+            do {
+                files = try manager.contentsOfDirectory(at: selection, includingPropertiesForKeys: [.fileSizeKey])
+            } catch {
+                if !manager.fileExists(atPath: selection.path) { continue }
+                throw error
+            }
+            for file in files {
+                // Native owners can delete earlier selections while a new item is being imported.
+                if let bytes = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                    remainingBudget -= min(remainingBudget, bytes)
+                } else if manager.fileExists(atPath: file.path) {
+                    throw StagingError.invalidFile
+                }
             }
         }
         guard size <= remainingBudget else { throw StagingError.limitExceeded }
@@ -96,7 +104,10 @@ enum FileStaging {
 
         let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: false)
-        let destination = directory.appendingPathComponent("content")
+        let safeName = !name.isEmpty && name != "." && name != ".." && !name.contains("/") && name.utf8.count <= 240 &&
+            name == (name as NSString).lastPathComponent &&
+            name.rangeOfCharacter(from: .controlCharacters) == nil ? name : "Content"
+        let destination = directory.appendingPathComponent(safeName, isDirectory: false)
         do {
             try write(destination)
             return StagedSelection(url: destination, name: name, sizeBytes: size)

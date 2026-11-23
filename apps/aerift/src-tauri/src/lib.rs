@@ -25,6 +25,7 @@ pub fn run() {
             ios::unwatch_app,
             ios::select_app_file,
             ios::stage_ios_text,
+            ios::present_ios_selection,
             ios::open_ios_browser,
             ios::pair_app_peer,
             ios::transfer_app_file,

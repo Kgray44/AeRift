@@ -96,6 +96,36 @@ pub async fn pick_file<R: Runtime>(
     Ok(response.selection)
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SelectionAction {
+    Preview,
+    Export,
+}
+
+#[derive(Serialize)]
+struct SelectionArgs<'a> {
+    path: &'a std::path::Path,
+    action: SelectionAction,
+}
+
+pub async fn present_selection<R: Runtime>(
+    app: &AppHandle<R>,
+    selection: &StagedSelection,
+    action: SelectionAction,
+) -> Result<(), PluginInvokeError> {
+    app.state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async(
+            "presentSelection",
+            SelectionArgs {
+                path: selection.path(),
+                action,
+            },
+        )
+        .await
+}
+
 #[derive(Serialize)]
 struct TextArgs<'a> {
     text: &'a str,

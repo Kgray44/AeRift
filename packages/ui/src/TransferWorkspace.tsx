@@ -313,9 +313,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
         </GlassSurface>
       </section>;
 
-  const activity = <section aria-labelledby={activityId}>
+  const activity = <section aria-label={layout ? "Transfer history" : undefined} aria-labelledby={!layout ? activityId : undefined}>
         <GlassSurface material="raised" className="ae-panel">
-          <div className="ae-panel-heading"><h3 id={activityId} tabIndex={-1}>Activity</h3></div>
+          {!layout && <div className="ae-panel-heading"><h3 id={activityId} tabIndex={-1}>Activity</h3></div>}
           {snapshot?.transfers.length ? snapshot.transfers.map(transfer => {
             const active = ["pending", "accepted", "transferring"].includes(transfer.state);
             const incoming = transfer.state === "pending" && transfer.direction === "incoming";

@@ -4,14 +4,13 @@ import {
 } from "@aerift/ui";
 import type { AppPort, AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift/app-contract/experience";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { IosGestureCamera } from "./IosGestureCamera";
 import { MobileNavigation } from "./MobileNavigation";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
-import { localModules } from "./LocalObjectWorkspace";
-import { decodeMobileObjects, objectStorageKey, type MobileObject } from "./local-objects";
+import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileObject } from "./local-objects";
 import { mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
 import "./ios.css";
 
@@ -84,9 +83,11 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const [objects, setObjects] = useState(readObjects);
   const [objectError, setObjectError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [confirmClearPins, setConfirmClearPins] = useState(false);
   const [settingsError, setSettingsError] = useState(false);
   const [destination, setDestination] = useState<MobileDestination>("home");
   const [discoveryError, setDiscoveryError] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const destinationHeading = useRef<HTMLHeadingElement>(null);
   const navigationRequested = useRef(false);
@@ -94,12 +95,42 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const discoveryUnavailable = discoveryError || snapshot?.localNetwork === "unavailable";
   const connectionFailed = connection.state === "disconnected";
   const searching = !connectionFailed && !discoveryUnavailable;
+  const latestObject = objects?.find(item => item.kind !== "text" && preferences[
+    item.kind === "note" ? "notes" : item.kind === "url" ? "browser" : "collections"
+  ]);
+  const pins = objects?.filter(item => item.kind === "text") ?? [];
+  const hasRetryableTransfer = snapshot?.transfers.some(item => item.direction === "outgoing" &&
+    (item.state === "failed" || item.state === "cancelled" || item.state === "rejected"));
 
-  useLayoutEffect(() => {
-    if (!navigationRequested.current) return;
+  function closeSettings() {
+    setConfirmClearPins(false);
+    setSettingsOpen(false);
+  }
+
+  useEffect(() => {
+    if (!navigationRequested.current || settingsOpen) return;
+    navigationRequested.current = false;
     destinationHeading.current?.focus({ preventScroll: true });
     window.scrollTo(0, 0);
-  }, [destination]);
+  }, [destination, settingsOpen]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    function updateKeyboard() {
+      const editing = document.activeElement?.matches('textarea, input:not([type="checkbox"]):not([type="radio"])');
+      const obscured = viewport ? window.innerHeight - viewport.height * viewport.scale : 0;
+      setKeyboardOpen(!!editing && obscured > 120);
+    }
+    viewport.addEventListener("resize", updateKeyboard);
+    document.addEventListener("focusin", updateKeyboard);
+    document.addEventListener("focusout", updateKeyboard);
+    return () => {
+      viewport.removeEventListener("resize", updateKeyboard);
+      document.removeEventListener("focusin", updateKeyboard);
+      document.removeEventListener("focusout", updateKeyboard);
+    };
+  }, []);
 
   function navigate(next: MobileDestination) {
     const change = createNavigationChange(mobileNavigation, destination, next, "user");
@@ -145,7 +176,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
     }
   }
 
-  return <div className="aerift-ios">
+  return <div className="aerift-ios" data-keyboard={keyboardOpen ? "open" : undefined}>
     <ThemeProvider {...appearance}>
       <AppShell brand={<h1 className="aerift-title">AeRift</h1>} toolbar={
         <>
@@ -177,7 +208,12 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
         <TransferWorkspace
           port={port}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
-          activityFooter={<p>Delivered files are available in Files → On My iPhone → AeRift → Received.</p>}
+          activityFooter={<>
+            {hasRetryableTransfer && <div>
+              <Button variant="quiet" onClick={() => navigate("rift")}>Start a new transfer</Button>
+            </div>}
+            <p>Delivered files are available in Files → On My iPhone → AeRift → Received.</p>
+          </>}
           gesture={preferences.gestures && !settingsOpen ? controls => <IosGestureCamera controls={controls} enabled /> : undefined}
           layout={regions => <div key={destination} className="ios-page" data-destination={destination}>
             {destination === "home" && <>
@@ -192,7 +228,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
               <div className="ios-home-grid">
                 <section className="ios-section" aria-labelledby="ios-home-workspace">
                   <h3 id="ios-home-workspace">Workspace</h3>
-                  <p>{regions.selection ? regions.selection.name : objects?.[0]?.name ?? summary.received[0]?.file.name ?? "Start with a file, photo or video."}</p>
+                  <p>{regions.selection ? regions.selection.name : latestObject?.name ?? summary.received[0]?.file.name ?? "Start with a file, photo or video."}</p>
                   <Button onClick={() => navigate("workspace")}>Open Workspace</Button>
                 </section>
                 <section className="ios-section" aria-labelledby="ios-home-activity">
@@ -222,9 +258,9 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
           </div>}
         />
         <MobileNavigation destination={destination} navigate={navigate}
-          attention={{ devices: summary.pairRequests > 0, activity: summary.incomingOffers > 0 }} />
+          attention={{ devices: summary.pairRequests > 0, activity: summary.active.length > 0 }} />
       </AppShell>
-      <Sheet open={settingsOpen} title="Settings" onClose={() => setSettingsOpen(false)}>
+      <Sheet open={settingsOpen} title="Settings" onClose={closeSettings}>
         <SettingsPanel value={appearance} themes={[{ id: "glass", label: "GLASS" }]}
           onChange={value => {
             setAppearance(value);
@@ -232,10 +268,20 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
           }} />
         <fieldset className="ae-settings">
           <legend>Workspace modules</legend>
-          {WORKSPACE_MODULES.filter(({ id }) => id === "files" || id === "photos" || localModules.includes(id as typeof localModules[number]))
-            .map(({ id, label }) => <label key={id}><input type="checkbox" checked={preferences[id]}
+          {WORKSPACE_MODULES.map(({ id, label }) => <label key={id}><input type="checkbox" checked={preferences[id]}
               onChange={event => updatePreferences(id, event.currentTarget.checked)} />{label}</label>)}
-          <p>Clipboard is off by default. Pinned text stays on this iPhone until you remove it or send a copy.</p>
+          <p>Clipboard is off by default. AeRift saves only text you explicitly pin, and sends it only on request.</p>
+          {pins.length > 0 && (confirmClearPins ? <div className="ae-actions">
+            <Button variant="danger" onClick={() => {
+              if (!objects) return;
+              const next = pins.reduce((items, pin) => removeMobileObject(items, pin.id), objects);
+              if (saveObjects(next)) setConfirmClearPins(false);
+            }}>Remove all saved pins</Button>
+            <Button variant="quiet" onClick={() => setConfirmClearPins(false)}>Keep pins</Button>
+          </div> : <div>
+            <Button variant="quiet" onClick={() => setConfirmClearPins(true)}>Clear saved clipboard pins</Button>
+          </div>)}
+          {objectError && <p role="alert">{objectError}</p>}
         </fieldset>
         <fieldset className="ae-settings">
           <legend>Gesture recognition</legend>
@@ -246,7 +292,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
         <section aria-label="Privacy and storage">
           <p>Local Network access lets AeRift find nearby devices. Keep AeRift open until your transfer finishes.</p>
           <p>Find accepted transfers under AeRift → Received in the Files app.</p>
-          <Button variant="quiet" onClick={() => { setSettingsOpen(false); navigate("devices"); }}>Manage trusted devices</Button>
+          <Button variant="quiet" onClick={() => { closeSettings(); navigate("devices"); }}>Manage trusted devices</Button>
         </section>
         {settingsError && <p role="alert">AeRift could not save this preference for your next session.</p>}
       </Sheet>

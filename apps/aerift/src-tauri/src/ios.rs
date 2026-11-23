@@ -63,6 +63,29 @@ pub(crate) async fn select_app_file(
 }
 
 #[tauri::command]
+pub(crate) async fn present_ios_selection(
+    window: WebviewWindow,
+    selection_id: String,
+    action: tauri_plugin_aerift_ios::SelectionAction,
+) -> Result<(), TransferError> {
+    if window.label() != "main" {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    let (_, source) = window
+        .state::<SelectionRegistry>()
+        .lookup(&selection_id)
+        .ok_or(ErrorCode::InvalidRequest)?;
+    // Keep the staging copy alive until the system sheet has closed.
+    tauri_plugin_aerift_ios::present_selection(
+        window.app_handle(),
+        source.staged_selection(),
+        action,
+    )
+    .await
+    .map_err(|_| ErrorCode::InvalidRequest.into())
+}
+
+#[tauri::command]
 pub(crate) async fn stage_ios_text(
     window: WebviewWindow,
     text: String,

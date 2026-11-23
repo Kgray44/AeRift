@@ -38,7 +38,7 @@ export function IosGestureCamera({ controls, enabled }: {
     });
     const button = container.querySelector("button");
     button?.classList.add("ae-button");
-    if (button) button.dataset.variant = "secondary";
+    if (button) button.dataset.variant = "quiet";
     mounted.current = gesture;
     return () => {
       mounted.current = null;

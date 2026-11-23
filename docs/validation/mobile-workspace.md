@@ -5,7 +5,7 @@ The iPhone still uses the shared v1 pairing, consent and file transport. One sub
 | Area | Implemented in this change | Remaining |
 | --- | --- | --- |
 | Navigation | Floating bottom navigation using the shared Mission 0 destination model, settings sheet, focus restoration and offer affordances | Shared-element motion and native VoiceOver, Dynamic Type, keyboard and rotation qualification |
-| Files and Photos | Direct, single-item system pickers. Files can browse available providers. Photos uses the system's selected-item access with current representation. Rift stages a private copy for v1. Verified receives land under Files → AeRift → Received. | Persistent asset library, in-app preview, export controls, multiselection and metadata fidelity evidence |
+| Files and Photos | Direct, single-item system pickers. Files can browse available providers. Photos uses the system's selected-item access with current representation. Rift stages a private copy for v1. Preview supported formats with Quick Look and export a copy through iOS sharing. Verified receives land under Files → AeRift → Received. | Persistent asset library, multiselection and metadata fidelity evidence |
 | Notes | Local Markdown source and plain text, editable and sent as ordinary .md or .txt files after selecting an existing trusted destination | Attachments and rendered rich previews |
 | Browser | Safari Services in-app browsing and explicit link collection. Link copies use .txt. Web pages are outside the transfer webview. | In-app page capture and download import from the browser, along with physical qualification of the browser's external-open controls |
 | Clipboard | Optional text pins through an editable field and the native Paste menu. No automatic clipboard reads or background sync. Each send is explicit. | Image paste and optional history, image and sensitivity controls |
@@ -15,6 +15,8 @@ The iPhone still uses the shared v1 pairing, consent and file transport. One sub
 | Android | Experience contract and platform adapter plan below | Native host, integrations and device validation |
 
 Saved local objects use the versioned Mission 0 object contract. Opaque native selection IDs stay session-scoped. The v1 sender offers one ordinary file at a time. A receiver does not need workspace support to accept a note, link or pin copy. A staged file is released after its last native reader is done. Collection membership never implies that a recipient has its objects.
+
+System surfaces used here are [Quick Look](https://developer.apple.com/documentation/quicklook/qlpreviewcontroller), the [iOS share sheet](https://developer.apple.com/documentation/uikit/uiactivityviewcontroller) and [Safari Services](https://developer.apple.com/documentation/safariservices/sfsafariviewcontroller).
 
 ## Android adapter plan
 

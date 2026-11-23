@@ -166,7 +166,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
         <strong>{object.name}</strong>
         {object.kind === "collection" ? <small>{object.itemIds.length} saved items</small> :
           object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
-          <small className="ios-preview">{object.text.slice(0, 180)}</small>}
+          <small className="ios-preview">{object.kind === "text" ? "Pinned text" : object.text.slice(0, 180)}</small>}
         <div className="ae-actions">
           {object.kind !== "collection" && <Button disabled={!regions.canSelect} onClick={() => void stage(object)}>Send copy</Button>}
           {object.kind === "url" && <Button variant="quiet" onClick={() => void browse(object.url)}>Open</Button>}
