@@ -23,12 +23,12 @@ function inset(from: DOMRect, to: DOMRect) {
 export function useOrbitMorph() {
   const cleanup = useRef<() => void>(undefined);
 
-  function start(surface: HTMLElement, origin: { bounds: DOMRect; glyph: SVGSVGElement | null }) {
+  function start(surface: HTMLElement, origin: { bounds: DOMRect; glyph: SVGSVGElement | null }, onFinish: () => void) {
     cleanup.current?.();
     const skin = surface.querySelector<HTMLElement>(":scope > .ae-orbit-skin");
     const content = surface.querySelector<HTMLElement>(":scope > .ae-orbit-content");
     const target = surface.getBoundingClientRect();
-    if (!skin || !content || !target.width || !target.height || !surface.animate) return;
+    if (!skin || !content || !target.width || !target.height || !surface.animate) return false;
 
     const source = origin.bounds;
     const skinStyle = getComputedStyle(skin);
@@ -99,6 +99,7 @@ export function useOrbitMorph() {
       window.visualViewport?.removeEventListener("resize", resize);
       observer.disconnect();
       window.removeEventListener("scroll", finish, true);
+      onFinish();
     };
     function resize() {
       // The layout may change while this element is clipped. Finish into the
@@ -115,6 +116,7 @@ export function useOrbitMorph() {
     window.addEventListener("scroll", finish, { passive: true, capture: true });
     cleanup.current = finish;
     void shape.finished.then(finish, finish);
+    return true;
   }
 
   return { start, cancel: cleanup };

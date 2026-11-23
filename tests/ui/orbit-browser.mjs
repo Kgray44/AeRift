@@ -48,6 +48,7 @@ try {
   });
   await expectRoute("Devices");
   assert.equal(await surface.getAttribute("data-morphing"), "true");
+  assert.match(await trigger.locator(".ae-orbit-current").textContent(), /^Home/);
   for (const time of [0, 80, 158, 236]) {
     await surface.evaluate((section, time) => {
       for (const animation of section.getAnimations({ subtree: true })) {
@@ -70,6 +71,7 @@ try {
     for (const animation of section.getAnimations({ subtree: true })) animation.play();
   });
   await page.waitForFunction(() => !document.querySelector(".ae-orbit-surface")?.dataset.morphing);
+  assert.match(await trigger.locator(".ae-orbit-current").textContent(), /^Devices/);
   await capture("04-dark-settled");
 
   await page.keyboard.press("Alt+o");

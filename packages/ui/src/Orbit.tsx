@@ -61,8 +61,12 @@ export function Orbit<Id extends string>({
   const [open, setOpen] = useState(false);
   const [slots, setSlots] = useState<OrbitPoint[] | null>(null);
   const [focusFirst, setFocusFirst] = useState(false);
+  const [morphFrom, setMorphFrom] = useState<Id>();
   const { start, cancel } = useOrbitMorph();
   const current = destinations.find(destination => destination.id === active);
+  const visibleTrigger = !open && morphFrom
+    ? destinations.find(destination => destination.id === morphFrom) ?? current
+    : current;
   const siblings = destinations.filter(destination => destination.id !== active);
   const radial = presentation === "orbit" && slots !== null;
   const first = slots?.[0];
@@ -105,6 +109,7 @@ export function Orbit<Id extends string>({
 
   useLayoutEffect(() => {
     if (committed.current === active) return;
+    const previous = committed.current;
     committed.current = active;
     const next = pending.current;
     pending.current = undefined;
@@ -113,13 +118,18 @@ export function Orbit<Id extends string>({
     const surface = surfaceRef.current;
     if (!surface) return;
     const motion = resolveMotion("spatial", appReducesMotion(root.current, reducedMotion));
-    if (next?.id === active && next.source && motion === "spatial") start(surface, next.source);
+    if (next?.id === active && next.source && motion === "spatial" &&
+        start(surface, next.source, () => setMorphFrom(undefined))) {
+      setMorphFrom(previous);
+    }
     const heading = surface.querySelector<HTMLElement>("[data-orbit-focus]");
     (heading ?? surface).focus({ preventScroll: true });
   }, [active, cancel, reducedMotion, start, surfaceRef]);
 
   useLayoutEffect(() => {
-    if (!open || !focusFirst) return;
+    if (!open) return;
+    setMorphFrom(undefined);
+    if (!focusFirst) return;
     names.current[0]?.focus();
     setFocusFirst(false);
   }, [open, focusFirst]);
@@ -203,7 +213,7 @@ export function Orbit<Id extends string>({
     names.current[next]?.focus();
   }
 
-  if (!current) return null;
+  if (!current || !visibleTrigger) return null;
 
   if (presentation === "conventional") return <nav className="ae-orbit-conventional" aria-label="Desktop navigation" ref={root}>
     {destinations.map(({ id, label, icon }) => <button key={id} type="button"
@@ -218,7 +228,7 @@ export function Orbit<Id extends string>({
     data-reduced={reducedMotion} ref={root}>
     {radial && <div className="ae-orbit-veil" aria-hidden="true" />}
     <button type="button" className="ae-orbit-trigger" ref={trigger} data-destination={active}
-      aria-label={`Current destination: ${current.label}${status?.[active] ? `, ${status[active]}` : ""}`}
+      aria-label={`Current destination: ${visibleTrigger.label}${status?.[visibleTrigger.id] ? `, ${status[visibleTrigger.id]}` : ""}`}
       aria-expanded={open} aria-controls={popupId}
       aria-keyshortcuts={shortcut === "off" ? undefined : shortcut === "alt-shift-o" ? "Alt+Shift+O" : "Alt+O"}
       onPointerMove={reflect}
@@ -232,9 +242,9 @@ export function Orbit<Id extends string>({
         setFocusFirst(true);
         setOpen(true);
       }}>
-      <span className="ae-orbit-orb ae-surface" data-material="chrome" data-ae-lens-role="orb"><DestinationIcon id={current.icon ?? active} />
-        {status?.[active] && <span className="ae-orbit-indicator" aria-hidden="true" />}</span>
-      <span className="ae-orbit-current">{current.label}<span aria-hidden="true">⌄</span></span>
+      <span className="ae-orbit-orb ae-surface" data-material="chrome" data-ae-lens-role="orb"><DestinationIcon id={visibleTrigger.icon ?? visibleTrigger.id} />
+        {status?.[visibleTrigger.id] && <span className="ae-orbit-indicator" aria-hidden="true" />}</span>
+      <span className="ae-orbit-current">{visibleTrigger.label}<span aria-hidden="true">⌄</span></span>
     </button>
     <div className="ae-orbit-fan" id={popupId} inert={!open} aria-hidden={!open}>
       {radial && first && last && first !== last && <svg className="ae-orbit-guide" aria-hidden="true"
