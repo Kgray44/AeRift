@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AeRift photographic offer replay</title>
+<script type="module">
+import { bindSendGesture } from "/dist/gestures/packages/gestures/src/send-binding.js";
+import { HandLandmarkTracker } from "/dist/gestures/packages/gestures/src/landmarks.js";
+
+async function loadPhoto(name) {
+  const image = new Image();
+  image.src = "/" + name;
+  await image.decode();
+  return image;
+}
+
+const [open, fist] = await Promise.all([loadPhoto("right_hands.jpg"), loadPhoto("fist.jpg")]);
+const canvas = document.createElement("canvas");
+canvas.width = 480;
+canvas.height = 360;
+const context = canvas.getContext("2d");
+context.scale(0.75, 0.75);
+
+const sendCalls = [];
+const outcomes = [];
+const selected = { deviceId: "test-peer", selectionId: "test-file" };
+const binding = bindSendGesture("photo-replay", () => ({
+  intent: selected, busy: false, async send(intent) {
+    sendCalls.push(intent);
+    return true;
+  },
+}), (outcome) => outcomes.push(outcome));
+const tracker = new HandLandmarkTracker();
+const worker = new Worker("/gesture-assets/hand-worker.js");
+
+function exchange(data, expected, transfer = []) {
+  return new Promise((resolve, reject) => {
+    worker.onmessage = ({ data: message }) => {
+      if (message.type === expected) resolve(message);
+      else reject(new Error(message.reason ?? message.type));
+    };
+    worker.onerror = (event) => reject(new Error(event.message));
+    worker.postMessage({ ...data, generation: 1 }, transfer);
+  });
+}
+
+const poses = [];
+const phases = [];
+try {
+  await exchange({ type: "INIT" }, "READY");
+  binding.intent.begin(0);
+  binding.intent.setCamera("ready");
+  let capture = 0;
+  // Fixed playback timestamps decouple posture recognition from host scheduling.
+  for (const photo of [open, fist, open, fist, open]) {
+    context.fillStyle = "white";
+    context.fillRect(0, 0, 640, 480);
+    // Align one open-hand crop with the fist fixture's palm region.
+    if (photo === fist) context.drawImage(fist, 150, 80, 322, 319);
+    else context.drawImage(open, 360, 0, 360, 382, 150, 0, 324, 344);
+    for (let frame = 0; frame < 5; frame++) {
+      capture += 80;
+      const bitmap = await createImageBitmap(canvas);
+      const result = await exchange({ type: "FRAME", bitmap, capture }, "RESULT", [bitmap]);
+      const observation = tracker.observe({
+        captureMs: result.capture, width: result.width, height: result.height, hands: result.hands,
+      });
+      poses.push(observation.posture);
+      const feedback = binding.intent.observe(observation, capture);
+      if (phases.at(-1) !== feedback.phase) phases.push(feedback.phase);
+    }
+  }
+} finally {
+  worker.terminate();
+}
+const expectedPoses = ["open", "fist", "open", "fist", "open"].flatMap((pose) => Array(5).fill(pose));
+const pass = JSON.stringify(poses) === JSON.stringify(expectedPoses) &&
+  phases.includes("held") && phases.at(-1) === "released" &&
+  JSON.stringify(sendCalls) === JSON.stringify([selected]) && outcomes.join(",") === "sent";
+window.replayResult = { pass, phases, poses, sendCalls, outcomes };
+</script>
