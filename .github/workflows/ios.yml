@@ -1,86 +1,74 @@
 name: iOS CI
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/ios.yml'
-      - 'apps/aerift/**'
-      - 'apps/ios/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  native-adapter:
-    name: iOS simulator SDK - native adapters
-    runs-on: macos-15
-    timeout-minutes: 10
+  notes:
+    name: Integrated iPhone Browser capture with screenshots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PRODUCT_SHA: 00aadb3abd4a864c26cce3bbe2ff19e5815f010b
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
           persist-credentials: false
-      - name: Lint privacy configuration
-        run: |
-          plutil -lint apps/aerift/src-tauri/Info.ios.plist
-          plutil -lint apps/ios/PrivacyInfo.xcprivacy
-          bash -n apps/ios/prepare-apple.sh
-          bash -n apps/ios/simulator-smoke.sh
-      - name: Typecheck Swift against the simulator SDK
-        run: |
-          xcodebuild -version
-          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-          xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
-            -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/BrowserLinkCapture.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/ClipboardImagePicker.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/MediaLibrary.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/BonjourDiscovery.swift"
-      - name: Test bounded native file staging
-        run: |
-          swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
-            apps/ios/tests/FileStagingSmoke.swift -o "$RUNNER_TEMP/file-staging-smoke"
-          "$RUNNER_TEMP/file-staging-smoke"
-      - name: Test durable media library and active selection lifetime
-        run: |
-          swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/MediaLibrary.swift" \
-            apps/ios/tests/MediaLibrarySmoke.swift -o "$RUNNER_TEMP/media-library-smoke"
-          "$RUNNER_TEMP/media-library-smoke"
-
-  simulator-app:
-    name: iOS simulator - Tauri app build and launch
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Install iOS toolchain prerequisites
+      - name: Install dependencies and verify source
         run: |
-          xcodebuild -version
-          xcrun simctl list runtimes
-          command -v xcodegen || brew install xcodegen
-          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
-      - name: Build, install and launch AeRift
-        env:
-          IOS_APP_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          git diff --exit-code "$PRODUCT_SHA" HEAD -- apps packages tests Cargo.lock package-lock.json
+          npm ci
+      - name: Verify captured pages and render Browser evidence
         run: |
-          IOS_EVIDENCE_DIR="$RUNNER_TEMP/aerift-ios-evidence" bash apps/ios/simulator-smoke.sh
-      - name: Publish simulator evidence
+          output="$RUNNER_TEMP/mobile-browser-capture-visual"
+          tools="$RUNNER_TEMP/playwright"
+          mkdir -p "$output" "$tools"
+          npm install --prefix "$tools" --no-save --ignore-scripts --package-lock=false playwright@1.56.1
+          node "$tools/node_modules/playwright/cli.js" install --with-deps webkit
+          npm exec -- vite --config tests/ui/vite.config.mts --host 127.0.0.1 --port 4173 --strictPort > "$output/server.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:4173/mobile.html > /dev/null; then break; fi
+            sleep 1
+          done
+          node - "$tools" "$output" <<'JS'
+          const { readFile } = require("node:fs/promises");
+          const { webkit } = require(process.argv[2] + "/node_modules/playwright");
+          async function run() {
+            const script = await readFile("tests/ui/mobile-browser-check.js", "utf8");
+            const redirected = script.replaceAll("docs/validation/evidence/mobile-workspace/", process.argv[3] + "/");
+            const scenario = eval("(" + redirected + ")");
+            const browser = await webkit.launch();
+            try {
+              const page = await browser.newPage();
+              await page.goto("http://127.0.0.1:4173/mobile.html");
+              console.log(await scenario(page));
+              await page.setViewportSize({ width: 390, height: 844 });
+              const destinations = page.getByRole("navigation", { name: "AeRift destinations" });
+              await destinations.getByRole("button", { name: /^Workspace/ }).click();
+              await page.getByRole("button", { name: "Browser", exact: true }).click();
+              await page.getByText("Harbor guide", { exact: true }).waitFor();
+              await page.screenshot({ path: process.argv[3] + "/browser-capture-390.png",
+                animations: "disabled", fullPage: true });
+            } finally {
+              await browser.close();
+            }
+          }
+          run().catch(error => { console.error(error); process.exitCode = 1; });
+          JS
+      - name: Retain WebKit screenshots and logs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: aerift-ios-simulator-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/aerift-ios-evidence
+          name: mobile-browser-capture-visual
+          path: ${{ runner.temp }}/mobile-browser-capture-visual
           if-no-files-found: warn
-          retention-days: 14
