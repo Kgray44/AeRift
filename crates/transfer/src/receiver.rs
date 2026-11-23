@@ -87,6 +87,11 @@ impl Receiver {
         })
     }
 
+    /// Native-only path for checking the volume that receives partial files.
+    pub fn staging_directory(&self) -> &Path {
+        &self.staging
+    }
+
     /// Subscribe before enumerating transfers. A watch wakeup may represent multiple updates.
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.changes.subscribe()
