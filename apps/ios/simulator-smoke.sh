@@ -10,7 +10,7 @@ elif node -e 'const manifest = require("../../package.json"); process.exit(manif
   (cd ../.. && npm ci)
 else
   # The initial standalone host revision has no npm lockfile.
-  npm install --no-audit --no-fund --package-lock=false
+  npm install --workspaces=false --no-audit --no-fund --package-lock=false
 fi
 
 case "$(uname -m)" in
@@ -77,3 +77,48 @@ sleep 5
 xcrun simctl spawn "$device" launchctl list | awk -v pid="$pid" \
   '$1 == pid && $3 ~ /com[.]aerift[.]app/ { found=1 } END { exit !found }'
 echo "AeRift remained running on iPhone simulator $device"
+
+if [[ -n "${IOS_EVIDENCE_DIR:-}" ]]; then
+  mkdir -p "$IOS_EVIDENCE_DIR"
+  xcrun simctl io "$device" screenshot "$IOS_EVIDENCE_DIR/launch.png"
+  python3 - "$IOS_EVIDENCE_DIR/receipt.json" "$app/Info.plist" "$device" <<'PY'
+import json
+import os
+import plistlib
+import subprocess
+import sys
+
+output, info_path, device_id = sys.argv[1:]
+with open(info_path, "rb") as source:
+    info = plistlib.load(source)
+
+def command(*args):
+    return subprocess.check_output(args, text=True).strip()
+
+devices = json.loads(command("xcrun", "simctl", "list", "devices", "booted", "-j"))["devices"]
+runtime, model = next(
+    (runtime, device["name"])
+    for runtime, entries in devices.items()
+    for device in entries
+    if device["udid"] == device_id
+)
+receipt = {
+    "validation": "hosted iOS simulator",
+    "appSourceCommit": os.environ.get("IOS_APP_SOURCE_COMMIT"),
+    "checkedOutAppCommit": os.environ.get("GITHUB_SHA"),
+    "hostSourceCommit": command("git", "rev-parse", "HEAD"),
+    "hostAdapterRegistration": os.environ.get("IOS_HOST_REGISTRATION"),
+    "xcode": command("xcodebuild", "-version"),
+    "simulatorRuntime": runtime,
+    "simulatorModel": model,
+    "bundleId": info["CFBundleIdentifier"],
+    "appVersion": info["CFBundleShortVersionString"],
+    "installed": True,
+    "launchSmokePassed": True,
+    "physicalDeviceValidated": False,
+}
+with open(output, "w", encoding="utf-8") as destination:
+    json.dump(receipt, destination, indent=2)
+    destination.write("\n")
+PY
+fi

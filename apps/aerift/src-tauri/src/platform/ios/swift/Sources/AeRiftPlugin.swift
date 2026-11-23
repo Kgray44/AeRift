@@ -11,8 +11,19 @@ private struct PickerResponse: Encodable {
     let selection: Selection?
 }
 
+private struct CameraArgs: Decodable {
+    let events: Channel
+}
+
+private struct CameraUpdate: Encodable {
+    let kind: String
+    let frame: HandFrame?
+    let reason: String?
+}
+
 final class AeRiftPlugin: Plugin {
     @MainActor private lazy var filePicker = FilePicker()
+    @MainActor private lazy var handCamera = HandCamera()
 
     @objc func pickFile(_ invoke: Invoke) {
         DispatchQueue.main.async {
@@ -22,6 +33,7 @@ final class AeRiftPlugin: Plugin {
                 return
             }
 
+            self.handCamera.stop()
             self.filePicker.present(from: presenter) { result in
                 switch result {
                 case .success(let selection):
@@ -52,6 +64,32 @@ final class AeRiftPlugin: Plugin {
                     invoke.reject(message)
                 }
             }
+        }
+    }
+
+    @objc func startCamera(_ invoke: Invoke) throws {
+        let channel = try invoke.parseArgs(CameraArgs.self).events
+        Task { @MainActor in
+            do {
+                try await handCamera.start(
+                    onFrame: { frame in
+                        try? channel.send(CameraUpdate(kind: "frame", frame: frame, reason: nil))
+                    },
+                    onStop: { reason in
+                        try? channel.send(CameraUpdate(kind: "stopped", frame: nil, reason: reason?.rawValue))
+                    }
+                )
+                invoke.resolve()
+            } catch {
+                invoke.reject((error as? HandCameraError ?? .captureFailed).rawValue)
+            }
+        }
+    }
+
+    @objc func stopCamera(_ invoke: Invoke) {
+        DispatchQueue.main.async {
+            self.handCamera.stop()
+            invoke.resolve()
         }
     }
 }

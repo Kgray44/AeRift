@@ -33,7 +33,8 @@ jobs:
           xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
             -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
-            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift"
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift"
       - name: Test bounded native file staging
         run: |
           swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
@@ -61,11 +62,58 @@ jobs:
           ref: c5470a72e2ffda5149c6e94d2861503a7024542f
           path: ios-host
           persist-credentials: false
-      - name: Add the iOS plist to the pinned host
-        if: steps.host.outputs.ready != 'true'
+
+      - name: Prepare the hosted build source
+        id: candidate
+        env:
+          HOST_READY: ${{ steps.host.outputs.ready }}
         run: |
-          echo "Pinned shared host: $(git -C ios-host rev-parse HEAD)"
-          cp apps/aerift/src-tauri/Info.ios.plist ios-host/apps/aerift/src-tauri/
+          host=apps/aerift
+          if [[ "$HOST_READY" != true ]]; then
+            host=ios-host/apps/aerift
+            echo "Pinned shared host: $(git -C ios-host rev-parse HEAD)"
+            cp apps/aerift/src-tauri/Info.ios.plist "$host/src-tauri/"
+            mkdir -p "$host/src-tauri/src/platform"
+            cp -R apps/aerift/src-tauri/src/platform/ios "$host/src-tauri/src/platform/"
+          fi
+          echo "path=$host" >> "$GITHUB_OUTPUT"
+          python3 - "$host/src-tauri" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          host = Path(sys.argv[1])
+          entry = host / "src" / "lib.rs"
+          manifest = host / "Cargo.toml"
+          source = entry.read_text()
+          if "tauri_plugin_aerift_ios::init()" in source:
+              with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                  output.write("registration=checked-out\n")
+              sys.exit(0)
+
+          # Temporary candidate overlay while Integration owns host registration.
+          anchor = "    tauri::Builder::default()\n"
+          if source.count(anchor) != 1:
+              sys.exit("Shared host changed. Update the temporary iOS registration overlay.")
+          registration = (
+              "    let builder = tauri::Builder::default();\n"
+              "    #[cfg(target_os = \"ios\")]\n"
+              "    let builder = builder.plugin(tauri_plugin_aerift_ios::init());\n"
+              "    builder\n"
+          )
+          entry.write_text(source.replace(anchor, registration))
+          config = manifest.read_text().rstrip()
+          dependency = "tauri-plugin-aerift-ios = { path = \"src/platform/ios\" }"
+          section = "[target.'cfg(target_os = \"ios\")'.dependencies]"
+          if dependency not in config:
+              if section in config:
+                  config = config.replace(section, section + "\n" + dependency)
+              else:
+                  config += "\n\n" + section + "\n" + dependency
+          manifest.write_text(config + "\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("registration=ci-overlay\n")
+          PY
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -78,10 +126,15 @@ jobs:
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim
       - name: Build, install and launch AeRift
         env:
-          HOST_READY: ${{ steps.host.outputs.ready }}
+          IOS_APP_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          IOS_HOST_PATH: ${{ steps.candidate.outputs.path }}
+          IOS_HOST_REGISTRATION: ${{ steps.candidate.outputs.registration }}
         run: |
-          host=apps/aerift
-          if [[ "$HOST_READY" != true ]]; then
-            host=ios-host/apps/aerift
-          fi
-          bash apps/ios/simulator-smoke.sh "$host"
+          IOS_EVIDENCE_DIR="$RUNNER_TEMP/aerift-ios-evidence" bash apps/ios/simulator-smoke.sh "$IOS_HOST_PATH"
+      - name: Publish simulator evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aerift-ios-simulator-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aerift-ios-evidence
+          if-no-files-found: error
+          retention-days: 14
