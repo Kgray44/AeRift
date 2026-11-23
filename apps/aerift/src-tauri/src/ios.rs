@@ -48,17 +48,49 @@ pub(crate) async fn retry_ios_discovery(window: WebviewWindow) -> Result<(), Tra
 #[tauri::command]
 pub(crate) async fn select_app_file(
     window: WebviewWindow,
+    source: Option<tauri_plugin_aerift_ios::PickerSource>,
 ) -> Result<Option<FileSelection>, TransferError> {
     if window.label() != "main" {
         return Err(ErrorCode::InvalidRequest.into());
     }
     let registry = window.state::<SelectionRegistry>();
     let revision = registry.begin()?;
-    match tauri_plugin_aerift_ios::pick_file(window.app_handle()).await {
+    match tauri_plugin_aerift_ios::pick_file(window.app_handle(), source).await {
         Ok(Some(staged)) => registry.select_staged(revision, staged),
         Ok(None) => Ok(None),
         Err(_) => Err(ErrorCode::StorageFailed.into()),
     }
+}
+
+#[tauri::command]
+pub(crate) async fn stage_ios_text(
+    window: WebviewWindow,
+    text: String,
+    name: String,
+) -> Result<Option<FileSelection>, TransferError> {
+    if window.label() != "main" || text.is_empty() || text.len() > 128 * 1024 || name.len() > 180 {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    let registry = window.state::<SelectionRegistry>();
+    let revision = registry.begin()?;
+    match tauri_plugin_aerift_ios::stage_text(window.app_handle(), &text, &name).await {
+        Ok(Some(staged)) => registry.select_staged(revision, staged),
+        Ok(None) => Ok(None),
+        Err(_) => Err(ErrorCode::StorageFailed.into()),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn open_ios_browser(
+    window: WebviewWindow,
+    url: String,
+) -> Result<(), TransferError> {
+    if window.label() != "main" || url.len() > 4096 {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    tauri_plugin_aerift_ios::open_browser(window.app_handle(), &url)
+        .await
+        .map_err(|_| ErrorCode::InvalidRequest.into())
 }
 
 #[tauri::command]

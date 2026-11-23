@@ -47,8 +47,19 @@ export type WorkspaceConnection =
   | { state: "connecting" | "disconnected" }
   | { state: "ready"; snapshot: AppSnapshot };
 
-export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection }: {
+export interface TransferWorkspaceRegions {
+  composer: ReactNode;
+  activity: ReactNode;
+  pairingAction: ReactNode;
+  selection: FileSelection | null;
+  selecting: boolean;
+  canSelect: boolean;
+  select: (picker: AppPort["selectFile"]) => Promise<boolean>;
+}
+
+export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection, layout }: {
   port: AppPort;
+  layout?: (regions: TransferWorkspaceRegions) => ReactNode;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
   watchSelection?: (listener: (selection: FileSelection | null) => void) => () => void;
@@ -192,7 +203,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   }
 
   function chooseFile() {
-    void run(composerKey, "file", () => port.selectFile(), (file, session) => {
+    void selectWith(port.selectFile);
+  }
+
+  function selectWith(picker: AppPort["selectFile"]) {
+    return run(composerKey, "file", () => picker(), (file, session) => {
       if (!file || watchSelection) return;
       session.selection = file;
       setSelection(file);
@@ -254,8 +269,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     }, setPairError);
   }
 
-  return <>
-    <div className="ae-workspace-heading">
+  const pairingAction = <Button onClick={() => setPairingOpen(true)} disabled={pairingDisabled}>
+    {pendingPairs.length ? `Review pairing request${pendingPairs.length > 1 ? "s" : ""} (${pendingPairs.length})` : "Pair a device"}
+  </Button>;
+
+  const heading = <div className="ae-workspace-heading">
       <div>
         <h2>Transfer files</h2>
         <p>Send a file to a paired device on your local network.</p>
@@ -267,9 +285,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
         <a href={`#${activityId}`} onClick={() => setDestination("activity")}
           aria-current={destination === "activity" ? "location" : undefined}>Activity</a>
       </nav>
-    </div>
-    <div className="ae-workspace">
-      <section aria-labelledby={titleId}>
+    </div>;
+
+  const composer = <section aria-labelledby={titleId}>
         <GlassSurface material="raised" className="ae-panel">
           <div className="ae-panel-heading">
             <h3 id={titleId} tabIndex={-1}>New transfer</h3>
@@ -283,11 +301,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           </div>
           <DevicePicker devices={pairs} selectedId={selectedId} onSelect={selectDevice}
             loading={!snapshot && !watchError} error={watchError} disabled={pending !== undefined} />
-          <div className="ae-actions">
-            <Button onClick={() => setPairingOpen(true)} disabled={pairingDisabled}>
-              {pendingPairs.length ? `Review pairing request${pendingPairs.length > 1 ? "s" : ""} (${pendingPairs.length})` : "Pair a device"}
-            </Button>
-          </div>
+          {!layout && <div className="ae-actions">{pairingAction}</div>}
           {watchError && <Button onClick={connection?.retry ?? (() => setWatchAttempt(attempt => attempt + 1))}>Retry connection</Button>}
           <div className="ae-send">
             <Button variant="primary" disabled={pending !== "send" && (!intent || !!pending || !!watchError)}
@@ -297,8 +311,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
             {gesture?.({ intent: watchError ? null : intent, busy: pending !== undefined || pairingOpen, send, incoming: incomingIntents, accept })}
           </div>
         </GlassSurface>
-      </section>
-      <section aria-labelledby={activityId}>
+      </section>;
+
+  const activity = <section aria-labelledby={activityId}>
         <GlassSurface material="raised" className="ae-panel">
           <div className="ae-panel-heading"><h3 id={activityId} tabIndex={-1}>Activity</h3></div>
           {snapshot?.transfers.length ? snapshot.transfers.map(transfer => {
@@ -323,8 +338,13 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           }) : <div className="ae-activity-empty"><span aria-hidden="true">↕</span><p>No transfers yet.</p></div>}
           {activityFooter}
         </GlassSurface>
-      </section>
-    </div>
+      </section>;
+
+  return <>
+    {layout ? layout({
+      composer, activity, pairingAction, selection, selecting: pending === "file",
+      canSelect: !!snapshot && !watchError && pending === undefined, select: selectWith,
+    }) : <>{heading}<div className="ae-workspace">{composer}{activity}</div></>}
     <Sheet open={pairingOpen} title="Pair a device" onClose={() => setPairingOpen(false)}>
       {pairingOpen && <PairingPanel invitation={invitation} requests={pendingPairs} disabled={pairingDisabled}
         busy={pairingBusy === "create" || pairingBusy === "redeem" ? pairingBusy : undefined}
