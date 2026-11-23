@@ -21,7 +21,6 @@
 
 .aerift-ios-network p { flex: 1 1 14rem; }
 .aerift-ios .ae-transfer-space[hidden] { display: none; }
-.aerift-ios .ae-transfer-space[data-mobile-view="activity"] .ae-rift-board { grid-row: 1; }
 .ios-pair-notice { justify-self: end; }
 .ios-destination-heading { margin-block-end: 1rem; }
 .aerift-ios .ios-destination-heading h2 {

@@ -11,7 +11,7 @@ The iPhone still uses the shared v1 pairing, consent and file transport. One sub
 | Clipboard | Optional text pins through an editable field and the native Paste menu. No automatic clipboard reads or background sync. Each send is explicit. | Image paste and optional history, image and sensitivity controls |
 | Collections | Persistent ordering and removal of saved notes, links and text pins | Media membership and a receiver-compatible collection transfer format |
 | Rift | UI Overhaul spatial peers, authenticated receiver readiness, shared Rift animation, manual consent and cancellation, and opt-in foreground gesture recognition. | Real-device sender and receiver choreography, readiness expiry, permission and interruption qualification |
-| Devices and Activity | Discovery, pairing, trust revocation and real pending, active and final transfer states | Long-term durable transfer history and device capability negotiation |
+| Devices and Activity | Discovery, pairing, trust revocation and real pending, active and final transfer states. Optional local retention for up to 60 final outcomes, with an explicit clear action. | Device capability negotiation |
 | Android | Experience contract and platform adapter plan below | Native host, integrations and device validation |
 
 Saved local objects use the versioned Mission 0 object contract. Opaque native selection IDs stay session-scoped. The v1 sender offers one ordinary file at a time. A receiver does not need workspace support to accept a note, link or pin copy. A staged file is released after its last native reader is done. Collection membership never implies that a recipient has its objects.
@@ -28,7 +28,7 @@ PR #42 is stacked on [the shared UI Overhaul and Mission 0 staging base](https:/
 
 ## Browser evidence
 
-Playwright drove the production components through a deterministic fixture port at 320 × 640, 390 × 844, 844 × 390 and 1024 × 768. It checked focus, 44 px target bounds, sideways overflow, staged selection through navigation, outgoing offers, incoming consent, cancellation, appearance and motion after reload, collection persistence, clipboard opt-in and explicit pin removal.
+Playwright drove the production components through a deterministic fixture port at 320 × 640, 390 × 844, 844 × 390 and 1024 × 768. It checked focus, 44 px target bounds, sideways overflow, staged selection through navigation, outgoing offers, incoming consent, cancellation, appearance and motion after reload, collection persistence, clipboard opt-in and explicit pin removal, and Activity retention and clearing.
 
 [Light Home](evidence/mobile-workspace/light-home-390.png) · [Light Workspace](evidence/mobile-workspace/light-workspace-390.png) · [Light Rift](evidence/mobile-workspace/light-rift-390.png) · [Dark Activity](evidence/mobile-workspace/dark-activity-390.png) · [Dark tablet Home](evidence/mobile-workspace/dark-home-1024.png)
 
@@ -36,6 +36,6 @@ Run the fixture from the root with `npm exec -- vite --config tests/ui/vite.conf
 
 ## Qualification
 
-Automated tests cover routing derived from the shared contract, received and pending distinctions, local persistence decoding, collection removal and inert text exports. The iOS CI native adapter tests exercise staging size and name rules. The simulator workflow produces launch evidence. Neither a webview fixture nor a simulator proves physical LAN, system media, camera or signed build behavior.
+Automated tests cover routing derived from the shared contract, received and pending distinctions, local persistence decoding, collection removal and inert text exports. The iOS CI native adapter tests exercise staging size and name rules. The [iPhone 17 Pro launch receipt and screenshot](https://github.com/Kgray44/AeRift/actions/runs/45268413571/artifacts/14865687166) qualify the shell and native bridge build at revision 1d7e766. The Activity retention and keyboard reading-order follow-up also has WebKit fixture coverage. Neither a webview fixture nor a simulator proves physical LAN, system media, camera or signed build behavior.
 
 On a signed iPhone build, pair with the supported Windows app and verify SHA-256 for one accepted transfer each direction, including a file picked from Files and a photo or video picked from Photos. Check denial, picker cancellation, local network recovery, safe foreground interruption, notes after restart and an explicit clipboard pin. Test camera off and on, intentional release, camera interruption, acceptance, rejection and cancellation. Check VoiceOver, large text, reduced motion, both appearances, keyboard, rotation and tablet layout. Record exact build, OS, devices, inputs and outcomes.

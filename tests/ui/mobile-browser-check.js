@@ -38,6 +38,8 @@ async (page) => {
   await page.getByRole("button", { name: "1 incoming offer", exact: true }).click();
   await page.getByRole("heading", { name: "Activity", exact: true, level: 2 }).waitFor();
   const history = page.getByRole("region", { name: "Transfer history" });
+  check(await history.evaluate(region => !!(document.querySelector(".ae-rift-board")
+    .compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING)), "incoming consent is first in reading order");
   await history.getByText("Awaiting confirmation", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await history.getByRole("button", { name: "Cancel transfer", exact: true }).click();
@@ -46,6 +48,7 @@ async (page) => {
   await dialog.getByRole("radio", { name: "Dark", exact: true }).click();
   await dialog.getByText("Reduce motion", { exact: true }).click();
   await dialog.getByLabel("Clipboard", { exact: true }).check();
+  await dialog.getByLabel("Keep final transfer outcomes after restart", { exact: true }).check();
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await page.locator('.ae-theme[data-scheme="dark"]').waitFor();
   await screenshot("dark-activity-390");
@@ -98,5 +101,37 @@ async (page) => {
   await go("Workspace");
   await page.getByRole("button", { name: "Clipboard", exact: true }).click();
   check(await page.getByText("Dock code", { exact: true }).count() === 0, "explicit clear removed saved pin");
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence and phone/rotation/tablet bounds.";
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: command => {
+        if (command !== "stage_ios_text") throw new Error("Unexpected fixture command");
+        return new Promise(resolve => {
+          window.finishMobileStage = () => resolve({ name: "Packing list.txt", sizeBytes: 17, selectionId: "fixture-note" });
+        });
+      },
+    };
+  });
+  await page.getByRole("button", { name: "Send copy", exact: true }).click();
+  await page.waitForFunction(() => typeof window.finishMobileStage === "function");
+  await go("Devices");
+  await page.evaluate(async () => {
+    window.finishMobileStage();
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
+  });
+  check(await dock.getByRole("button", { name: "Devices", exact: true }).getAttribute("aria-current") === "page",
+    "a completed stage leaves the chosen route active");
+  await go("Workspace");
+  await page.getByRole("region", { name: "Selected object" }).getByText("Packing list.txt", { exact: true }).waitFor();
+  await go("Activity");
+  await history.getByText("Cancelled", { exact: true }).waitFor();
+  check(await history.getByRole("button", { name: "Choose file to retry", exact: true }).count() === 0,
+    "saved outcomes don't carry live actions");
+  dialog = await config();
+  await dialog.getByRole("button", { name: "Clear saved Activity", exact: true }).click();
+  await dialog.getByRole("button", { name: "Clear saved outcomes", exact: true }).click();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  check(await history.getByText("Cancelled", { exact: true }).count() === 0, "clear removes archived outcomes");
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, and phone/rotation/tablet bounds.";
 }

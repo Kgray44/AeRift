@@ -1,6 +1,6 @@
 import type { TransferWorkspaceRegions } from "@aerift/ui";
 import { Button } from "@aerift/ui";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { command } from "../nativeAppPort";
 import type { FileSelection } from "@aerift/app-contract";
 import {
@@ -25,6 +25,11 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
   regions: TransferWorkspaceRegions;
   openRift: () => void;
 }) {
+  const workspaceOpen = useRef(false);
+  useLayoutEffect(() => {
+    workspaceOpen.current = true;
+    return () => { workspaceOpen.current = false; };
+  }, []);
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [markdown, setMarkdown] = useState(false);
@@ -98,7 +103,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift 
       const result = await command<FileSelection | null>("stage_ios_text", portableText(object));
       return result.ok && !result.value ? { ok: false, error: { code: "storage_failed" } } : result;
     });
-    if (result) openRift();
+    if (result && workspaceOpen.current) openRift();
   }
 
   function updateMembers(collection: Collection, itemIds: readonly string[]) {

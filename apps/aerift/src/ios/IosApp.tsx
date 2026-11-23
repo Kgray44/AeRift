@@ -12,6 +12,7 @@ import { IosGestureCamera } from "./IosGestureCamera";
 import { MobileNavigation } from "./MobileNavigation";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileObject } from "./local-objects";
+import { decodeMobileHistory, historyStorageKey, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
 import { mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
 import "./ios.css";
 
@@ -58,6 +59,7 @@ function readWorkspace() {
     files: settings.files !== false, photos: settings.photos !== false,
     notes: settings.notes !== false, browser: settings.browser !== false,
     clipboard: settings.clipboard === true, collections: settings.collections !== false,
+    rememberActivity: settings.rememberActivity === true,
     gestures: typeof settings.gestures === "boolean" ? settings.gestures :
       readSettings("aerift.ios.gestures.enabled") === true,
   };
@@ -68,6 +70,14 @@ function readObjects() {
     return decodeMobileObjects(localStorage.getItem(objectStorageKey) ?? "[]");
   } catch {
     return undefined;
+  }
+}
+
+function readHistory() {
+  try {
+    return decodeMobileHistory(localStorage.getItem(historyStorageKey) ?? "[]");
+  } catch {
+    return [];
   }
 }
 
@@ -84,6 +94,10 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const [preferences, setPreferences] = useState(readWorkspace);
   const [objects, setObjects] = useState(readObjects);
   const [objectError, setObjectError] = useState("");
+  const [history, setHistory] = useState(readHistory);
+  const [historyError, setHistoryError] = useState(false);
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
+  const clearedReceipts = useRef(new Set<string>());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmClearPins, setConfirmClearPins] = useState(false);
   const [settingsError, setSettingsError] = useState(false);
@@ -96,6 +110,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const destinationHeading = useRef<HTMLHeadingElement>(null);
   const navigationRequested = useRef(false);
   const summary = summarizeMobile(snapshot);
+  const liveTransfers = snapshot?.transfers;
+  const recentTransfers = withArchivedTransfers(liveTransfers ?? [], history);
   const discoveryUnavailable = discoveryError || snapshot?.localNetwork === "unavailable";
   const connectionFailed = connection.state === "disconnected";
   const discoveryDisabled = snapshot?.localNetwork === "disabled";
@@ -111,7 +127,30 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const pins = objects?.filter(item => item.kind === "text") ?? [];
   function closeSettings() {
     setConfirmClearPins(false);
+    setConfirmClearHistory(false);
     setSettingsOpen(false);
+  }
+
+  useEffect(() => {
+    if (!preferences.rememberActivity || !liveTransfers) return;
+    const next = recordTransfers(history, liveTransfers.filter(item => !clearedReceipts.current.has(item.id)));
+    if (next === history) return;
+    const saved = writeSettings(historyStorageKey, next);
+    setHistoryError(!saved);
+    if (saved) setHistory(next);
+  }, [history, liveTransfers, preferences.rememberActivity]);
+
+  function clearSavedActivity() {
+    if (!writeSettings(historyStorageKey, [])) {
+      setHistoryError(true);
+      return;
+    }
+    for (const item of liveTransfers ?? []) {
+      if (isTerminalRecord(item)) clearedReceipts.current.add(item.id);
+    }
+    setHistory([]);
+    setHistoryError(false);
+    setConfirmClearHistory(false);
   }
 
   useEffect(() => {
@@ -159,7 +198,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
     setDiscovering(false);
   }
 
-  function updatePreferences(key: keyof ModuleVisibility | "gestures", checked: boolean) {
+  function updatePreferences(key: keyof ModuleVisibility | "gestures" | "rememberActivity", checked: boolean) {
     const next = { ...preferences, [key]: checked };
     setPreferences(next);
     setSettingsError(!writeSettings(workspaceKey, next));
@@ -205,10 +244,14 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
             </Button>
           </>}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
-          activityFooter={<p>Open the AeRift Received folder under On My iPhone in Files.</p>}
+          activityFooter={<>
+            <p>Open the AeRift Received folder under On My iPhone in Files.</p>
+            {historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
+          </>}
           gesture={controls => <IosGestureCamera controls={controls} enabled={preferences.gestures}
             actionsBlocked={settingsOpen} retryKey={cameraRetry} onStatus={setCameraStatus} />}
           mobile={{
+            archivedTransfers: history,
             view: destination === "rift" || destination === "activity" ? destination : "supplement",
             openRift: () => navigate("rift"),
             openActivity: () => navigate("activity"),
@@ -237,8 +280,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
                   </section>
                   <section className="ios-section" aria-labelledby="ios-home-activity">
                     <h3 id="ios-home-activity">Activity</h3>
-                    <p>{summary.active.length ? `${summary.active.length} in progress` : snapshot?.transfers.length ? "Recent transfers" : "No transfers yet."}</p>
-                    <div className="ae-activity-list">{(summary.active.length ? summary.active : snapshot?.transfers)?.slice(0, 2).map(transfer =>
+                    <p>{summary.active.length ? `${summary.active.length} in progress` : recentTransfers.length ? "Recent transfers" : "No transfers yet."}</p>
+                    <div className="ae-activity-list">{(summary.active.length ? summary.active : recentTransfers).slice(0, 2).map(transfer =>
                       <TransferProgress key={transfer.id} transfer={transfer}
                         deviceName={snapshot?.devices.find(device => device.id === transfer.deviceId)?.name} />)}</div>
                     <Button variant="quiet" onClick={() => navigate("activity")}>View Activity</Button>
@@ -304,6 +347,20 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
                 <p>Allow camera access for AeRift in iOS Settings, then return to Rift.</p>
                 <Button onClick={() => setCameraRetry(value => value + 1)}>Retry camera</Button>
               </div>}
+          </fieldset>
+          <fieldset className="ae-settings">
+            <legend>Activity history</legend>
+            <label><input type="checkbox" checked={preferences.rememberActivity}
+              onChange={event => updatePreferences("rememberActivity", event.currentTarget.checked)} />
+              Keep final transfer outcomes after restart</label>
+            <p>AeRift can keep the last 60 outcomes on this iPhone, including file names.</p>
+            {history.length > 0 && (confirmClearHistory ? <div className="ae-actions">
+              <Button variant="danger" onClick={clearSavedActivity}>Clear saved outcomes</Button>
+              <Button variant="quiet" onClick={() => setConfirmClearHistory(false)}>Keep outcomes</Button>
+            </div> : <div>
+              <Button variant="quiet" onClick={() => setConfirmClearHistory(true)}>Clear saved Activity</Button>
+            </div>)}
+            {historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
           </fieldset>
           <section aria-label="Privacy and storage">
             <p>Local Network access lets AeRift find nearby devices. Keep AeRift open until your transfer finishes.</p>

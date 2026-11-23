@@ -66,6 +66,7 @@ export interface TransferWorkspaceRegions {
 
 export interface MobileTransferPresentation {
   view: "rift" | "activity" | "supplement";
+  archivedTransfers?: readonly Transfer[];
   openRift: () => void;
   openActivity: () => void;
   render: (regions: TransferWorkspaceRegions) => ReactNode;
@@ -449,7 +450,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const incoming = transfers.filter(item => item.direction === "incoming" && item.state === "pending");
   const channel = transfers.filter(item => item.direction === "incoming" && isTransferActive(item));
   if (rift && !channel.some(item => item.id === rift.id)) channel.push(rift);
-  const history = transfers.filter(item => !channel.some(featured => item.id === featured.id));
+  const liveHistory = transfers.filter(item => !channel.some(featured => item.id === featured.id));
+  const archived = mobile?.archivedTransfers?.filter(item => !isTransferActive(item) &&
+    !transfers.some(live => live.id === item.id)) ?? [];
   const outgoingObject = !departure?.receipt ? departure?.file ?? selection : selection;
   const outgoingPhase = outgoingObject && objectPhase(outgoingObject, selectedId, gestureFeedback);
   const gesturePhase = (rift && incomingObjectPhase(rift, gestureFeedback)) || outgoingPhase || undefined;
@@ -551,6 +554,28 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       action={transferActions(transfer)} />;
   }
 
+  const activitySection = <section key="activity" id={activityId} hidden={destination !== "activity"}
+    aria-label={mobile ? "Transfer history" : undefined}
+    aria-labelledby={mobile ? undefined : `${activityId}-heading`} className="ae-activity">
+    {!mobile && <h2 id={`${activityId}-heading`}>Activity</h2>}
+    {liveHistory.length || archived.length ? <div className="ae-activity-list">
+      {liveHistory.map(transfer => <TransferProgress key={transfer.id} transfer={transfer}
+        deviceName={nameOf(transfer.deviceId)}
+        error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined}
+        action={transferActions(transfer)} />)}
+      {archived.map(transfer => <TransferProgress key={transfer.id} transfer={transfer}
+        deviceName={nameOf(transfer.deviceId)}
+        error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined} />)}
+    </div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
+      <p>{channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
+    {activityFooter}
+  </section>;
+
+  const transferSection = <section key="transfer-status" id={transferRegionId} ref={transferRegion}
+    tabIndex={-1} className="ae-rift-board" aria-label="Transfer status" hidden={!channel.length}>
+    {channel.map(riftCard)}
+  </section>;
+
   return <>
     <header className="ae-experience-nav" data-destination={destination} data-mobile-shell={!!mobile}>
       <GlassSurface material="chrome" className="ae-nav-brand">{navigationStart}</GlassSurface>
@@ -567,7 +592,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     </header>
     <div className="ae-offer-notice">
       <span role="status">{!!incoming.length && <Button variant="quiet"
-        aria-controls={destination === "supplement" ? activityId : transferRegionId}
+        aria-controls={transferRegionId}
         onClick={() => {
           if (mobile && destination === "supplement") mobile.openActivity();
           else transferRegion.current?.focus();
@@ -642,21 +667,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
             </Button>}
         </GlassSurface>
       </section>
-      <section id={activityId} hidden={destination !== "activity"}
-        aria-label={mobile ? "Transfer history" : undefined}
-        aria-labelledby={mobile ? undefined : `${activityId}-heading`} className="ae-activity">
-        {!mobile && <h2 id={`${activityId}-heading`}>Activity</h2>}
-        {history.length ? <div className="ae-activity-list">{history.map(transfer => (
-          <TransferProgress key={transfer.id} transfer={transfer} deviceName={nameOf(transfer.deviceId)}
-            error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined} action={transferActions(transfer)} />
-        ))}</div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
-          <p>{channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
-        {activityFooter}
-      </section>
-      <section id={transferRegionId} ref={transferRegion} tabIndex={-1} className="ae-rift-board"
-        aria-label="Transfer status" hidden={!channel.length}>
-        {channel.map(riftCard)}
-      </section>
+      {mobile?.view === "activity" ? [transferSection, activitySection] : [activitySection, transferSection]}
     </div>
     <Sheet open={pairingOpen} title="Pair a device" onClose={() => setPairingOpen(false)}>
       {pairingOpen && <PairingPanel invitation={invitation} requests={pendingPairs} disabled={pairingDisabled}
