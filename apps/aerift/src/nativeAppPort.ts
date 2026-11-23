@@ -45,6 +45,15 @@ export const nativeAppPort: AppPort = {
   selectFile() {
     return command<FileSelection | null>("select_app_file");
   },
+  clearFile(selectionId) {
+    return command<void>("clear_app_file", { selectionId });
+  },
+  setReceiverReady(ready) {
+    return command<number>("set_receiver_ready", { ready });
+  },
+  checkReceiver(deviceId) {
+    return command<boolean>("check_receiver", { deviceId });
+  },
   pair(request) {
     return command<PairingResult>("pair_app_peer", { request });
   },

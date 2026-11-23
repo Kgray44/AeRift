@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, type PointerEvent, type ReactNode } from "react";
 import { Button } from "./components";
-import type { ColorScheme, Preference, Reduction } from "./theme";
+import { transitionAppearance, type ColorScheme, type Preference, type Reduction } from "./theme";
 
 export function Sheet({ open, title, onClose, children }: {
   open: boolean; title: string; onClose: () => void; children: ReactNode;
@@ -62,6 +62,7 @@ export function SettingsPanel({ value, onChange, themes }: {
   value: AppearanceSettings; onChange: (settings: AppearanceSettings) => void;
   themes: readonly { id: string; label: string }[];
 }) {
+  const appearanceName = useId();
   function switchRow(label: string, checked: boolean, toggle: (enabled: boolean) => void) {
     return <label className="ae-setting-switch">
       <span>{label}</span>
@@ -70,15 +71,24 @@ export function SettingsPanel({ value, onChange, themes }: {
     </label>;
   }
   return <div className="ae-settings">
-    <div className="ae-settings-group" role="group" aria-label="Visual theme">
+      <div className="ae-settings-group" role="group" aria-label="Visual theme">
       <label>Theme<select value={value.theme} onChange={event => onChange({ ...value, theme: event.target.value })}>
         {themes.map(theme => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
       </select></label>
-      <label>Appearance<select value={value.scheme}
-        onChange={event => onChange({ ...value, scheme: event.target.value as ColorScheme })}>
-        <option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option>
-      </select></label>
     </div>
+      <fieldset className="ae-appearance-picker">
+        <legend>Appearance</legend>
+        <div className="ae-appearance-options">
+          {([["system", "System"], ["light", "Light"], ["dark", "Dark"]] as const).map(([scheme, label]) => (
+            <label key={scheme} className="ae-appearance-card" data-preview={scheme}>
+              <input type="radio" name={appearanceName} checked={value.scheme === scheme}
+                onChange={() => transitionAppearance(() => onChange({ ...value, scheme }), value.motion)} />
+              <span className="ae-appearance-sample" aria-hidden="true"><span /></span>
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
     <div className="ae-settings-group" role="group" aria-label="Accessibility preferences">
       {switchRow("Increase contrast", value.contrast === "increase",
         enabled => onChange({ ...value, contrast: enabled ? "increase" : "system" }))}

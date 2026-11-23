@@ -9,6 +9,7 @@
     "main"
   ],
   "permissions": [
+    "aerift-ios:allow-camera-authorized",
     "aerift-ios:allow-camera-clock",
     "aerift-ios:allow-register-camera-events",
     "aerift-ios:allow-start-camera",

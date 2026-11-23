@@ -8,4 +8,7 @@ export { createIosCameraPort } from "./ios-port.js";
 export { WebGestureCamera } from "./web-camera.js";
 export { mountSendGesture } from "./send-control.js";
 export type { GestureControlOptions } from "./send-control.js";
-export type { SendGestureControls } from "./send-binding.js";
+export { bindTransferGesture } from "./send-binding.js";
+export type { GestureTransferOutcome, GestureTransferSelection, SendGestureControls } from "./send-binding.js";
+export { presentGesture } from "./presentation.js";
+export { automaticGestureTarget, cameraRecovery } from "./automatic-camera.js";

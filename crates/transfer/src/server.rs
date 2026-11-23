@@ -3,7 +3,10 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{
-    Method, Request, Response, StatusCode, body::Incoming, header, server::conn::http1,
+    Method, Request, Response, StatusCode,
+    body::{Body, Incoming},
+    header,
+    server::conn::http1,
     service::service_fn,
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -13,7 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::receiver::Upload;
 use crate::{
-    ErrorCode, Offer, PeerId, Receiver, TransferError, TransferKey, parse_id, read_control,
+    ErrorCode, Offer, PeerId, RECEIVER_READY_ROUTE, Receiver, ReceiverReady, TransferError,
+    TransferKey, parse_id, read_control,
 };
 
 type Reply = Response<Full<Bytes>>;
@@ -68,6 +72,22 @@ pub async fn serve_request(
     }
     if !path.starts_with("/v1/") {
         return error(ErrorCode::UnsupportedVersion.into());
+    }
+    if path == RECEIVER_READY_ROUTE {
+        if request.method() != Method::GET || request.body().size_hint().exact() != Some(0) {
+            return error(ErrorCode::InvalidRequest.into());
+        }
+        let mut reply = json(
+            StatusCode::OK,
+            &ReceiverReady {
+                ready: receiver.is_ready(),
+            },
+        );
+        reply.headers_mut().insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("no-store"),
+        );
+        return reply;
     }
     if path == "/v1/transfers" && request.method() == Method::POST {
         return offer(request, peer, &receiver, &trust).await;

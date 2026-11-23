@@ -1,13 +1,19 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type {
-  AppPort, AppSnapshot, ErrorCode, FileSelection, PairingInvitation, Result, TransferRequest,
+  AppPort, AppSnapshot, ErrorCode, FileSelection, PairingInvitation, Platform, Result, Transfer, TransferRequest,
 } from "@aerift/app-contract";
-import { Button, DevicePicker, FileCard, GlassSurface, TransferProgress } from "./components";
+import { automaticGestureTarget } from "@aerift/gestures";
+import { Button, GlassSurface, TransferProgress } from "./components";
 import { Sheet, Toast } from "./overlays";
 import { PairingPanel, type PairingAction } from "./PairingPanel";
 import { offerTransfer, type TransferIntent } from "./send-action";
+import { SpatialIcon, SpatialScene, type DiscoveryState } from "./SpatialScene";
+import { RiftExperience, RiftLink, TransferObject } from "./RiftExperience";
+import { environmentPhase, incomingObjectPhase, isTransferActive, objectPhase, readinessMatches, reconcileTransfers, selectRift, terminalTransition,
+  type ReceiverReadiness, type RiftAftermath, type WorkspaceGestureFeedback } from "./rift-coordinator";
 
 export type { TransferIntent } from "./send-action";
+export type { WorkspaceGestureFeedback } from "./rift-coordinator";
 
 const errors: Partial<Record<ErrorCode, string>> = {
   permission_denied: "Permission was denied. Check the device settings and try again.",
@@ -25,7 +31,7 @@ function messageFor(code: ErrorCode) {
   return errors[code] ?? "The operation could not be completed. Try again.";
 }
 
-type Operation = "file" | "send" | "accept" | "decline" | "cancel" | "create" | "redeem" | "approve" | "deny";
+type Operation = "file" | "send" | "accept" | "decline" | "cancel" | "create" | "redeem" | "approve" | "deny" | "readiness";
 const composerKey = "composer";
 const transferKey = (id: string) => `transfer:${id}`;
 const pairingKey = (id: string) => `pairing:${id}`;
@@ -33,29 +39,45 @@ const pairingKey = (id: string) => `pairing:${id}`;
 export interface IncomingTransferIntent {
   readonly transferId: string;
   readonly deviceId: string;
+  readonly label?: string;
 }
 
 export interface TransferControls {
   intent: TransferIntent | null;
   busy: boolean;
+  foreground: boolean;
   send: (intent: TransferIntent) => Promise<boolean>;
   incoming: readonly IncomingTransferIntent[];
-  accept: (intent: IncomingTransferIntent) => Promise<boolean>;
+  accept: (intent: IncomingTransferIntent, chosenOffer?: string) => Promise<boolean>;
+  reportGesture: (feedback: WorkspaceGestureFeedback) => void;
 }
 
 export type WorkspaceConnection =
   | { state: "connecting" | "disconnected" }
   | { state: "ready"; snapshot: AppSnapshot };
 
-export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection }: {
+export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection,
+  navigationStart = "AeRift", navigationEnd, pairRequest, onPairingOpenChange,
+  platform, discovery, discoveryNotice, allowDrop }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
   watchSelection?: (listener: (selection: FileSelection | null) => void) => () => void;
   connection?: { generation: number; retry: () => void; onChange: (value: WorkspaceConnection) => void };
+  navigationStart?: ReactNode;
+  navigationEnd?: ReactNode;
+  pairRequest?: number;
+  onPairingOpenChange?: (open: boolean) => void;
+  platform?: Platform;
+  discovery?: DiscoveryState;
+  discoveryNotice?: ReactNode;
+  allowDrop?: boolean;
 }) {
   const titleId = useId();
   const activityId = useId();
+  const transferRegionId = useId();
+  const transferRegion = useRef<HTMLElement>(null);
+  const environment = useRef<HTMLDivElement>(null);
   const [destination, setDestination] = useState<"send" | "activity">("send");
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
   const [watchError, setWatchError] = useState<string>();
@@ -70,16 +92,31 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const [pairStatus, setPairStatus] = useState<string>();
   const [pairError, setPairError] = useState<string>();
   const [toast, setToast] = useState<{ message: string; kind: "success" | "error" }>();
+  const [gestureFeedback, setGestureFeedback] = useState<WorkspaceGestureFeedback>();
+  const [aftermath, setAftermath] = useState<RiftAftermath>();
+  const [departure, setDeparture] = useState<{ request: symbol; file: FileSelection; deviceId: string; receipt?: Transfer;
+    from?: { x: number; y: number } }>();
+  const dockGlyph = useRef<HTMLSpanElement>(null);
+  const [readiness, setReadiness] = useState<ReceiverReadiness>();
+  const [receiveUntil, setReceiveUntil] = useState(0);
+  const ignoredSelection = useRef<string>(undefined);
+  const lastPairRequest = useRef(pairRequest);
   const active = useRef<{ port: AppPort; snapshot?: AppSnapshot; selection: FileSelection | null; selectedId?: string; operations: Map<string, Operation>; watchFailed: boolean } | undefined>(undefined);
 
   useEffect(() => {
-    function syncDestination() {
-      setDestination(window.location.hash === `#${activityId}` ? "activity" : "send");
+    if (pairRequest !== lastPairRequest.current) {
+      lastPairRequest.current = pairRequest;
+      setPairingOpen(true);
     }
-    syncDestination();
-    window.addEventListener("hashchange", syncDestination);
-    return () => window.removeEventListener("hashchange", syncDestination);
-  }, [activityId]);
+  }, [pairRequest]);
+
+  useEffect(() => { onPairingOpenChange?.(pairingOpen); }, [onPairingOpenChange, pairingOpen]);
+
+  useEffect(() => {
+    if (!aftermath) return;
+    const timer = window.setTimeout(() => setAftermath(undefined), Math.max(0, aftermath.expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [aftermath]);
 
   useEffect(() => {
     let disposed = false;
@@ -98,9 +135,15 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     setPairStatus(undefined);
     setPairError(undefined);
     setToast(undefined);
+    setGestureFeedback(undefined);
+    setAftermath(undefined);
+    setDeparture(undefined);
+    setReadiness(undefined);
+    setReceiveUntil(0);
 
     const unwatchSelection = watchSelection?.(file => {
       if (disposed) return;
+      if (file?.selectionId === ignoredSelection.current) return;
       session.selection = file;
       setSelection(file);
     });
@@ -110,6 +153,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       session.watchFailed = true;
       session.snapshot = undefined;
       setSnapshot(undefined);
+      setDeparture(undefined);
+      setAftermath(undefined);
       setWatchError(message);
       notifyConnection?.({ state: "disconnected" });
     }
@@ -117,10 +162,15 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     void (async () => {
       try {
         const result = await port.watch(next => {
-          if (disposed) return;
-          session.snapshot = next;
-          setSnapshot(next);
-          notifyConnection?.({ state: "ready", snapshot: next });
+          if (disposed || session.watchFailed) return;
+          const previous = session.snapshot;
+          const transfers = reconcileTransfers(previous?.transfers ?? [], next.transfers);
+          const terminal = terminalTransition(previous?.transfers, transfers);
+          if (terminal) setAftermath({ id: terminal.id, expiresAt: Date.now() + 2800 });
+          const current = { ...next, transfers };
+          session.snapshot = current;
+          setSnapshot(current);
+          notifyConnection?.({ state: "ready", snapshot: current });
         });
         if (result.ok) {
           if (disposed) result.value();
@@ -180,12 +230,85 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const pendingPairs = snapshot?.pendingPairing ?? [];
   const pairingBusy = operations.get("pairing");
   const pairingDisabled = !snapshot || !!watchError;
-  const pairs = snapshot?.devices.filter(device => device.paired) ?? [];
-  const online = pairs.filter(device => device.online).length;
-  const target = pairs.find(device => device.id === selectedId && device.online);
+  const devices = snapshot?.devices ?? [];
+  const chosen = devices.find(device => device.id === selectedId && device.paired);
+  const target = chosen?.online ? chosen : undefined;
   const intent = target && selection ? { deviceId: target.id, selectionId: selection.selectionId } : null;
+  const reportGesture = useCallback((feedback: WorkspaceGestureFeedback) => {
+    setGestureFeedback(current => current?.target === feedback.target && current.phase === feedback.phase ? current : feedback);
+  }, []);
+  useEffect(() => {
+    if (!gestureFeedback || !["failed", "canceled", "interrupted"].includes(gestureFeedback.phase)) return;
+    const timer = window.setTimeout(() => {
+      setGestureFeedback(current => current === gestureFeedback ? undefined : current);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [gestureFeedback]);
+  const heldDevice = gestureFeedback?.phase === "held" && gestureFeedback.target.kind === "send" &&
+    gestureFeedback.target.deviceId === intent?.deviceId && gestureFeedback.target.selectionId === intent.selectionId
+    ? intent.deviceId : undefined;
+  const heldSelection = heldDevice ? intent?.selectionId : undefined;
 
-  function selectDevice(id: string) {
+  useEffect(() => {
+    if (!heldDevice || !heldSelection || !port.checkReceiver) return;
+    let disposed = false;
+    let timer: number | undefined;
+    const checkReceiver = port.checkReceiver.bind(port);
+    async function check() {
+      try {
+        const result = await checkReceiver(heldDevice!);
+        if (disposed) return;
+        setReadiness(result.ok && result.value ? {
+          deviceId: heldDevice!, selectionId: heldSelection!, expiresAt: Date.now() + 1500,
+        } : undefined);
+      } catch {
+        if (!disposed) setReadiness(undefined);
+      }
+      if (!disposed) timer = window.setTimeout(() => void check(), 700);
+    }
+    void check();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      setReadiness(undefined);
+    };
+  }, [heldDevice, heldSelection, port]);
+
+  useEffect(() => {
+    if (!readiness) return;
+    const timer = window.setTimeout(() => setReadiness(undefined), Math.max(0, readiness.expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [readiness]);
+
+  useEffect(() => {
+    if (!receiveUntil) return;
+    const timer = window.setTimeout(() => setReceiveUntil(0), Math.max(0, receiveUntil - Date.now()));
+    function clearWhenHidden() {
+      if (document.hidden) {
+        setReceiveUntil(0);
+        void port.setReceiverReady?.(false).catch(() => {});
+      }
+    }
+    document.addEventListener("visibilitychange", clearWhenHidden);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", clearWhenHidden);
+    };
+  }, [port, receiveUntil]);
+
+  function toggleReceive() {
+    if (!port.setReceiverReady || !snapshot) return;
+    const ready = !receiveUntil;
+    void run("receiver", "readiness", () => port.setReceiverReady!(ready), duration => {
+      if (ready && document.hidden) {
+        void port.setReceiverReady?.(false).catch(() => {});
+        return;
+      }
+      setReceiveUntil(ready ? Date.now() + duration : 0);
+    });
+  }
+
+  function selectDevice(id: string | undefined) {
     if (!active.current || active.current.operations.has(composerKey)) return;
     active.current.selectedId = id;
     setSelectedId(id);
@@ -199,23 +322,60 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     });
   }
 
+  function clearSelection() {
+    const session = active.current;
+    if (!session?.selection || session.operations.has(composerKey)) return;
+    const file = session.selection;
+    const clear = () => {
+      if (session.selection?.selectionId !== file.selectionId) return;
+      ignoredSelection.current = file.selectionId;
+      session.selection = null;
+      setSelection(null);
+    };
+    if (port.clearFile) {
+      void run(composerKey, "file", () => port.clearFile!(file.selectionId), clear);
+    } else clear();
+  }
+
   function send(captured: TransferIntent) {
-    return run(composerKey, "send", session => offerTransfer(port,
-      session.snapshot?.devices.find(device => device.id === session.selectedId), session.selection, captured),
-      (_, session) => {
-        if (!watchSelection && session.selection?.selectionId === captured.selectionId) {
+    const request = Symbol();
+    return run(composerKey, "send", session => {
+      const peer = session.snapshot?.devices.find(device => device.id === session.selectedId);
+      const result = offerTransfer(port, peer, session.selection, captured);
+      if (peer?.online && peer.paired && peer.id === captured.deviceId && session.selection?.selectionId === captured.selectionId) {
+        const glyph = dockGlyph.current?.getBoundingClientRect();
+        setDeparture({ request, file: session.selection, deviceId: captured.deviceId,
+          from: glyph && { x: glyph.left + glyph.width / 2, y: glyph.top + glyph.height / 2 } });
+      }
+      return result;
+    }, (receipt, session) => {
+        if (session.selection?.selectionId === captured.selectionId) {
           session.selection = null;
           setSelection(null);
         }
-        setToast({ kind: "success", message: "Transfer offered" });
-      });
+        setDeparture(current => current?.request === request ? { ...current, receipt } : current);
+      }).then(offered => {
+      if (!offered) setDeparture(current => current?.request === request ? undefined : current);
+      return offered;
+    });
   }
 
-  function updateTransfer(request: Exclude<TransferRequest, { action: "offer" }>, expectedPeer?: string) {
+  function updateTransfer(request: Exclude<TransferRequest, { action: "offer" }>, expectedPeer?: string, chosenOffer?: string) {
     const operation = request.action === "cancel" ? "cancel" : request.accept ? "accept" : "decline";
     return run(transferKey(request.transferId), operation, session => {
       const transfer = session.snapshot?.transfers.find(item => item.id === request.transferId);
       if (!transfer || (expectedPeer !== undefined && transfer.deviceId !== expectedPeer)) return Promise.resolve(null);
+      if (chosenOffer !== undefined) {
+        const peer = session.snapshot?.devices.find(device => device.id === session.selectedId && device.paired && device.online);
+        const sendIntent = peer && session.selection ? { deviceId: peer.id, selectionId: session.selection.selectionId } : null;
+        const offers = session.snapshot?.transfers
+          .filter(item => item.direction === "incoming" && item.state === "pending")
+          .map(item => ({ transferId: item.id, deviceId: item.deviceId })) ?? [];
+        const candidate = automaticGestureTarget(sendIntent, offers, chosenOffer);
+        if (candidate?.kind !== "receive" || candidate.transferId !== transfer.id || candidate.deviceId !== transfer.deviceId) {
+          return Promise.resolve(null);
+        }
+      }
       const awaitingConsent = transfer.state === "pending" && transfer.direction === "incoming";
       const allowed = request.action === "respond" ? awaitingConsent
         : !awaitingConsent && ["pending", "accepted", "transferring"].includes(transfer.state);
@@ -225,10 +385,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
 
   const incomingIntents = watchError ? [] : (snapshot?.transfers ?? [])
     .filter(item => item.direction === "incoming" && item.state === "pending" && !operations.has(transferKey(item.id)))
-    .map(item => ({ transferId: item.id, deviceId: item.deviceId }));
+    .map(item => ({ transferId: item.id, deviceId: item.deviceId,
+      label: `${item.file.name} · ${devices.find(device => device.id === item.deviceId)?.name ?? "Paired device"}` }));
 
-  function accept({ transferId, deviceId }: IncomingTransferIntent) {
-    return updateTransfer({ action: "respond", transferId, accept: true }, deviceId);
+  function accept({ transferId, deviceId }: IncomingTransferIntent, chosenOffer?: string) {
+    return updateTransfer({ action: "respond", transferId, accept: true }, deviceId, chosenOffer);
   }
 
   function pair(request: PairingAction) {
@@ -254,75 +415,210 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     }, setPairError);
   }
 
+  const retry = connection?.retry ?? (() => setWatchAttempt(attempt => attempt + 1));
+  const pairingLabel = pendingPairs.length ? `Review pairing (${pendingPairs.length})` : "Pair a device";
+  const stageDiscovery = watchError ? "interrupted" : discovery ??
+    (!snapshot ? "connecting" : devices.some(device => device.online) ? "available" : "empty");
+  const ready = readinessMatches(readiness, gestureFeedback, intent, Date.now());
+  const transfers = snapshot?.transfers ?? [];
+  const rift = selectRift(transfers, aftermath, Date.now()) ??
+    (departure?.receipt && !transfers.some(item => item.id === departure.receipt?.id) ? departure.receipt : undefined);
+  const riftPeerId = rift?.deviceId ?? departure?.deviceId ?? selectedId;
+  const nameOf = (id: string) => devices.find(device => device.id === id)?.name ?? "Paired device";
+  const incoming = transfers.filter(item => item.direction === "incoming" && item.state === "pending");
+  const channel = transfers.filter(item => item.direction === "incoming" && isTransferActive(item));
+  if (rift && !channel.some(item => item.id === rift.id)) channel.push(rift);
+  const history = transfers.filter(item => !channel.some(featured => item.id === featured.id));
+  const outgoingObject = !departure?.receipt ? departure?.file ?? selection : selection;
+  const outgoingPhase = outgoingObject && objectPhase(outgoingObject, selectedId, gestureFeedback);
+  const gesturePhase = (rift && incomingObjectPhase(rift, gestureFeedback)) || outgoingPhase || undefined;
+  const phase = environmentPhase({ transfer: destination === "send" ? rift : undefined,
+    gesture: destination === "send" ? gesturePhase : undefined, receiverReady: destination === "send" && (ready || !!receiveUntil),
+    offering: !!departure && pending === "send", selected: !!(selection || selectedId), discovering: stageDiscovery === "searching" });
+  const progress = rift?.state === "completed" ? 1 :
+    rift?.file.sizeBytes ? Math.min(1, rift.bytesTransferred / rift.file.sizeBytes) : 0;
+  const dockStatus = !selection && rift ? {
+    pending: rift.direction === "incoming" ? "Incoming file" : "Offer started",
+    accepted: "Transfer accepted",
+    transferring: rift.direction === "incoming" ? "Receiving" : "Sending",
+    completed: "Delivered",
+    failed: "Transfer failed", cancelled: "Transfer cancelled", rejected: "Offer declined",
+  }[rift.state] : undefined;
+  const departureSnapshot = departure?.receipt && transfers.find(item => item.id === departure.receipt?.id);
+
+  useLayoutEffect(() => {
+    const stage = environment.current;
+    if (!stage) return;
+    function alignLight() {
+      if (!stage) return;
+      const receiver = rift?.direction === "incoming";
+      const followsFile = phase === "hand" || phase === "held";
+      const followsDestination = ["ready", "departure", "transferring", "receiving", "completed"].includes(phase);
+      const peer = followsDestination && !receiver && riftPeerId
+        ? Array.from(stage.querySelectorAll<HTMLElement>("[data-peer-anchor]")).find(node => node.dataset.peerAnchor === riftPeerId)
+        : undefined;
+      const local = stage.querySelector<HTMLElement>("[data-local-anchor]");
+      const focus = followsFile ? dockGlyph.current ?? local : followsDestination ? peer ?? local : undefined;
+      const box = focus?.getBoundingClientRect();
+      for (const [key, position] of [
+        ["experienceX", box && (box.x + box.width / 2) / window.innerWidth],
+        ["experienceY", box && (box.y + box.height / 2) / window.innerHeight],
+      ] as const) {
+        if (position === undefined) delete stage.dataset[key];
+        else {
+          const value = Math.min(1, Math.max(0, position)).toFixed(3);
+          if (stage.dataset[key] !== value) stage.dataset[key] = value;
+        }
+      }
+    }
+    alignLight();
+    window.addEventListener("resize", alignLight);
+    window.addEventListener("scroll", alignLight, { passive: true, capture: true });
+    return () => {
+      window.removeEventListener("resize", alignLight);
+      window.removeEventListener("scroll", alignLight, true);
+    };
+  }, [phase, rift?.direction, riftPeerId]);
+
+  useEffect(() => {
+    const receipt = departure?.receipt;
+    if (!receipt || (departureSnapshot && isTransferActive(departureSnapshot))) return;
+    const timer = window.setTimeout(() => {
+      setDeparture(current => current?.receipt?.id === receipt.id ? undefined : current);
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [departure?.receipt, departureSnapshot?.state]);
+
+  function transferActions(transfer: Transfer) {
+    if (!isTransferActive(transfer)) {
+      if (transfer.direction !== "outgoing" || transfer.state === "completed") return undefined;
+      const device = devices.find(peer => peer.id === transfer.deviceId && peer.paired);
+      return <Button variant="quiet" disabled={!!pending || !!watchError}
+        onClick={() => {
+          setDestination("send");
+          selectDevice(device?.id);
+          chooseFile();
+        }}>Choose file to retry</Button>;
+    }
+    const operation = operations.get(transferKey(transfer.id));
+    const offer = transfer.direction === "incoming" && transfer.state === "pending";
+    return <div className="ae-actions">
+      {offer ? <>
+        <Button disabled={!!watchError || (operation !== undefined && operation !== "accept")}
+          loading={operation === "accept"} loadingLabel="Accepting…"
+          onClick={() => {
+            transferRegion.current?.focus({ preventScroll: true });
+            void accept({ transferId: transfer.id, deviceId: transfer.deviceId });
+          }}>Accept</Button>
+        <Button variant="quiet" disabled={!!watchError || (operation !== undefined && operation !== "decline")}
+          loading={operation === "decline"} loadingLabel="Declining…"
+          onClick={() => void updateTransfer({ action: "respond", transferId: transfer.id, accept: false })}>Decline</Button>
+      </> : <Button variant="quiet" disabled={!!watchError || (operation !== undefined && operation !== "cancel")}
+        loading={operation === "cancel"} loadingLabel="Cancelling…"
+        onClick={() => void updateTransfer({ action: "cancel", transferId: transfer.id })}>Cancel transfer</Button>}
+    </div>;
+  }
+
+  function riftCard(transfer: Transfer) {
+    return <RiftExperience key={transfer.id} transfer={transfer} deviceName={nameOf(transfer.deviceId)}
+      compactPath={destination === "activity" || devices.length > 6 || transfer.id !== rift?.id ||
+        !devices.some(device => device.id === transfer.deviceId)}
+      objectId={departure?.receipt?.id === transfer.id ? departure.file.selectionId : undefined}
+      gestureState={incomingObjectPhase(transfer, gestureFeedback)}
+      error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined}
+      action={transferActions(transfer)} />;
+  }
+
   return <>
-    <div className="ae-workspace-heading">
-      <div>
-        <h2>Transfer files</h2>
-        <p>Send a file to a paired device on your local network.</p>
-      </div>
-      <nav className="ae-workspace-nav ae-surface" data-material="chrome" data-destination={destination}
-        aria-label="Transfer workspace">
-        <a href={`#${titleId}`} onClick={() => setDestination("send")}
-          aria-current={destination === "send" ? "location" : undefined}>Send</a>
-        <a href={`#${activityId}`} onClick={() => setDestination("activity")}
-          aria-current={destination === "activity" ? "location" : undefined}>Activity</a>
-      </nav>
+    <header className="ae-experience-nav" data-destination={destination}>
+      <GlassSurface material="chrome" className="ae-nav-brand">{navigationStart}</GlassSurface>
+      <GlassSurface material="chrome" className="ae-nav-destinations">
+        <nav aria-label="AeRift destinations">
+          <span className="ae-nav-indicator" aria-hidden="true" />
+          <Button variant="quiet" onClick={() => setDestination("send")} aria-controls={titleId}
+            aria-current={destination === "send" ? "page" : undefined}><SpatialIcon name="workspace" />Workspace</Button>
+          <Button variant="quiet" onClick={() => setDestination("activity")} aria-controls={activityId}
+            aria-current={destination === "activity" ? "page" : undefined}><SpatialIcon name="activity" />Activity</Button>
+        </nav>
+      </GlassSurface>
+      {navigationEnd && <GlassSurface material="chrome" className="ae-nav-tools">{navigationEnd}</GlassSurface>}
+    </header>
+    <div className="ae-offer-notice">
+      <span role="status">{!!incoming.length && <Button variant="quiet" aria-controls={transferRegionId}
+        onClick={() => transferRegion.current?.focus()}>
+        <SpatialIcon name="drop" size={17} />{incoming.length} incoming {incoming.length === 1 ? "offer" : "offers"}
+      </Button>}</span>
     </div>
-    <div className="ae-workspace">
-      <section aria-labelledby={titleId}>
-        <GlassSurface material="raised" className="ae-panel">
-          <div className="ae-panel-heading">
-            <h3 id={titleId} tabIndex={-1}>New transfer</h3>
-            {snapshot && !watchError && <small>{online} paired {online === 1 ? "device" : "devices"} online</small>}
+    {discoveryNotice}
+    {watchError && <div className="ae-workspace-notice">
+      <p role="alert">{watchError}</p><Button variant="quiet" onClick={retry}>Retry connection</Button>
+    </div>}
+    <div className="ae-transfer-space" ref={environment} data-experience-phase={phase} data-experience-progress={progress}>
+      <section id={titleId} hidden={destination !== "send"} aria-label="Spatial workspace" className="ae-workspace-view">
+        <SpatialScene devices={devices} selectedId={selectedId} onSelect={selectDevice} busy={!!pending}
+          platform={platform} discovery={stageDiscovery} onPair={() => setPairingOpen(true)}
+          pairingDisabled={pairingDisabled} pairingLabel={pairingLabel}
+          receiverReady={!!receiveUntil}
+          readinessPeerId={ready ? target?.id : rift?.state === "accepted" ? rift.deviceId : undefined}
+          offeredPeerId={rift?.state === "pending" ? rift.deviceId : undefined}
+          activePeerId={rift?.state === "accepted" || rift?.state === "transferring" ? rift.deviceId : undefined}
+          interruptedPeerId={rift && ["failed", "rejected", "cancelled"].includes(rift.state) ? rift.deviceId : undefined}>
+          {anchors => {
+            const remote = riftPeerId && anchors.peers.get(riftPeerId);
+            if ((anchors.compact && devices.length > 6) || !remote || !anchors.width || !anchors.height) return null;
+            return <RiftLink key={rift?.id ?? riftPeerId} transfer={rift} ready={ready}
+              departureFrom={departure && departure.deviceId === riftPeerId &&
+                (!departure.receipt || departure.receipt.id === rift?.id) ? departure.from : undefined}
+              geometry={{ width: anchors.width, height: anchors.height, source: anchors.local, destination: remote }} />;
+          }}
+        </SpatialScene>
+        {gesture?.({ intent: watchError || destination !== "send" ? null : intent,
+          foreground: destination === "send", busy: pending !== undefined || pairingOpen || destination !== "send",
+          send, incoming: destination === "send" ? incomingIntents : [], accept, reportGesture })}
+        <GlassSurface material="chrome" className="ae-transfer-dock" data-dock-phase={phase}>
+          <div className="ae-dock-file">
+            {outgoingObject ? <TransferObject key={outgoingObject.selectionId} objectId={outgoingObject.selectionId} glyphRef={dockGlyph}
+              files={[outgoingObject]}
+              state={departure?.file === outgoingObject && pending === "send" ? "departing" : outgoingPhase || "resting"} />
+              : allowDrop && !dockStatus && <small>or drop a file here</small>}
+            <div className="ae-dock-actions">
+              <Button variant={outgoingObject ? "quiet" : "secondary"} onClick={chooseFile}
+                loading={pending === "file"} loadingLabel="Opening picker…" disabled={!snapshot || (!!pending && pending !== "file")}>
+                <SpatialIcon name="file" />{outgoingObject ? "Change file" : dockStatus ? "Choose another file" : "Choose file"}
+              </Button>
+              {selection && <Button variant="quiet" onClick={clearSelection} disabled={!!pending} aria-label="Clear selected file"
+                title="Clear selected file"><SpatialIcon name="close" /></Button>}
+            </div>
           </div>
-          <div className="ae-file-slot" data-selected={!!selection}>{selection
-            ? <FileCard file={selection} action={<Button variant="quiet" onClick={chooseFile}
-              disabled={pending !== undefined && pending !== "file"} loading={pending === "file"} loadingLabel="Opening…">Change</Button>} />
-            : <Button onClick={chooseFile} loading={pending === "file"} loadingLabel="Opening picker…"
-              disabled={!snapshot || !!watchError || (pending !== undefined && pending !== "file")}><span className="ae-file-slot-glyph" aria-hidden="true" />Choose a file</Button>}
-          </div>
-          <DevicePicker devices={pairs} selectedId={selectedId} onSelect={selectDevice}
-            loading={!snapshot && !watchError} error={watchError} disabled={pending !== undefined} />
-          <div className="ae-actions">
-            <Button onClick={() => setPairingOpen(true)} disabled={pairingDisabled}>
-              {pendingPairs.length ? `Review pairing request${pendingPairs.length > 1 ? "s" : ""} (${pendingPairs.length})` : "Pair a device"}
-            </Button>
-          </div>
-          {watchError && <Button onClick={connection?.retry ?? (() => setWatchAttempt(attempt => attempt + 1))}>Retry connection</Button>}
-          <div className="ae-send">
-            <Button variant="primary" disabled={pending !== "send" && (!intent || !!pending || !!watchError)}
-              loading={pending === "send"} loadingLabel="Sending…" onClick={() => { if (intent) void send(intent); }}>
-              Send file <span aria-hidden="true">↗</span>
-            </Button>
-            {gesture?.({ intent: watchError ? null : intent, busy: pending !== undefined || pairingOpen, send, incoming: incomingIntents, accept })}
-          </div>
+          {outgoingObject && <div className="ae-dock-destination">
+            <small role="status">{ready ? `${target?.name} is ready to receive` : chosen
+              ? `${chosen.name}${chosen.online ? "" : " · Offline"}` : "Choose a paired device"}</small>
+            {(intent || pending === "send") && <Button variant="primary" disabled={pending !== "send" && !!pending}
+              loading={pending === "send"} loadingLabel="Offering…" onClick={() => { if (intent) void send(intent); }}>
+              <SpatialIcon name="send" />Send file
+            </Button>}
+          </div>}
+          {dockStatus && <Button variant="quiet" className="ae-dock-status" aria-controls={transferRegionId}
+            onClick={() => transferRegion.current?.focus()}>{dockStatus}<SpatialIcon name="chevron" size={16} /></Button>}
+          {port.setReceiverReady && (!outgoingObject || receiveUntil > 0) &&
+            <Button variant="quiet" className="ae-dock-receive" aria-pressed={!!receiveUntil} disabled={!snapshot}
+              onClick={toggleReceive} loading={operations.has("receiver")} loadingLabel="Updating…">
+              <SpatialIcon name="drop" size={18} />{receiveUntil ? "Ready to receive" : "Signal ready"}
+            </Button>}
         </GlassSurface>
       </section>
-      <section aria-labelledby={activityId}>
-        <GlassSurface material="raised" className="ae-panel">
-          <div className="ae-panel-heading"><h3 id={activityId} tabIndex={-1}>Activity</h3></div>
-          {snapshot?.transfers.length ? snapshot.transfers.map(transfer => {
-            const active = ["pending", "accepted", "transferring"].includes(transfer.state);
-            const incoming = transfer.state === "pending" && transfer.direction === "incoming";
-            const operation = operations.get(transferKey(transfer.id));
-            const disabled = !!watchError;
-            return <TransferProgress key={transfer.id} transfer={transfer}
-              error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined}
-              action={active && <div className="ae-actions">
-                {incoming ? <>
-                  <Button disabled={disabled || (operation !== undefined && operation !== "accept")}
-                    loading={operation === "accept"} loadingLabel="Accepting…"
-                    onClick={() => void accept({ transferId: transfer.id, deviceId: transfer.deviceId })}>Accept</Button>
-                  <Button variant="quiet" disabled={disabled || (operation !== undefined && operation !== "decline")}
-                    loading={operation === "decline"} loadingLabel="Declining…"
-                    onClick={() => void updateTransfer({ action: "respond", transferId: transfer.id, accept: false })}>Decline</Button>
-                </> : <Button variant="quiet" disabled={disabled || (operation !== undefined && operation !== "cancel")}
-                  loading={operation === "cancel"} loadingLabel="Cancelling…"
-                  onClick={() => void updateTransfer({ action: "cancel", transferId: transfer.id })}>Cancel transfer</Button>}
-              </div>} />;
-          }) : <div className="ae-activity-empty"><span aria-hidden="true">↕</span><p>No transfers yet.</p></div>}
-          {activityFooter}
-        </GlassSurface>
+      <section id={activityId} hidden={destination !== "activity"} aria-labelledby={`${activityId}-heading`} className="ae-activity">
+        <h2 id={`${activityId}-heading`}>Activity</h2>
+        {history.length ? <div className="ae-activity-list">{history.map(transfer => (
+          <TransferProgress key={transfer.id} transfer={transfer} deviceName={nameOf(transfer.deviceId)}
+            error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined} action={transferActions(transfer)} />
+        ))}</div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
+          <p>{channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
+        {activityFooter}
+      </section>
+      <section id={transferRegionId} ref={transferRegion} tabIndex={-1} className="ae-rift-board"
+        aria-label="Transfer status" hidden={!channel.length}>
+        {channel.map(riftCard)}
       </section>
     </div>
     <Sheet open={pairingOpen} title="Pair a device" onClose={() => setPairingOpen(false)}>

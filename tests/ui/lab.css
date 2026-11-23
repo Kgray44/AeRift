@@ -1,0 +1,22 @@
+body { margin: 0; }
+.ae-lab { display: grid; gap: 1.2rem; }
+.ae-lab a { color: var(--ae-accent); text-underline-offset: .2em; }
+.ae-lab-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem 1rem; }
+.ae-lab-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-block-size: 19rem;
+  padding: 1rem;
+}
+.ae-lab-stage[data-pattern="true"] {
+  background: repeating-linear-gradient(110deg, transparent 0 1.35rem, var(--ae-control-edge) 1.38rem 1.45rem);
+}
+.ae-lab-surface { display: grid; gap: .65rem; max-inline-size: 100%; padding: 1rem 1.2rem; }
+.ae-lab-tuners { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .75rem 1.4rem; }
+.ae-lab-tuners label { display: grid; gap: .28rem; }
+.ae-lab-tuners label span { display: flex; justify-content: space-between; gap: .65rem; }
+.ae-lab-tuners output { color: var(--ae-display-muted, var(--ae-muted)); font-variant-numeric: tabular-nums; }
+.ae-lab-tuners input { accent-color: var(--ae-accent); }
