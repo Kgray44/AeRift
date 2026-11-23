@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,9 +8,14 @@ import { assertSameFile } from "./hash-file.mjs";
 
 test("checks empty, binary and multiple read chunks and rejects altered bytes", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "aerift-hash-test-"));
-  t.after(() => rm(directory, { recursive: true }));
+
   const source = join(directory, "source.bin");
   const received = join(directory, "received.bin");
+  t.after(async () => {
+    await rm(source, { force: true });
+    await rm(received, { force: true });
+    await rmdir(directory);
+  });
   for (const sample of [Buffer.alloc(0), Buffer.of(0, 255, 128, 13, 10), Buffer.alloc(2 ** 20, 255)]) {
     await writeFile(source, sample);
     await writeFile(received, sample);

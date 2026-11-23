@@ -5,7 +5,7 @@
 | # | Criterion | Status | Evidence needed |
 | --- | --- | --- | --- |
 | 1 | Both apps launch | NOT TESTED | Clean Windows installer and provisioned iPhone install at the candidate SHA. Both show the native app. |
-| 2 | Discovery or supported pairing method | NOT TESTED | Same-LAN peers visible or supported pairing flow recorded, with both invitation directions. |
+| 2 | Discovery or supported pairing method | NOT TESTED | Record same-LAN discovery on both devices and complete pairing with both invitation directions. |
 | 3 | Authentication | NOT TESTED | Explicit approval, trusted reconnect after restart, and denial or revocation evidence. |
 | 4 | Windows sends a real file to iOS | NOT TESTED | iPhone receives and opens a locally saved file. |
 | 5 | iOS sends a real file to Windows | NOT TESTED | Windows receives and opens a locally saved file. |
