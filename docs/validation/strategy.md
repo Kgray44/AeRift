@@ -25,6 +25,16 @@ This uses two separate Rust processes on loopback, with fresh ephemeral identity
 
 The receipt includes pairing-request latency from writing the invitation to observing the consent prompt and approval-to-result latency from entering the approval to observing both terminal receipts. These elapsed times include harness observation, HTTP and polling where applicable. Keep them scoped to this loopback run. Use the instrumented benchmark driver and physical run for upload throughput, process memory and UI timing.
 
+Append `disconnect` to the command to terminate the test's sender after observing bytes in the staging file. The driver checks the receiver's failed receipt and an unchanged destination, then creates a fresh pairing and checks the retry's saved hash. The result covers a fresh paired session on the same host.
+
+On Windows, append `windows-benchmark` for one observed 64 MiB transfer or use the series launcher with a compiled executable, scratch folder and source SHA.
+
+```powershell
+./tests/acceptance/run-windows-peer-benchmark.ps1 -Executable <compiled-exe> -ScratchDirectory <scratch-folder> -SourceSha <source-sha>
+```
+
+The launcher captures five samples by default and retains a per-trial receipt and a summary with the executable hash. Allow 256 MiB of scratch space per trial. The Windows observer samples each peer's OS-reported peak working set while the process is available. Receiver timing begins when the filesystem watcher first sees the staging file and ends when it sees the final file. This spans local receive and publication with filesystem notification and observer delays. Report the measured range. Use instrumented native builds for precise upload and progress-event costs.
+
 ## Defensive review gates
 
 These are review targets from the protocol. The foundation does not implement the control paths. Link each review to a PR head, implementation locations and executed evidence.
