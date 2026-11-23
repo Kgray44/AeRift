@@ -1,6 +1,6 @@
 use std::{
     ffi::CString, fs, mem::MaybeUninit, net::Ipv4Addr, os::unix::ffi::OsStrExt, path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use aerift_transfer::{ErrorCode, ReceiveLimits, Receiver, TransferError};

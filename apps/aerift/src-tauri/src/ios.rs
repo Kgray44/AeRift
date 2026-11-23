@@ -13,7 +13,7 @@ use crate::{
 
 async fn session(window: &WebviewWindow) -> Result<Arc<Session>, TransferError> {
     if window.label() != "main" {
-        return Err(ErrorCode::PermissionDenied.into());
+        return Err(ErrorCode::InvalidRequest.into());
     }
     window
         .state::<AppRuntime>()
@@ -50,7 +50,7 @@ pub(crate) async fn select_app_file(
     window: WebviewWindow,
 ) -> Result<Option<FileSelection>, TransferError> {
     if window.label() != "main" {
-        return Err(ErrorCode::PermissionDenied.into());
+        return Err(ErrorCode::InvalidRequest.into());
     }
     let registry = window.state::<SelectionRegistry>();
     let revision = registry.begin()?;
