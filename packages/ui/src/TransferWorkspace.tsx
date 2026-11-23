@@ -58,7 +58,7 @@ export type WorkspaceConnection =
 
 export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection,
   navigationStart = "AeRift", navigationEnd, pairRequest, onPairingOpenChange,
-  platform, discovery, discoveryNotice, allowDrop }: {
+  platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
@@ -72,13 +72,19 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   discovery?: DiscoveryState;
   discoveryNotice?: ReactNode;
   allowDrop?: boolean;
+  desktopView?: "rift" | "activity" | "hidden";
+  onOpenRift?: () => void;
 }) {
   const titleId = useId();
   const activityId = useId();
   const transferRegionId = useId();
   const transferRegion = useRef<HTMLElement>(null);
   const environment = useRef<HTMLDivElement>(null);
-  const [destination, setDestination] = useState<"send" | "activity">("send");
+  const [localDestination, setDestination] = useState<"send" | "activity">("send");
+  const [activityFilter, setActivityFilter] = useState<"all" | "active" | "finished">("all");
+  const destination = desktopView === "activity" ? "activity" : desktopView === undefined ? localDestination : "send";
+  const riftVisible = desktopView !== "hidden" && destination === "send";
+  const hosted = desktopView !== undefined;
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
   const [watchError, setWatchError] = useState<string>();
   const [watchAttempt, setWatchAttempt] = useState(0);
@@ -428,12 +434,14 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const incoming = transfers.filter(item => item.direction === "incoming" && item.state === "pending");
   const channel = transfers.filter(item => item.direction === "incoming" && isTransferActive(item));
   if (rift && !channel.some(item => item.id === rift.id)) channel.push(rift);
-  const history = transfers.filter(item => !channel.some(featured => item.id === featured.id));
+  const history = hosted
+    ? transfers.filter(transfer => activityFilter === "all" || isTransferActive(transfer) === (activityFilter === "active"))
+    : transfers.filter(item => !channel.some(featured => item.id === featured.id));
   const outgoingObject = !departure?.receipt ? departure?.file ?? selection : selection;
   const outgoingPhase = outgoingObject && objectPhase(outgoingObject, selectedId, gestureFeedback);
   const gesturePhase = (rift && incomingObjectPhase(rift, gestureFeedback)) || outgoingPhase || undefined;
-  const phase = environmentPhase({ transfer: destination === "send" ? rift : undefined,
-    gesture: destination === "send" ? gesturePhase : undefined, receiverReady: destination === "send" && (ready || !!receiveUntil),
+  const phase = environmentPhase({ transfer: riftVisible ? rift : undefined,
+    gesture: riftVisible ? gesturePhase : undefined, receiverReady: riftVisible && (ready || !!receiveUntil),
     offering: !!departure && pending === "send", selected: !!(selection || selectedId), discovering: stageDiscovery === "searching" });
   const progress = rift?.state === "completed" ? 1 :
     rift?.file.sizeBytes ? Math.min(1, rift.bytesTransferred / rift.file.sizeBytes) : 0;
@@ -495,7 +503,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       const device = devices.find(peer => peer.id === transfer.deviceId && peer.paired);
       return <Button variant="quiet" disabled={!!pending || !!watchError}
         onClick={() => {
-          setDestination("send");
+          if (onOpenRift) onOpenRift();
+          else setDestination("send");
           selectDevice(device?.id);
           chooseFile();
         }}>Choose file to retry</Button>;
@@ -530,7 +539,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   }
 
   return <>
-    <header className="ae-experience-nav" data-destination={destination}>
+    {!hosted && <><header className="ae-experience-nav" data-destination={destination}>
       <GlassSurface material="chrome" className="ae-nav-brand">{navigationStart}</GlassSurface>
       <GlassSurface material="chrome" className="ae-nav-destinations">
         <nav aria-label="AeRift destinations">
@@ -549,12 +558,12 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
         <SpatialIcon name="drop" size={17} />{incoming.length} incoming {incoming.length === 1 ? "offer" : "offers"}
       </Button>}</span>
     </div>
-    {discoveryNotice}
-    {watchError && <div className="ae-workspace-notice">
+    {discoveryNotice}</>}
+    {watchError && desktopView !== "hidden" && <div className="ae-workspace-notice">
       <p role="alert">{watchError}</p><Button variant="quiet" onClick={retry}>Retry connection</Button>
     </div>}
-    <div className="ae-transfer-space" ref={environment} data-experience-phase={phase} data-experience-progress={progress}>
-      <section id={titleId} hidden={destination !== "send"} aria-label="Spatial workspace" className="ae-workspace-view">
+    <div className="ae-transfer-space" hidden={desktopView === "hidden"} ref={environment} data-experience-phase={phase} data-experience-progress={progress}>
+      <section id={titleId} hidden={!riftVisible} aria-label="Spatial workspace" className="ae-workspace-view">
         <SpatialScene devices={devices} selectedId={selectedId} onSelect={selectDevice} busy={!!pending}
           platform={platform} discovery={stageDiscovery} onPair={() => setPairingOpen(true)}
           pairingDisabled={pairingDisabled} pairingLabel={pairingLabel}
@@ -572,9 +581,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
               geometry={{ width: anchors.width, height: anchors.height, source: anchors.local, destination: remote }} />;
           }}
         </SpatialScene>
-        {gesture?.({ intent: watchError || destination !== "send" ? null : intent,
-          foreground: destination === "send", busy: pending !== undefined || pairingOpen || destination !== "send",
-          send, incoming: destination === "send" ? incomingIntents : [], accept, reportGesture })}
+        {gesture?.({ intent: watchError || !riftVisible ? null : intent,
+          foreground: riftVisible, busy: pending !== undefined || pairingOpen || !riftVisible,
+          send, incoming: riftVisible ? incomingIntents : [], accept, reportGesture })}
         <GlassSurface material="chrome" className="ae-transfer-dock" data-dock-phase={phase}>
           <div className="ae-dock-file">
             {outgoingObject ? <TransferObject key={outgoingObject.selectionId} objectId={outgoingObject.selectionId} glyphRef={dockGlyph}
@@ -608,16 +617,27 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
         </GlassSurface>
       </section>
       <section id={activityId} hidden={destination !== "activity"} aria-labelledby={`${activityId}-heading`} className="ae-activity">
-        <h2 id={`${activityId}-heading`}>Activity</h2>
+        <h2 id={`${activityId}-heading`}>{hosted ? "Transfer history" : "Activity"}</h2>
+        {hosted && <label className="aerift-activity-filter">Show
+          <select value={activityFilter} onChange={event => {
+            const value = event.currentTarget.value;
+            setActivityFilter(value === "active" || value === "finished" ? value : "all");
+          }}>
+            <option value="all">All transfers</option>
+            <option value="active">In progress</option>
+            <option value="finished">Finished</option>
+          </select>
+        </label>}
         {history.length ? <div className="ae-activity-list">{history.map(transfer => (
           <TransferProgress key={transfer.id} transfer={transfer} deviceName={nameOf(transfer.deviceId)}
             error={transfer.state === "failed" ? messageFor(transfer.error.code) : undefined} action={transferActions(transfer)} />
         ))}</div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
-          <p>{channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
+          <p>{hosted && activityFilter !== "all" ? "No transfers match this view." :
+            !hosted && channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
         {activityFooter}
       </section>
       <section id={transferRegionId} ref={transferRegion} tabIndex={-1} className="ae-rift-board"
-        aria-label="Transfer status" hidden={!channel.length}>
+        aria-label="Transfer status" hidden={!channel.length || (hosted && !riftVisible)}>
         {channel.map(riftCard)}
       </section>
     </div>

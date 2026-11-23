@@ -1,0 +1,194 @@
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const playwright = process.env.AERIFT_PLAYWRIGHT_MODULE
+  ? await import(pathToFileURL(process.env.AERIFT_PLAYWRIGHT_MODULE).href)
+  : await import("playwright");
+const browser = await playwright.chromium.launch({ channel: process.env.AERIFT_BROWSER_CHANNEL ?? "chrome" });
+const evidence = process.env.AERIFT_DESKTOP_EVIDENCE;
+if (evidence) await mkdir(evidence, { recursive: true });
+
+const fixture = {
+  device: { id: "test-device", name: "Studio laptop", platform: "windows", paired: true, online: true },
+  transfer: {
+    id: "test-transfer", deviceId: "test-device", direction: "outgoing", state: "transferring",
+    file: { name: "Field recording.wav", sizeBytes: 1000 }, bytesTransferred: 430,
+  },
+};
+
+async function capture(page, name) {
+  if (!evidence) return;
+  const viewport = page.viewportSize();
+  const compact = name === "light-compact-workspace";
+  const height = compact ? await page.evaluate(() => document.documentElement.scrollHeight) : viewport.height;
+  if (compact) await page.setViewportSize({ width: viewport.width, height });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.screenshot({ path: join(evidence, name + ".png"), animations: "disabled", scale: "css",
+    clip: { x: 0, y: 0, width: viewport.width, height } });
+  if (compact) await page.setViewportSize(viewport);
+}
+
+try {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 900 }, colorScheme: "dark", permissions: ["clipboard-read", "clipboard-write"],
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36",
+  });
+
+  await context.addInitScript(({ device, transfer }) => {
+    const calls = [];
+    let onDrop;
+    let openTrayRoute;
+    let startedAtSignIn = false;
+    const publish = (channel, event) => queueMicrotask(() => channel.onmessage(event));
+    const nextId = (() => { let current = 0; return () => ++current; })();
+
+    window.isTauri = true;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: nextId,
+      unregisterCallback() {},
+      async invoke(channel, args) {
+        calls.push({ channel, args });
+        switch (channel) {
+          case "watch_app":
+            publish(args.updates, { version: 1, devices: [device], transfers: [transfer], pendingPairing: [] });
+            return "mock-session";
+          case "get_receive_folder": return { active: "C:\\Users\\User\\Downloads", next: null };
+          case "watch_file_selection": onDrop = args.updates; break;
+          case "select_app_file":
+            publish(onDrop, { kind: "changed", selection: {
+              name: "Local specimen.txt", sizeBytes: 12, selectionId: "picker-selection",
+            } });
+            return { name: "Local specimen.txt", sizeBytes: 12, selectionId: "picker-selection" };
+          case "watch_desktop_ambient": openTrayRoute = args.route; return true;
+          case "desktop_startup_enabled": return startedAtSignIn;
+          case "set_desktop_startup": startedAtSignIn = args.enabled; return startedAtSignIn;
+          case "pair_app_peer": throw new Error("Pairing requires physical verification");
+          case "transfer_app_file": throw new Error("File delivery requires physical verification");
+          case "desktop_transfer_preview": return transfer;
+          case "open_workspace_url":
+          case "set_desktop_ambient":
+          case "set_desktop_shortcut":
+          case "update_desktop_ambient":
+          case "unwatch_app": break;
+          default: throw new Error(`Unexpected IPC ${channel}`);
+        }
+      },
+    };
+    window.desktopFixture = {
+      count: name => calls.filter(call => call.channel === name).length,
+      last: name => calls.findLast(call => call.channel === name)?.args,
+      tray(route) { publish(openTrayRoute, route); },
+    };
+
+    const key = "aerift.settings.v1";
+    if (!localStorage.getItem(key)) {
+      localStorage.setItem(key, JSON.stringify({ appearance: { scheme: "dark", motion: "reduce" }, cameraShortcut: "v" }));
+    }
+  }, fixture);
+
+  const page = await context.newPage();
+  page.setDefaultTimeout(9000);
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto(process.env.AERIFT_DESKTOP_URL ?? "http://127.0.0.1:1420");
+  const destination = label => page.getByRole("heading", { name: label, exact: true, level: 2 });
+  const slot = page.getByRole("navigation", { name: "Desktop navigation" });
+  const openOrbit = async label => {
+    await page.keyboard.press("Alt+o");
+    await slot.getByRole("button", { name: label, exact: true }).press("Enter");
+    await destination(label).waitFor();
+  };
+
+  await destination("Home").waitFor();
+  await page.getByText(fixture.device.name, { exact: true }).filter({ visible: true }).waitFor();
+  await page.keyboard.press("Alt+o");
+  await page.getByRole("button", { name: "Settings", exact: true }).last().waitFor();
+  assert.equal(await page.getByRole("button", { name: "Workspace", exact: true }).count(), 0);
+  await capture(page, "dark-simplified-orbit");
+  await page.keyboard.press("Escape");
+  const baselineWatchCount = await page.evaluate(() => window.desktopFixture.count("watch_app"));
+  assert.ok(baselineWatchCount > 0);
+
+  await page.getByRole("button", { name: "Open the Rift", exact: true }).click();
+  await destination("Rift").waitFor();
+  await page.getByRole("button", { name: /^Choose (another )?file$/ }).click();
+  await page.getByText("Local specimen.txt", { exact: true }).filter({ visible: true }).waitFor();
+  await capture(page, "dark-production-rift");
+  assert.equal(await page.getByRole("button", { name: "Use camera gesture" }).count(), 0);
+  await openOrbit("Settings");
+  assert.equal(await destination("Settings").evaluate(node => node === document.activeElement), true);
+  assert.equal(await page.getByLabel("Camera activation shortcut").inputValue(), "v");
+  await page.getByLabel("Window mode").selectOption("full");
+  await page.getByRole("combobox", { name: /^Navigation/ }).selectOption("conventional");
+  await page.getByLabel("Keep AeRift in the Windows notification area").check();
+  await page.waitForFunction(() => window.desktopFixture.last("set_desktop_ambient")?.enabled === true);
+  await page.getByRole("combobox", { name: /^Windows shortcut to open the Rift/ }).selectOption("alt-shift-r");
+  await page.waitForFunction(() => window.desktopFixture.last("set_desktop_shortcut")?.choice === "alt-shift-r");
+  await page.getByLabel("Open AeRift when I sign in").check();
+  await page.waitForFunction(() => window.desktopFixture.last("set_desktop_startup")?.enabled === true);
+
+  const nav = label => slot.getByRole("button", { name: label, exact: true });
+  await nav("Workspace").click();
+  await destination("Workspace").waitFor();
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await page.getByLabel("Title").fill("Expedition notes");
+  await page.getByLabel("Note", { exact: true }).fill("Review the field recording.");
+  await page.getByRole("button", { name: "Add note" }).click();
+  await page.getByText("Review the field recording.").waitFor();
+  await page.getByRole("checkbox", { name: "Expedition notes" }).check();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.getByLabel("Import files").setInputFiles({
+    name: "sample.txt", mimeType: "text/plain", buffer: Buffer.from("Example text"),
+  });
+  await page.getByRole("checkbox", { name: "sample.txt" }).check();
+  await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Expedition");
+  await page.getByRole("button", { name: "Create collection" }).click();
+  await page.getByText("Expedition", { exact: true }).waitFor();
+  await capture(page, "dark-full-workspace");
+
+  await page.evaluate(() => window.desktopFixture.tray("activity"));
+  await destination("Activity").waitFor();
+  assert.equal(await page.getByRole("progressbar", { name: fixture.transfer.file.name }).getAttribute("aria-valuenow"), "43");
+  await page.getByRole("combobox", { name: /^Show/ }).selectOption("finished");
+  await page.getByText("No transfers match this view.").waitFor();
+  await page.getByRole("combobox", { name: /^Show/ }).selectOption("all");
+  await page.getByText("Outgoing · Studio laptop", { exact: true }).filter({ visible: true }).waitFor();
+
+  await nav("Settings").click();
+  await page.getByLabel("Window mode").selectOption("simplified");
+  assert.equal(await nav("Workspace").count(), 0);
+  await nav("Rift").click();
+  await page.getByText("Local specimen.txt", { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.desktopFixture.count("watch_app")), baselineWatchCount);
+  assert.equal(await page.evaluate(() => window.desktopFixture.count("transfer_app_file")), 0);
+
+  await nav("Settings").click();
+  await page.getByLabel("Window mode").selectOption("full");
+  await page.getByRole("checkbox", { name: "Notes", exact: true }).uncheck();
+  await nav("Workspace").click();
+  assert.equal(await page.getByRole("button", { name: "Notes", exact: true }).count(), 0);
+  await nav("Settings").click();
+  await page.getByRole("checkbox", { name: "Notes", exact: true }).check();
+  await page.getByRole("radio", { name: "Light", exact: true }).check();
+  await nav("Workspace").click();
+  await page.reload();
+  await destination("Workspace").waitFor();
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await page.getByText("Review the field recording.").waitFor();
+  await page.setViewportSize({ width: 500, height: 720 });
+  await capture(page, "light-compact-workspace");
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const preview = await context.newPage();
+  await preview.setViewportSize({ width: 360, height: 224 });
+  await preview.goto((process.env.AERIFT_DESKTOP_URL ?? "http://127.0.0.1:1420") + "?surface=desktop-preview");
+  await preview.getByRole("heading", { name: "Transfer preview" }).waitFor();
+  assert.equal(await preview.getByRole("progressbar").getAttribute("aria-valuenow"), "43");
+  await capture(preview, "light-ambient-preview");
+  assert.deepEqual(errors, []);
+  console.log("PASS: desktop shell, mode and module persistence, simulated native selection and progress, keyboard focus, tray commands, compact width.");
+} finally {
+  await browser.close();
+}

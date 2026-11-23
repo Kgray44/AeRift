@@ -1,0 +1,225 @@
+import { Channel } from "@tauri-apps/api/core";
+import type { FileSelection } from "@aerift/app-contract";
+import { DESTINATIONS, getNavigation, type DestinationId } from "@aerift/app-contract/experience";
+import {
+  AppBrand, AppShell, Button, ConnectionStatus, GestureCameraIndicator, GlassSurface, Orbit, OrbitSurface,
+  SpatialIcon, ThemeProvider, TransferWorkspace, type GestureCameraStatus, type WorkspaceConnection,
+} from "@aerift/ui";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DeviceTrust } from "../DeviceTrust";
+import { command, nativeAppPort } from "../nativeAppPort";
+import { DesktopHome } from "./DesktopHome";
+import { DesktopSettings } from "./DesktopSettings";
+import { DesktopWorkspace } from "./DesktopWorkspace";
+import { GestureCamera } from "./GestureCamera";
+import { desktopSettings, watchFileSelection, type ReceiveFolder } from "./nativeAppPort";
+import { readDesktopPreferences, settingsKey, type DesktopPreferences } from "./preferences";
+import "./desktop.css";
+
+export function DesktopApp() {
+  const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
+  const [watchAttempt, setWatchAttempt] = useState(0);
+  const snapshot = connection.state === "ready" ? connection.snapshot : undefined;
+  const [settings, setSettings] = useState(readDesktopPreferences);
+  const [keepWorkspaceMounted, setKeepWorkspaceMounted] = useState(settings.experience.windowMode === "full");
+  const [dropError, setDropError] = useState<string>();
+  const [folder, setFolder] = useState<ReceiveFolder>();
+  const [folderError, setFolderError] = useState(false);
+  const [openingFolderPicker, setOpeningFolderPicker] = useState(false);
+  const [ambientAvailable, setAmbientAvailable] = useState(false);
+  const [shortcutError, setShortcutError] = useState(false);
+  const [ambientError, setAmbientError] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
+  const [cameraRetry, setCameraRetry] = useState(0);
+  const [pairRequest, setPairRequest] = useState(0);
+  const cameraActive = cameraStatus?.state === "listening" || cameraStatus?.state === "held" || cameraStatus?.state === "detected";
+  const seenOffers = useRef(new Set<string>());
+  const surfaceRef = useRef<HTMLElement>(null);
+  const navigation = getNavigation("desktop", settings.experience, {
+    ambient: ambientAvailable ? "available" : "unsupported", camera: "unknown",
+  });
+  const route = navigation.primary.some(item => item.id === settings.route) ? settings.route : "home";
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(settingsKey, JSON.stringify({ ...settings, appearance: settings.experience,
+        gesturesEnabled: settings.gestures, cameraDeviceId: settings.cameraId }));
+    } catch {
+      // These preferences can still apply for this session.
+    }
+  }, [settings]);
+
+  useEffect(() => {
+    if (connection.state !== "ready") return;
+    let disposed = false;
+    void desktopSettings.folder().then(result => {
+      if (!disposed && result.ok) setFolder(result.value);
+    });
+    return () => { disposed = true; };
+  }, [connection.state]);
+
+  const navigate = useCallback((destination: DestinationId) => {
+    setSettings(current => current.route === destination ? current : { ...current, route: destination });
+  }, []);
+
+  useEffect(() => {
+    const channel = new Channel<"rift" | "activity">(navigate);
+    let disposed = false;
+    void command<boolean>("watch_desktop_ambient", { route: channel }).then(result => {
+      if (!disposed) setAmbientAvailable(result.ok && result.value);
+    });
+    return () => {
+      disposed = true;
+      channel.onmessage = () => {};
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!ambientAvailable) return;
+    let disposed = false;
+    void command<void>("set_desktop_ambient", { enabled: navigation.ambient }).then(result => {
+      if (!disposed) setAmbientError(!result.ok);
+    });
+    return () => { disposed = true; };
+  }, [ambientAvailable, navigation.ambient]);
+
+  useEffect(() => {
+    if (!ambientAvailable) return;
+    let disposed = false;
+    void command<void>("set_desktop_shortcut", {
+      choice: navigation.ambient ? settings.ambientShortcut : "off",
+    }).then(result => {
+      if (!disposed) setShortcutError(!result.ok);
+    });
+    return () => { disposed = true; };
+  }, [ambientAvailable, navigation.ambient, settings.ambientShortcut]);
+
+  const connected = snapshot?.devices.filter(device => device.online && device.paired).length;
+  const pendingOffers = snapshot?.transfers.filter(transfer => transfer.direction === "incoming" && transfer.state === "pending").length ?? 0;
+  const pendingPairs = snapshot?.pendingPairing.length ?? 0;
+  const activeTransfers = snapshot?.transfers.filter(transfer =>
+    transfer.state === "pending" || transfer.state === "accepted" || transfer.state === "transferring").length ?? 0;
+
+  useEffect(() => {
+    if (!navigation.ambient) return;
+    void command<void>("update_desktop_ambient", {
+      connected: connected ?? null,
+      transfers: activeTransfers,
+      gesture: cameraActive ? "active" : settings.gestures ? "enabled" : "off",
+    });
+  }, [navigation.ambient, connected, activeTransfers, cameraActive, settings.gestures]);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const incoming = snapshot.transfers.filter(transfer => transfer.direction === "incoming" && transfer.state === "pending");
+    const fresh = incoming.filter(transfer => !seenOffers.current.has(transfer.id));
+    seenOffers.current = new Set(incoming.map(transfer => transfer.id));
+    if (navigation.ambient && settings.ambientNotifications && fresh.length) {
+      void command<void>("notify_desktop_incoming", { count: fresh.length });
+    }
+  }, [navigation.ambient, settings.ambientNotifications, snapshot]);
+
+  const watchSelection = useCallback((listener: (file: FileSelection | null) => void) =>
+    watchFileSelection(update => {
+      if (update.kind === "changed") {
+        listener(update.selection);
+        setDropError(undefined);
+        if (update.selection) navigate("rift");
+      } else {
+        setDropError(update.error.code === "invalid_request" ? "Drop one regular file." :
+          update.error.code === "storage_failed" ? "AeRift could not read that file." :
+          "AeRift could not update the file selection.");
+      }
+    }), [navigate]);
+
+  function retryConnection() {
+    setWatchAttempt(attempt => attempt + 1);
+  }
+
+  async function selectDestination() {
+    setOpeningFolderPicker(true);
+    setFolderError(false);
+    try {
+      const result = await desktopSettings.chooseFolder();
+      if (!result.ok) setFolderError(true);
+      else if (result.value) {
+        setFolder(result.value);
+        if (!snapshot) retryConnection();
+      }
+    } finally {
+      setOpeningFolderPicker(false);
+    }
+  }
+
+  const pairedOnline = snapshot?.devices.some(device => device.online && device.paired);
+  const transferView = route === "rift" || route === "activity" ? route : "hidden";
+
+  return <ThemeProvider {...settings.experience}>
+    <AppShell hideToolbar>
+      <header className="ae-experience-nav aerift-desktop-header" data-destination={route}>
+        <GlassSurface material="chrome" className="ae-nav-brand"><AppBrand /></GlassSurface>
+        <Orbit destinations={navigation.primary} active={route} onNavigate={navigate} surfaceRef={surfaceRef}
+          presentation={navigation.presentation === "conventional" ? "conventional" : "orbit"}
+          shortcut={settings.orbitShortcut} reducedMotion={settings.experience.motion === "reduce"}
+          status={activeTransfers ? { activity: `${activeTransfers} active` } : undefined} />
+        <GlassSurface material="chrome" className="ae-nav-tools">
+          <GestureCameraIndicator status={cameraStatus} />
+          <ConnectionStatus state={pairedOnline ? "connected" : connection.state === "disconnected" ? "offline" : "searching"}
+            label={pairedOnline ? "Paired" : connection.state === "disconnected" ? "Disconnected" : snapshot ? "Searching" : "Connecting"} />
+          <Button className="ae-control-gear" variant="quiet" aria-label="Control Center"
+            title="Control Center" onClick={() => navigate("settings")}><SpatialIcon name="settings" /></Button>
+        </GlassSurface>
+      </header>
+      {(pendingOffers > 0 || pendingPairs > 0) && <div className="ae-offer-notice" role="status">
+        {pendingOffers > 0 && <Button variant="quiet" onClick={() => navigate("activity")}>Incoming offers ({pendingOffers})</Button>}
+        {pendingPairs > 0 && <Button variant="quiet" onClick={() => navigate("devices")}>Pairing requests ({pendingPairs})</Button>}
+      </div>}
+      <OrbitSurface className="aerift-desktop-surface" data-destination={route} ref={surfaceRef}
+        aria-labelledby="aerift-desktop-destination">
+        <div className="aerift-destination-heading">
+          <h2 id="aerift-desktop-destination" data-orbit-focus tabIndex={-1}>{DESTINATIONS[route].label}</h2>
+          {route === "rift" && <div className="ae-actions">
+            {!pairedOnline && <Button variant="quiet" onClick={() => navigate("devices")}>Find devices</Button>}
+            <Button variant="quiet" onClick={() => navigate("activity")}>Transfer activity</Button>
+          </div>}
+        </div>
+        {dropError && <p role="alert">{dropError}</p>}
+        {route === "home" && <DesktopHome connection={connection} gestures={settings.gestures} onNavigate={navigate} />}
+        {route === "devices" && <>
+          <DeviceTrust snapshot={snapshot} />
+          <div className="ae-actions">
+            <Button disabled={!snapshot} onClick={() => setPairRequest(request => request + 1)}>
+              <SpatialIcon name="pair" size={17} />{pendingPairs ? `Review pairing (${pendingPairs})` : "Pair a device"}
+            </Button>
+            {connection.state === "disconnected" && <Button onClick={retryConnection}>Retry connection</Button>}
+          </div>
+        </>}
+        {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
+          if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);
+          setSettings(next);
+        }}
+          folder={folder} folderError={folderError} openingFolderPicker={openingFolderPicker}
+          chooseFolder={() => void selectDestination()} ambientAvailable={ambientAvailable} ambientError={ambientError}
+          shortcutError={shortcutError} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
+        {keepWorkspaceMounted &&
+          <div hidden={route !== "workspace"}>
+            <DesktopWorkspace preferences={settings.experience} clipboardAllowed={settings.clipboard} />
+          </div>}
+        <TransferWorkspace
+          port={nativeAppPort}
+          desktopView={transferView}
+          onOpenRift={() => navigate("rift")}
+          pairRequest={pairRequest}
+          platform="windows"
+          allowDrop
+          watchSelection={watchSelection}
+          connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
+          activityFooter={folder?.active && <p>Incoming files are saved to {folder.active}.</p>}
+          gesture={controls => <GestureCamera controls={controls} shortcut={settings.cameraShortcut}
+            enabled={settings.gestures} actionsBlocked={route !== "rift"} source={settings.cameraId || undefined}
+            retryKey={cameraRetry} onStatus={setCameraStatus} />}
+        />
+      </OrbitSurface>
+    </AppShell>
+  </ThemeProvider>;
+}

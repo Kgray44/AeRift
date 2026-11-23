@@ -1,3 +1,5 @@
+#[cfg(windows)]
+mod desktop;
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(windows)]
@@ -35,6 +37,12 @@ pub fn run() {
     #[cfg(windows)]
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _, event| desktop::handle_shortcut(app, event.state()))
+                .build(),
+        )
         .manage(runtime::AppRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
@@ -48,9 +56,25 @@ pub fn run() {
             windows::pair_app_peer,
             windows::transfer_app_file,
             windows::get_receive_folder,
-            windows::choose_receive_folder
+            windows::choose_receive_folder,
+            desktop::watch_desktop_ambient,
+            desktop::set_desktop_ambient,
+            desktop::update_desktop_ambient,
+            desktop::set_desktop_shortcut,
+            desktop::desktop_startup_enabled,
+            desktop::set_desktop_startup,
+            desktop::open_workspace_url,
+            desktop::desktop_transfer_preview,
+            desktop::notify_desktop_incoming,
         ])
-        .on_webview_event(windows::handle_webview_event);
+        .on_webview_event(windows::handle_webview_event)
+        .on_window_event(desktop::handle_window)
+        .setup(|app| {
+            if let Err(error) = desktop::install_tray(app) {
+                eprintln!("AeRift notification area unavailable: {error}");
+            }
+            Ok(())
+        });
 
     builder
         .build(tauri::generate_context!())
