@@ -4,14 +4,7 @@ set -euo pipefail
 ios_dir="$(cd "$(dirname "$0")" && pwd)"
 host_dir="$(cd "${1:-apps/aerift}" && pwd)"
 cd "$host_dir"
-if [[ -f package-lock.json ]]; then
-  npm ci
-elif node -e 'const manifest = require("../../package.json"); process.exit(manifest.workspaces?.includes("apps/aerift") ? 0 : 1)'; then
-  (cd ../.. && npm ci)
-else
-  # The initial standalone host revision has no npm lockfile.
-  npm install --workspaces=false --no-audit --no-fund --package-lock=false
-fi
+npm ci
 
 case "$(uname -m)" in
   arm64) target=aarch64-sim ;;
@@ -20,7 +13,7 @@ case "$(uname -m)" in
 esac
 
 bash "$ios_dir/prepare-apple.sh" "$host_dir"
-npm run tauri -- ios build --ci --debug --target "$target"
+npm run tauri -- ios build --ci --debug --target "$target" -- --locked
 
 app="$(find src-tauri/gen/apple/build -type d -name 'AeRift.app' -print -quit)"
 if [[ -z "$app" ]]; then
@@ -105,9 +98,7 @@ runtime, model = next(
 receipt = {
     "validation": "hosted iOS simulator",
     "appSourceCommit": os.environ.get("IOS_APP_SOURCE_COMMIT"),
-    "checkedOutAppCommit": os.environ.get("GITHUB_SHA"),
-    "hostSourceCommit": command("git", "rev-parse", "HEAD"),
-    "hostAdapterRegistration": os.environ.get("IOS_HOST_REGISTRATION"),
+    "checkedOutAppCommit": command("git", "rev-parse", "HEAD"),
     "xcode": command("xcodebuild", "-version"),
     "simulatorRuntime": runtime,
     "simulatorModel": model,

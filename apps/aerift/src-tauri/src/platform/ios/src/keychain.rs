@@ -77,8 +77,12 @@ impl IosKeychain {
             CFDictionary::from_CFType_pairs(&[(key, CFData::from_buffer(bytes).into_CFType())]);
 
         // SAFETY: Both Core Foundation dictionaries are retained for the call.
-        let status =
-            unsafe { SecItemUpdate(matching.as_concrete_TypeRef(), changes.as_concrete_TypeRef()) };
+        let status = unsafe {
+            SecItemUpdate(
+                matching.as_concrete_TypeRef(),
+                changes.as_concrete_TypeRef(),
+            )
+        };
         if status == SUCCESS {
             Ok(())
         } else {

@@ -129,7 +129,12 @@ pub fn receive_directories<R: Runtime>(app: &AppHandle<R>) -> io::Result<Receive
     let published = app
         .path()
         .document_dir()
-        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "iOS Documents directory unavailable"))?
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "iOS Documents directory unavailable",
+            )
+        })?
         .join("Received");
     fs::create_dir_all(&partials)?;
     fs::create_dir_all(&published)?;
