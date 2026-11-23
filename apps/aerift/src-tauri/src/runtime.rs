@@ -278,6 +278,18 @@ impl AppRuntime {
     }
 
     #[cfg(windows)]
+    pub(crate) fn desktop_transfer_preview(
+        &self,
+        transfer_id: Option<&str>,
+    ) -> Option<TransferView> {
+        let transfers = self.session.get()?.snapshot().transfers;
+        transfers.into_iter().find(|transfer| match transfer_id {
+            Some(id) => transfer.id == id,
+            None => !transfer.status.state.is_terminal(),
+        })
+    }
+
+    #[cfg(windows)]
     pub(crate) fn receive_directory(&self) -> Option<PathBuf> {
         self.session
             .get()
