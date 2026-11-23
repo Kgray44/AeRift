@@ -1,5 +1,5 @@
 // Capture and worker lifecycle adapted from VoyageWright Reach/Sextant.
-import { GestureIntent, type CameraState, type GestureFeedback, type GestureTarget } from "./intent.js";
+import { GestureIntent, MAX_ATTEMPT_MS, type CameraState, type GestureFeedback, type GestureTarget } from "./intent.js";
 import { HandLandmarkTracker, type LandmarkFrame } from "./landmarks.js";
 
 interface CameraOptions {
@@ -29,6 +29,7 @@ export class WebGestureCamera {
   private cleanupTrack = () => {};
   private deadline: ReturnType<typeof setTimeout> | undefined;
   private poll: ReturnType<typeof setTimeout> | undefined;
+  private attemptTimeout: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly intent: GestureIntent,
@@ -49,6 +50,8 @@ export class WebGestureCamera {
     if (reserved.has(media)) return this.stop("busy");
 
     this.active = true;
+    this.intent.begin(performance.now());
+    this.attemptTimeout = setTimeout(() => this.stop(), MAX_ATTEMPT_MS);
     const suspend = () => this.stop("suspended");
     const visibility = () => {
       if (document.visibilityState !== "visible") suspend();
@@ -144,6 +147,7 @@ export class WebGestureCamera {
     this.cleanupTrack = () => {};
     clearTimeout(this.deadline);
     clearTimeout(this.poll);
+    clearTimeout(this.attemptTimeout);
     this.worker?.terminate();
     this.worker = null;
     if (this.stream) {

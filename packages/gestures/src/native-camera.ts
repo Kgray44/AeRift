@@ -1,4 +1,4 @@
-import { GestureIntent, type CameraState, type GestureFeedback, type GestureTarget } from "./intent.js";
+import { GestureIntent, MAX_ATTEMPT_MS, type CameraState, type GestureFeedback, type GestureTarget } from "./intent.js";
 import { HandLandmarkTracker, type LandmarkFrame } from "./landmarks.js";
 
 export type NativeCameraEvent =
@@ -21,7 +21,7 @@ export class NativeGestureCamera {
   private offset = 0;
   private unsubscribe: (() => void) | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
-  private startup: ReturnType<typeof setTimeout> | undefined;
+  private attemptTimeout: ReturnType<typeof setTimeout> | undefined;
   private lastFrameAt = -Infinity;
   private readonly tracker = new HandLandmarkTracker();
 
@@ -36,7 +36,8 @@ export class NativeGestureCamera {
     if (this.started) return;
     this.started = true;
     this.active = true;
-    this.startup = setTimeout(() => this.stop("error"), 30_000);
+    this.intent.begin(performance.now());
+    this.attemptTimeout = setTimeout(() => this.stop(), MAX_ATTEMPT_MS);
     if (this.publish(this.intent.setCamera("requesting"))) return;
     try {
       const unsubscribe = await this.port.subscribe((event) => this.receive(event));
@@ -75,7 +76,7 @@ export class NativeGestureCamera {
     if (!this.active) return;
     this.active = false;
     clearInterval(this.timer);
-    clearTimeout(this.startup);
+    clearTimeout(this.attemptTimeout);
     try {
       this.unsubscribe?.();
     } catch {
@@ -90,7 +91,6 @@ export class NativeGestureCamera {
   private receive(event: NativeCameraEvent): void {
     if (!this.active || event.attemptId !== this.attemptId) return;
     if (event.type === "state") {
-      if (event.state === "ready") clearTimeout(this.startup);
       if (event.state === "ready" || event.state === "starting" || event.state === "requesting") {
         if (this.publish(this.intent.setCamera(event.state))) this.stop(event.state);
       } else this.stop(event.state);

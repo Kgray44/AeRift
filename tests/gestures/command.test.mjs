@@ -134,3 +134,15 @@ test("low measured landmark confidence is distinct from unreported confidence", 
   const uncertain = hand().map((p, i) => ({ ...p, confidence: i === 8 ? 0.1 : 0.9 }));
   assert.equal(tracker.observe({ ...frame, captureMs: 80, hands: [uncertain] }).posture, "unusable");
 });
+
+test("an activated attempt expires while continuous frames see no hand", () => {
+  const s = setup();
+  s.intent.begin(0);
+  for (let at = 100; at < 30_000; at += 100) s.sample(at, null);
+  assert.equal(s.intent.feedback.phase, "acquiring");
+  assert.equal(s.intent.tick(30_000).phase, "interrupted");
+  s.ready();
+  s.grasp();
+  s.release();
+  assert.deepEqual(s.commands.map(([action]) => action), ["interrupt"]);
+});

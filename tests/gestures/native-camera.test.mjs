@@ -70,3 +70,22 @@ test("cancellation during native startup ignores late events and requests stop a
   assert.deepEqual(s.stopped, ["native", "native"]);
   assert.deepEqual(s.commands, ["interrupt"]);
 });
+
+test("native camera stops at the absolute deadline even while frames continue without a hand", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const s = fixture(t);
+  await s.adapter.start();
+  s.state("ready");
+  for (let at = 100; at < 30_000; at += 100) {
+    t.mock.timers.tick(100);
+    s.frame(performance.now() + 10_000);
+  }
+  assert.equal(s.intent.feedback.phase, "acquiring");
+  assert.equal(s.subscribed, true);
+  t.mock.timers.tick(100);
+  await Promise.resolve();
+  assert.equal(s.subscribed, false);
+  assert.equal(s.intent.feedback.phase, "interrupted");
+  assert.deepEqual(s.stopped, ["native"]);
+  assert.deepEqual(s.commands, ["interrupt"]);
+});

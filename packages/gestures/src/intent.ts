@@ -1,6 +1,8 @@
 import type { GestureCommand } from "../../app-contract/src/v1.js";
 import { MAX_FRAME_GAP_MS, type GestureObservation, type Posture } from "./landmarks.js";
 
+export const MAX_ATTEMPT_MS = 30_000;
+
 export type CameraState = "disabled" | "requesting" | "starting" | "ready" | "denied" |
   "unavailable" | "busy" | "suspended" | "error";
 export type GestureTarget =
@@ -50,6 +52,7 @@ export class GestureIntent {
   private track: number | null = null;
   private last = -Infinity;
   private armedAt = Infinity;
+  private attemptDeadline = Infinity;
   private dwell: { posture: Posture; start: number; samples: number } | null = null;
 
   constructor(private readonly id: string, target: GestureTarget, private readonly dispatch: Dispatch) {
@@ -95,7 +98,13 @@ export class GestureIntent {
     return this.feedback;
   }
 
+  /** Start the absolute clock at explicit activation, including permission and acquisition. */
+  begin(now: number): void {
+    if (this.attemptDeadline === Infinity && Number.isFinite(now)) this.attemptDeadline = now + MAX_ATTEMPT_MS;
+  }
+
   tick(now: number): GestureFeedback {
+    if (this.active && now >= this.attemptDeadline) return this.cancel();
     if (this.active && this.phase !== "acquiring" &&
         (now - this.last > MAX_FRAME_GAP_MS || now - this.armedAt > 3000)) return this.cancel();
     return this.feedback;
@@ -103,6 +112,7 @@ export class GestureIntent {
 
   observe(observation: GestureObservation, now: number): GestureFeedback {
     if (!this.active || this.camera !== "ready") return this.feedback;
+    if (now >= this.attemptDeadline) return this.cancel();
     const { captureMs: at, posture, track, confidence } = observation;
     const fresh = Number.isFinite(now) && Number.isFinite(at) && now - at <= 150 && at <= now + 5 && at > this.last;
     const usable = fresh && track !== null && posture !== "unusable" &&
