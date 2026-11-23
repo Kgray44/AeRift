@@ -77,6 +77,8 @@ export type TransferProgress =
 
 export type Transfer = {
   id: TransferId;
+  /** Shared transport identity; local receipt IDs remain the keys for native actions. */
+  interactionId?: string;
   deviceId: DeviceId;
   direction: "outgoing" | "incoming";
   file: FileInfo;
@@ -106,6 +108,12 @@ export interface AppPort {
   watch(listener: (snapshot: AppSnapshot) => void): Promise<Result<() => void>>;
   /** Resolve successfully with null when the user closes the picker. */
   selectFile(): Promise<Result<FileSelection | null>>;
+  /** Clear only the named local selection. */
+  clearFile?(selectionId: SelectionId): Promise<Result<void>>;
+  /** Advertise availability for a short lease. Explicit acceptance is still required. */
+  setReceiverReady?(ready: boolean): Promise<Result<number>>;
+  /** Read the paired destination's current readiness without sending file metadata. */
+  checkReceiver?(deviceId: DeviceId): Promise<Result<boolean>>;
   pair(request: PairingRequest): Promise<Result<PairingResult>>;
   transfer(request: TransferRequest): Promise<Result<Transfer>>;
 }

@@ -1,6 +1,7 @@
 import type { NativeCameraEvent, NativeCameraPort } from "./native-camera.js";
 
 interface IosCameraTransport<Channel> {
+  authorized?(): Promise<boolean>;
   clockMs(): Promise<number>;
   createChannel(listener: (event: NativeCameraEvent) => void): Channel;
   registerEvents(events: Channel): Promise<void>;
@@ -9,11 +10,20 @@ interface IosCameraTransport<Channel> {
 }
 
 /** Keep one camera event channel per WebView. Subscribe separately for each attempt. */
-export function createIosCameraPort<Channel>(transport: IosCameraTransport<Channel>): NativeCameraPort {
+export function createIosCameraPort<Channel>(transport: IosCameraTransport<Channel>): NativeCameraPort & {
+  isAuthorized(): Promise<boolean>;
+} {
   let subscription: { attemptId: string | null; listener: (event: NativeCameraEvent) => void } | null = null;
   let registration: Promise<void> | undefined;
   let stopBarrier = Promise.resolve();
   return {
+    async isAuthorized() {
+      try {
+        return await transport.authorized?.() === true;
+      } catch {
+        return false;
+      }
+    },
     async subscribe(listener) {
       if (subscription) throw new Error("Camera event listener is already active.");
       const current = { attemptId: null, listener };

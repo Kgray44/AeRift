@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
+import { appearanceCommitEvent } from "./theme";
+import { atmosphereTarget, blendAtmosphere, paintAtmosphere, ribbonGeometry } from "./atmosphere";
 
 /** Source values from the owner's approved Liquid Glass Lab recipe. */
 export const aeRiftGlassRecipe = Object.freeze({
@@ -10,11 +12,30 @@ export const aeRiftGlassRecipe = Object.freeze({
 });
 
 const lensSelector = [
-  ".ae-workspace-nav", ".ae-panel", ".ae-file-slot", ".ae-file", ".ae-transfer", ".ae-activity-empty",
+  ".ae-nav-brand", ".ae-nav-destinations", ".ae-nav-tools", ".ae-transfer-dock", ".ae-spatial-local .ae-spatial-glyph",
+  ".ae-spatial-peer[data-selected='true'] .ae-spatial-glyph",
+  ".ae-workspace-nav", ".ae-panel", ".ae-file-slot", ".ae-file",
   ".ae-panel .ae-button:not([data-variant='primary'], [data-variant='quiet'], :disabled, [aria-disabled='true'])",
 ].join(",");
 
 const R = aeRiftGlassRecipe;
+export interface GlassAppearanceRecipe {
+  softness: number;
+  exposure: number;
+  refraction: number;
+  dispersion: number;
+  reflection: number;
+  reflectionColor: readonly [number, number, number];
+  ribbonIntensity: number;
+}
+
+export const glassAppearanceRecipes: Readonly<Record<"dark" | "light", GlassAppearanceRecipe>> = Object.freeze({
+  dark: Object.freeze({ softness: R.softness, exposure: R.exposure, refraction: R.distortion, dispersion: R.dispersion,
+    reflection: R.reflection, reflectionColor: [249, 253, 255] as const, ribbonIntensity: 1 }),
+  light: Object.freeze({ softness: 1.35, exposure: 102, refraction: 36, dispersion: 77,
+    reflection: 86, reflectionColor: [252, 251, 255] as const, ribbonIntensity: .90 }),
+});
+
 const clamp = (n: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, n));
 type Surface = { x: number; y: number; width: number; height: number; radius: number; kind: "control" | "panel" | "stage" };
 
@@ -22,34 +43,8 @@ export function opticalViewportScale(width: number, height: number, dpr: number)
   return Math.min(Math.max(1, dpr), 800 / width, Math.sqrt(390000 / (width * height)));
 }
 
-function backdrop(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, light: boolean) {
-  const scene = ctx.createLinearGradient(0, 0, w, h);
-  const stops = light ? ["#e0f1f7", "#e6e7f8", "#cfe8ef"] : ["#12273f", "#202751", "#173240"];
-  scene.addColorStop(0, stops[0]); scene.addColorStop(.48, stops[1]); scene.addColorStop(1, stops[2]);
-  ctx.fillStyle = scene; ctx.fillRect(0, 0, w, h);
-  const drift = Math.sin(t * .86) * R.drift / 100;
-  const glow = (x: number, y: number, radius: number, solid: string, clear: string) => {
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    gradient.addColorStop(0, solid); gradient.addColorStop(1, clear);
-    ctx.fillStyle = gradient; ctx.fillRect(0, 0, w, h);
-  };
-  glow(w * (.77 + .11 * drift), h * .21, Math.max(w * .45, 100), light ? "#c4e2e9b0" : "#21485ac9", "#3687bd00");
-  glow(w * (.24 - .08 * drift), h * .71, Math.max(w * .47, 120), light ? "#c9c8ee8a" : "#3c346eb0", "#725db300");
-  const colors = light ? ["#6b9bb23b", "#fff9", "#6c65ab31", "#f8fbffbf"] : ["#6ecbd025", "#c8f8fa28", "#a696de27", "#8fb7ff32"];
-  ctx.lineCap = "round";
-  for (let i = -8; i < 21; i++) {
-    const x = w * (.075 * i + .10 * drift), y = h * (i % 2 ? -.12 : -.13);
-    ctx.beginPath(); ctx.moveTo(x, y);
-    ctx.bezierCurveTo(x + .50 * w, .34 * h, x - .22 * w, .64 * h, x + .97 * w, h * 1.15);
-    ctx.lineWidth = Math.max(.75, w / 1050) * (i % 7 === 0 ? 2 : 1);
-    ctx.strokeStyle = colors[(i + 40) % colors.length]; ctx.stroke();
-  }
-  // The studio exposure applies to the background, not foreground labels.
-  ctx.fillStyle = light ? `rgb(255 255 255 / ${(R.exposure - 100) * .0075})` : `rgb(143 183 224 / ${(R.exposure - 100) * .0044})`;
-  ctx.fillRect(0, 0, w, h);
-}
-
-export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: number, h: number, box: Surface, resolution: number, t: number) {
+export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: number, h: number, box: Surface, resolution: number, t: number,
+  appearance: GlassAppearanceRecipe = glassAppearanceRecipes.dark) {
   const { x, y, width, height, radius, kind } = box;
   const scrX = Math.max(0, Math.floor(x)), scrY = Math.max(0, Math.floor(y));
   const endX = Math.min(w, Math.ceil(x + width)), endY = Math.min(h, Math.ceil(y + height));
@@ -59,7 +54,7 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
   const depth = Math.max(1.25, R.depth * resolution * (stage ? 1.40 : panel ? 1.05 : .72));
   // Cap the studio warp and zoom next to retained app text; file-stage glass
   // uses the strongest refraction, while functional labels are drawn by React.
-  const warpMax = R.distortion * resolution * (stage ? .57 : panel ? .42 : .35);
+  const warpMax = appearance.refraction * resolution * (stage ? .57 : panel ? .42 : .35);
   const mag = R.magnify * .01 * (stage ? .033 : panel ? .015 : .027);
   const angle = R.light * Math.PI / 180 + .23 * R.sweep / 53 * Math.sin(t * 1.31);
   const lx = Math.cos(angle), ly = Math.sin(angle);
@@ -69,7 +64,9 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
   const patchH = Math.max(.079, r / height * 1.55 + spread * .055);
   const shift = .038 * Math.sin(t * 1.7);
   const signX = Math.sign(lx), signY = Math.sign(ly);
-  const reflect = R.reflection / 100;
+  const reflect = appearance.reflection / 100;
+  const [reflectRed, reflectGreen, reflectBlue] = appearance.reflectionColor;
+  const softStep = Math.round(clamp(appearance.softness, 0, 4) * resolution);
   const gloss = Math.max(.78, (1 + (100 - R.gloss) * .028) * resolution);
   const grazingWidth = Math.max(1.3, 3.15 * resolution);
   for (let py = scrY; py < endY; py++) {
@@ -80,8 +77,22 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
       // interior, except for the intentionally stronger file-stage lens.
       const hyp = dx || dy ? Math.sqrt(dx * dx + dy * dy) : 0;
       const d = r - hyp - Math.min(Math.max(ax, ay), 0);
-      if (d <= -.5 || (!stage && d > depth * 1.42 + 2)) continue;
+      if (d <= -.5) continue;
       const idx = (py * w + px) * 4;
+      if (!stage && d > depth * 1.42 + 2) {
+        if (softStep > 0) {
+          // A small, symmetric sample softens only the backdrop in the clear lens interior.
+          const a = (Math.max(0, py - softStep) * w + px) * 4;
+          const b = (Math.min(h - 1, py + softStep) * w + px) * 4;
+          const c = (py * w + Math.max(0, px - softStep)) * 4;
+          const e = (py * w + Math.min(w - 1, px + softStep)) * 4;
+          for (let channel = 0; channel < 3; channel++) {
+            out[idx + channel] = .44 * source[idx + channel] +
+              .14 * (source[a + channel] + source[b + channel] + source[c + channel] + source[e + channel]);
+          }
+        }
+        continue;
+      }
       const u = ix / halfW;
       const nx = hyp ? Math.sign(ix) * dx / hyp : ax > ay ? Math.sign(ix) : 0;
       const ny = hyp ? Math.sign(iy) * dy / hyp : ax <= ay ? Math.sign(iy) : 0;
@@ -96,7 +107,7 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
       let green = source[i + 1] * a + source[i + 5] * b + source[next + 1] * c + source[next + 5] * e;
       let blue = source[i + 2] * a + source[i + 6] * b + source[next + 2] * c + source[next + 6] * e;
       if (sq > .045) {
-        const separation = 2.65 * resolution * sq * R.dispersion / 100;
+        const separation = 2.65 * resolution * sq * appearance.dispersion / 100;
         const ar = (Math.round(clamp(Y + ny * separation, 0, h - 1)) * w + Math.round(clamp(X + nx * separation, 0, w - 1))) * 4;
         const ab = (Math.round(clamp(Y - ny * separation, 0, h - 1)) * w + Math.round(clamp(X - nx * separation, 0, w - 1))) * 4 + 2;
         red += (source[ar] - red) * .43 * sq; blue += (source[ab] - blue) * .43 * sq;
@@ -125,18 +136,48 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
       const shade = clamp((.30 * R.edge / 100 * back + R.shadow / 100 * .045 * back ** 2) * sq);
       const alpha = clamp(d + .5);
       const wr = clamp(white);
-      out[idx] += ((red + (249 - red) * wr - 25 * color) * (1 - shade) - out[idx]) * alpha;
-      out[idx + 1] += ((green + (253 - green) * wr + 7 * color) * (1 - shade) - out[idx + 1]) * alpha;
-      out[idx + 2] += ((blue + (255 - blue) * wr + 57 * color) * (1 - shade) - out[idx + 2]) * alpha;
+      out[idx] += ((red + (reflectRed - red) * wr - 25 * color) * (1 - shade) - out[idx]) * alpha;
+      out[idx + 1] += ((green + (reflectGreen - green) * wr + 7 * color) * (1 - shade) - out[idx + 1]) * alpha;
+      out[idx + 2] += ((blue + (reflectBlue - blue) * wr + 57 * color) * (1 - shade) - out[idx + 2]) * alpha;
     }
   }
+}
+
+function AtmosphereFallback() {
+  const id = useId();
+  const artwork = ribbonGeometry();
+  return <svg className="ae-glass-fallback" aria-hidden="true" viewBox="0 0 1000 640" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id={`${id}-sheer`} x1="0" x2="35%" y1="0" y2="100%">
+        <stop stopColor="var(--ae-static-violet)" stopOpacity=".45" />
+        <stop offset="55%" stopColor="var(--ae-static-silk)" stopOpacity=".15" />
+        <stop offset="100%" stopColor="var(--ae-static-silk)" stopOpacity=".52" />
+      </linearGradient>
+      <linearGradient id={`${id}-silk`} x1="0" x2="100%" y1="0" y2="100%">
+        <stop stopColor="var(--ae-static-violet)" stopOpacity=".5" />
+        <stop offset="50%" stopColor="var(--ae-static-silk)" stopOpacity=".14" />
+        <stop offset="100%" stopColor="var(--ae-static-violet)" stopOpacity=".74" />
+      </linearGradient>
+      <linearGradient id={`${id}-light`}>
+        <stop stopColor="var(--ae-static-lip)" stopOpacity="0" />
+        <stop offset="57%" stopColor="var(--ae-static-lip)" stopOpacity=".12" />
+        <stop offset="86%" stopColor="var(--ae-static-lip)" stopOpacity=".92" />
+        <stop offset="100%" stopColor="var(--ae-static-lip)" stopOpacity=".16" />
+      </linearGradient>
+    </defs>
+    <path d={artwork.rear} fill={`url(#${id}-sheer)`} />
+    <path d={artwork.lower} fill={`url(#${id}-sheer)`} />
+    <path d={artwork.returning} fill={`url(#${id}-silk)`} />
+    <path d={artwork.front} fill={`url(#${id}-silk)`} />
+    <path d={artwork.cyan} fill="none" stroke={`url(#${id}-light)`} strokeWidth="2.4" />
+  </svg>;
 }
 
 /**
  * One visible, decorative canvas. Samples only the app-owned optical field.
  * Normal DOM and native dialogs remain the interactive/content/accessibility layer.
  */
-export function GlassOptics() {
+export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<GlassAppearanceRecipe> } = {}) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -147,9 +188,10 @@ export function GlassOptics() {
     const backing = document.createElement("canvas");
     const paint = backing.getContext("2d", { alpha: false, willReadFrequently: true });
     if (!ctx || !paint) return;
-    const media = ["(forced-colors: active)", "(prefers-contrast: more)", "(prefers-reduced-transparency: reduce)", "(prefers-reduced-motion: reduce)", "(prefers-color-scheme: light)"].map(query => window.matchMedia(query));
+    const media = ["(forced-colors: active)", "(prefers-contrast: more)", "(prefers-reduced-transparency: reduce)", "(prefers-reduced-motion: reduce)"].map(query => window.matchMedia(query));
     const marked = new Set<HTMLElement>();
-    let frame = 0, last = 0, lastAdvanced = 0, phase = 0, deadline = 0, faulted = false;
+    let frame = 0, timer = 0, lastAdvanced = 0, phase = 0, deadline = 0, faulted = false;
+    let atmosphere = atmosphereTarget();
     let output: ImageData | undefined;
     const tag = (next: Set<HTMLElement>) => {
       for (const element of marked) if (!next.has(element)) { delete element.dataset.aeLens; marked.delete(element); }
@@ -163,12 +205,9 @@ export function GlassOptics() {
         || media[0].matches || media[1].matches || media[2].matches || faulted) { clear(); return; }
       if (document.hidden || !shell.isConnected) return;
       const reduced = explicit.motion === "reduce" || media[3].matches;
-      if (last && now - last < 43) { frame = requestAnimationFrame(paintFrame); return; }
-      last = now;
-      if (!reduced && deadline > now) {
-        phase += lastAdvanced ? Math.min((now - lastAdvanced) / 1000, .086) * R.speed / 100 : 0;
-        lastAdvanced = now;
-      } else lastAdvanced = 0;
+      const seconds = lastAdvanced ? Math.min((now - lastAdvanced) / 1000, .25) : .14;
+      phase += seconds * R.speed / 100;
+      lastAdvanced = now;
       const bounds = shell.getBoundingClientRect();
       const top = Math.max(0, -bounds.top), left = Math.max(0, -bounds.left);
       const width = Math.min(bounds.right, window.innerWidth) - Math.max(0, bounds.left);
@@ -176,7 +215,8 @@ export function GlassOptics() {
       if (width < 12 || height < 12) { clear(); return; }
       const scale = opticalViewportScale(width, height, window.devicePixelRatio || 1);
       const pw = Math.max(2, Math.round(width * scale)), ph = Math.max(2, Math.round(height * scale));
-      if (canvas.width !== pw || canvas.height !== ph) { canvas.width = backing.width = pw; canvas.height = backing.height = ph; output = undefined; }
+      if (backing.width !== pw || backing.height !== ph) { backing.width = pw; backing.height = ph; }
+      if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; output = undefined; }
       canvas.style.left = left + "px"; canvas.style.top = top + "px";
       canvas.style.width = width + "px"; canvas.style.height = height + "px";
       const originX = bounds.left + left, originY = bounds.top + top;
@@ -189,42 +229,72 @@ export function GlassOptics() {
         const style = getComputedStyle(element);
         if (style.visibility !== "visible" || style.display === "none" || +style.opacity === 0) continue;
         const corner = Number.parseFloat(style.borderTopLeftRadius);
-        const kind = element.matches(".ae-file-slot") ? "stage" : element.matches(".ae-panel, .ae-transfer, .ae-file, .ae-activity-empty") ? "panel" : "control";
+        const kind = element.matches(".ae-file-slot") ? "stage" :
+          element.matches(".ae-panel, .ae-file, .ae-transfer-dock") ? "panel" : "control";
         elements.set(element, { x: (bb.left - originX) * scale, y: (bb.top - originY) * scale,
           width: bb.width * scale, height: bb.height * scale,
           radius: Math.min(Number.isFinite(corner) ? corner : R.radius, bb.height / 2, bb.width / 2) * scale, kind });
       }
       try {
-        const light = explicit.scheme === "light" || (explicit.scheme !== "dark" && media[4].matches);
+        const light = explicit.appearance === "light";
+        const preset = glassAppearanceRecipes[light ? "light" : "dark"];
+        const appearance = appearanceRecipe ? { ...preset, ...appearanceRecipe } : preset;
+        const status = shell.querySelector<HTMLElement>(".ae-transfer-space")?.dataset;
+        const target = atmosphereTarget(status?.experiencePhase, Number(status?.experienceProgress),
+          Number(status?.experienceX), Number(status?.experienceY));
+        const moving = Math.abs(target.energy - atmosphere.energy) > .01
+          || Math.abs(target.bend - atmosphere.bend) > .03 || Math.abs(target.x - atmosphere.x) > .015
+          || Math.abs(target.y - atmosphere.y) > .015;
+        atmosphere = reduced ? target : blendAtmosphere(atmosphere, target, seconds);
         const t = reduced ? 0 : phase;
-        backdrop(paint, pw, ph, t, light);
+        paintAtmosphere(paint, pw, ph, t, light, atmosphere, clamp(appearance.ribbonIntensity, .25, 1.35),
+          clamp(appearance.exposure, 50, 150));
         const source = paint.getImageData(0, 0, pw, ph).data;
         if (!output) output = ctx.createImageData(pw, ph);
         output.data.set(source);
         // Do not compound white reflections in nested controls: each surface
         // works against the original scene; later DOM children own their rims.
-        for (const box of elements.values()) shadeLens(output.data, source, pw, ph, box, scale, t);
+        for (const box of elements.values()) shadeLens(output.data, source, pw, ph, box, scale, t, appearance);
         ctx.putImageData(output, 0, 0);
         tag(new Set(elements.keys()));
         if (canvas.hidden) canvas.hidden = false;
         shell.dataset.aeOptics = "ready";
+        // The wallpaper moves continuously at low cadence. Interaction bursts
+        // get a short compositing window and settle back without an idle rAF loop.
+        if (!reduced) timer = window.setTimeout(queue, moving || deadline > now ? 56 : 280);
       } catch {
         faulted = true;
         clear();
         return;
       }
-      if (!reduced && deadline > now) frame = requestAnimationFrame(paintFrame);
-      else lastAdvanced = 0;
     };
     const onContextLost = () => { faulted = true; clear(); };
-    const queue = () => { if (!frame && !document.hidden) frame = requestAnimationFrame(paintFrame); };
+    const queue = () => {
+      window.clearTimeout(timer);
+      if (frame || document.hidden) return;
+      const delay = Math.max(0, 50 - (performance.now() - lastAdvanced));
+      if (delay > 4) timer = window.setTimeout(queue, delay);
+      else frame = requestAnimationFrame(paintFrame);
+    };
     const animate = () => { deadline = performance.now() + 480; queue(); };
     const settle = () => queue();
+    const appearanceChanged = () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      paintFrame(performance.now());
+    };
+    const visibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(frame); window.clearTimeout(timer);
+        frame = 0; lastAdvanced = 0;
+      } else queue();
+    };
     const onScroll = () => queue();
     const changes = new MutationObserver(settle);
-    changes.observe(theme, { attributes: true, attributeFilter: ["data-ae-theme", "data-scheme", "data-contrast", "data-transparency", "data-motion"] });
+    changes.observe(theme, { attributes: true, attributeFilter: ["data-ae-theme", "data-appearance", "data-contrast", "data-transparency", "data-motion"] });
     changes.observe(shell, { childList: true, subtree: true, attributes: true,
-      attributeFilter: ["aria-current", "data-destination", "data-selected", "hidden", "disabled"] });
+      attributeFilter: ["aria-current", "data-destination", "data-selected", "hidden", "disabled",
+        "data-experience-phase", "data-experience-progress", "data-experience-x", "data-experience-y"] });
     const resize = typeof ResizeObserver !== "undefined" ? new ResizeObserver(settle) : undefined;
     resize?.observe(shell);
     for (const mq of media) {
@@ -236,13 +306,15 @@ export function GlassOptics() {
     window.addEventListener("resize", settle);
     window.addEventListener("scroll", onScroll, { passive: true, capture: true });
     window.visualViewport?.addEventListener("resize", settle);
-    document.addEventListener("visibilitychange", settle);
+    document.addEventListener("visibilitychange", visibility);
+    document.addEventListener(appearanceCommitEvent, appearanceChanged);
     shell.addEventListener("pointerdown", animate, { passive: true });
     shell.addEventListener("focusin", animate);
     deadline = performance.now() + 840;
     queue();
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
       changes.disconnect(); resize?.disconnect();
       for (const mq of media) {
         if (typeof mq.removeEventListener === "function") mq.removeEventListener("change", settle);
@@ -252,10 +324,11 @@ export function GlassOptics() {
       backing.removeEventListener("contextlost", onContextLost);
       window.removeEventListener("resize", settle); window.removeEventListener("scroll", onScroll, true);
       window.visualViewport?.removeEventListener("resize", settle);
-      document.removeEventListener("visibilitychange", settle);
+      document.removeEventListener("visibilitychange", visibility);
+      document.removeEventListener(appearanceCommitEvent, appearanceChanged);
       shell.removeEventListener("pointerdown", animate); shell.removeEventListener("focusin", animate);
       clear();
     };
-  }, []);
-  return <canvas ref={ref} className="ae-glass-optics" aria-hidden="true" hidden />;
+  }, [appearanceRecipe]);
+  return <><AtmosphereFallback /><canvas ref={ref} className="ae-glass-optics" aria-hidden="true" hidden /></>;
 }

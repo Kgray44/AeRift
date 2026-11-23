@@ -34,6 +34,7 @@ pub struct Receiver {
     destination: PathBuf,
     staging: PathBuf,
     limits: ReceiveLimits,
+    ready_until: Mutex<Option<Instant>>,
     entries: Mutex<HashMap<TransferKey, Entry>>,
     changes: watch::Sender<u64>,
 }
@@ -82,9 +83,25 @@ impl Receiver {
             destination,
             staging,
             limits,
+            ready_until: Mutex::default(),
             entries: Mutex::default(),
             changes,
         })
+    }
+
+    /// A local, expiring availability signal. Each offer still requires a separate approval.
+    pub fn set_ready_until(&self, deadline: Option<Instant>) {
+        *self
+            .ready_until
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = deadline;
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        self.ready_until
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some_and(|deadline| deadline > Instant::now())
     }
 
     /// Native-only path for checking the volume that receives partial files.

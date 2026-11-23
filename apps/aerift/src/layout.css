@@ -8,24 +8,29 @@ body {
   margin: 0;
 }
 
-.aerift-camera {
+.aerift-shell-notice {
+  inline-size: min(100%, 52rem);
+  margin: .55rem auto;
+  padding: .35rem .65rem;
+}
+
+.aerift-control-center,
+.aerift-control-center > section {
   display: grid;
-  gap: 0.5rem;
-  flex-basis: 100%;
-  min-width: 0;
+  gap: .55rem;
+  min-inline-size: 0;
 }
-
-.aerift-camera .ae-gesture-control { display: grid; gap: 0.5rem; }
-
-.aerift-camera video {
-  width: min(100%, 24rem);
-  height: auto;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
+.aerift-control-center { gap: .85rem; }
+.aerift-control-center > section + section {
+  border-block-start: 1px solid var(--ae-display-edge, var(--ae-edge));
+  padding-block-start: .85rem;
 }
-
-.aerift-camera p {
-  margin: 0;
+.aerift-control-center h3 { font-size: var(--ae-size-body); }
+.aerift-control-center > section > .ae-button { justify-self: start; }
+.aerift-control-center p { overflow-wrap: anywhere; }
+.aerift-control-center .aerift-devices {
+  margin-block: .2rem;
+  gap: .3rem;
 }
 
 .aerift-devices {
