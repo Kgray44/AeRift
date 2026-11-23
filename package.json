@@ -2,13 +2,16 @@
   "name": "aerift",
   "private": true,
   "workspaces": [
-    "packages/app-contract"
+    "packages/app-contract",
+    "packages/gestures"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test tests/contracts/protocol.test.mjs"
+    "test": "tsc && node --test tests/contracts/protocol.test.mjs",
+    "test:gestures": "tsc -p packages/gestures && node --test tests/gestures/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "5.9.3"
-  }
+  },
+  "type": "module"
 }
