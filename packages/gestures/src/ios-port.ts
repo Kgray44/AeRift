@@ -12,6 +12,7 @@ interface IosCameraTransport<Channel> {
 export function createIosCameraPort<Channel>(transport: IosCameraTransport<Channel>): NativeCameraPort {
   let subscription: { attemptId: string | null; listener: (event: NativeCameraEvent) => void } | null = null;
   let registration: Promise<void> | undefined;
+  let stopBarrier = Promise.resolve();
   return {
     async subscribe(listener) {
       if (subscription) throw new Error("Camera event listener is already active.");
@@ -31,11 +32,15 @@ export function createIosCameraPort<Channel>(transport: IosCameraTransport<Chann
         if (active && event.attemptId === active.attemptId) active.listener(event);
       })));
       await registration;
+      await stopBarrier;
       if (subscription === current && current.attemptId === attemptId) await transport.start({ attemptId });
     },
     stop: (attemptId) => {
       if (subscription?.attemptId === attemptId) subscription = null;
-      return transport.stop({ attemptId });
+      // Retain the stop acknowledgement as a barrier for the next attempt.
+      const stopped = transport.stop({ attemptId });
+      stopBarrier = Promise.allSettled([stopBarrier, stopped]).then(() => {});
+      return stopped;
     },
   };
 }
