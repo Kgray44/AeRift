@@ -45,6 +45,10 @@ On Windows x64, a five-pair 16 MiB run at locked peer SHA `4369308f9e24f0e6d5c0d
 
 Windows x64 validation head `33010645231773815d47f6fbb874c561b7cfe536` passed the locked peer and transfer suite with nine tests and one opt-in multicast case skipped. The two-process fixture matrix passed consent refusal, empty, binary, duplicate-name and 64 MiB transfers. Interrupting the sender during a 64 MiB upload left no published or staged file after the receiver settled. A new session completed with the original SHA-256. [Validation PR](https://github.com/Kgray44/AeRift/pull/15)
 
+The focused iOS candidate `94d09497bfc67971b11f49a696c104d7feed9c4e` returned a passing simulator process receipt, but its capture showed only the iOS status bar over a blank app area. The smoke script checks the PID after five seconds. The exact candidate still needs a new capture with the transfer workspace visibly rendered. [Focused simulator artifact](https://github.com/Kgray44/AeRift/actions/runs/45128380074/artifacts/14796504666)
+
+An approved five-byte Windows TLS loopback transfer failed cleanly when an NTFS rule denied writes to the receiver-owned test directory. The receiver reported zero bytes and published no file. The sender handed five bytes to HTTP and both peers reported failure. The test verified restoration of the scratch directory's access rules. The same locked binary rejected missing and regular-file destinations before listener startup. The Rust sources and lockfile matched merged revision `260050f487eecab2dc8a2d95ac0fb9fddb3cead4`.
+
 ## Internal TestFlight distribution
 
 Use the VoyageWright sequence for Apple delivery. Its hosted macOS pipeline ran an unsigned build or signing preflight on a pinned source revision, then a separate protected job signed, exported, uploaded and observed Apple processing. The successful VoyageWright run proves the delivery procedure. An AeRift build needs its own delivery receipt. [VoyageWright signed upload](https://github.com/Kgray44/treasurehuntSoT/actions/runs/39521997164)
