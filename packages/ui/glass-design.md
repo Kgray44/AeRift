@@ -1,33 +1,33 @@
-# AeRift GLASS Design Specification
+# AeRift GLASS design
 
-GLASS is AeRift’s first theme for the shared Windows and iOS interface. Indigo and teal ambient tones frame neutral content planes, a mint action color in dark mode, and thin optical highlights. Stable placement and plain status labels keep attention on the file, target and result.
+GLASS is the shared Windows and iOS WebView theme. Its floating toolbar and navigation sit above the working surfaces. The transfer workspace gives file selection a visible optical surface, places paired devices in a grouped list and dedicates a separate lane to progress and history. Compact screens stack the lanes, retain the section shortcuts and present sheets inside the viewport safe area.
 
-## Research and application
+## Apple guidance and decisions
 
-- Apple separates floating controls and navigation from content and reserves clear material for visually rich backgrounds. AeRift uses solid file and device surfaces with translucency concentrated in the toolbar and floating controls. [Apple HIG Materials](https://developer.apple.com/design/human-interface-guidelines/materials)
-- Apple ties movement to feedback and status and adjusts intensity to input and accessibility preferences. GLASS uses a short press response, floating overlay entrances and a gesture confirmation, with immediate state changes in reduced motion. [Apple HIG Motion](https://developer.apple.com/design/human-interface-guidelines/motion) · [Apple Liquid Glass adoption guidance](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)
-- Harrison, Kurtenbach and Vicente measured how layer distinctiveness and transparency affect overlapping tool palettes. Sawyer and colleagues found Gaussian blur and scrims improved glanceable text over complex backgrounds in their experiments. AeRift applies these findings by reducing background detail and tinting chrome. Its palettes still require contrast checks on the backgrounds they ship with. [UIST transparency study](https://www.research.autodesk.com/app/uploads/2023/03/an-experimental-evaluation-of.pdf_recnlGNHgFB63p2GI.pdf) · [Sawyer et al., Ergonomics](https://www.bendsawyer.com/wp-content/uploads/2025/05/Sawyer-et-al_2020_Glanceable-legible-typography-over-complex-backgrounds.pdf)
-- Microsoft uses Acrylic for depth with solid fallbacks for system and accessibility settings. GLASS targets WCAG 2.2 AA ratios of 4.5:1 for normal text and 3:1 for required control and state indicators. Primary targets use 44 CSS px at default browser scale. [Microsoft Acrylic guidance](https://learn.microsoft.com/en-us/windows/apps/design/style/acrylic) · [WCAG 2.2](https://www.w3.org/TR/WCAG22/)
-- Chrome’s performance guidance favors transform and opacity and identifies blur as costly to paint. GLASS updates progress with a transform and uses fixed, local filters. CSS handles short transitions without a separate animation runtime. [Chrome animation performance guidance](https://web.dev/articles/animations-guide)
+- Use the functional layer for navigation, useful actions and temporary overlays. Keep file names, device names and transfer state on denser reading surfaces. A sticky toolbar lets content move beneath a shallow blur. Foreground contrast comes from the tint and fill behind the control. [Apple HIG Materials](https://developer.apple.com/design/human-interface-guidelines/materials)
+- Align nested shapes. Toolbars, shortcuts and primary actions use capsules. Device groups, file cards and the compact sheet use related corner radii. The glass stage is part of file selection and keeps the action left-aligned over a darker, predictable field. [Apple’s design-system session](https://developer.apple.com/videos/play/wwdc2025/356/)
+- Tie motion to the action that caused it. A button compresses and lights from the interaction point. An anchored popover grows from its placement edge. A compact sheet rises and follows a downward drag on its grip. Keyboard users can close a sheet from its Close button or Escape. [Meet Liquid Glass](https://developer.apple.com/videos/play/wwdc2025/219/) · [Apple HIG Motion](https://developer.apple.com/design/human-interface-guidelines/motion)
+- Use the reserved overlay layer for consent and appearance settings. Pairing, transfer state and gesture controls use the same local app actions as before. Apple’s SwiftUI glass APIs are available to native SwiftUI hosts. AeRift’s shared WebView uses its own CSS material so Windows and iOS can share the same layout and control logic. [Applying Liquid Glass to custom views](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views)
 
-## Materials and tokens
+## Material layers
 
-| Layer | Role | Treatment |
+| Layer | Purpose | Treatment |
 | --- | --- | --- |
-| Field | Ambient app backdrop | Static tonal gradients over the scheme base |
-| Content | Devices, files and transfers | Solid fill and thin edge |
-| Raised | Workspace panels | Solid fill, top highlight and soft depth shadow |
-| Chrome | Toolbar | 81–84% tint, 14 px blur, 1.18 saturation on wider viewports |
-| Overlay | Sheet, popover and toast | 94–95% tint, 12 px blur, same saturation and stronger shadow |
+| Field | Establish context behind the workspace | Static ambient highlights and scheme-aware color |
+| Raised | Compose and activity lanes | Denser tint, grazing highlight and depth shadow |
+| Content | File rows, device rows and transfer cards | Stable fill or high-opacity tint with distinct text and controls |
+| Chrome | Toolbar and section shortcuts | Fixed blur with a top reflection, cool lower rim, saturating tint and depth |
+| Overlay | Sheets, menus and toasts | Denser tint and more pronounced edge and shadow over a modal veil |
+| Control | Buttons, switches and state feedback | Capsules, optical highlights, visible focus and brief transforms |
 
-`src/tokens.css` defines semantic foreground, fill, edge, focus, feedback and motion roles. The font stack follows the host, with 15 px body, 13 px captions and a fluid display role at default browser scale. Layers share .25–2 rem spacing and .875–1.5 rem control and panel radii. Compact widths use one column, an opaque toolbar, bottom sheets and safe-area padding. Wide layouts use two columns and centered sheets.
+The file stage uses two curved reflectors over a local light field to suggest lens thickness. The WebView filter samples the underlying content for chrome and overlays. CSS gradients and inset shadows approximate edge reflections. Native Liquid Glass additionally renders adaptive refraction and morphing at the system compositor level. [Meet Liquid Glass](https://developer.apple.com/videos/play/wwdc2025/219/)
 
-Press feedback lasts 130 ms with a 0.98 scale. Overlay entry lasts 200 ms with 8 px travel and an ease-out curve. Progress transitions use 240 ms. Gesture confirmation pairs a short entrance with a visible state label. Fine pointers get a hover highlight. Touch and keyboard have press and focus feedback.
+## Accessibility and rendering
 
-## Accessibility and platform tradeoffs
+Scheme and accessibility behavior remain token driven. System and explicit light and dark schemes set the palette. Compact toolbar blur is 8 CSS px and desktop toolbar blur is 13 px. Overlay blur is 20 px. Denser material fills prevent layering several live filters over every device or transfer card. The entry and press effects animate transform or opacity and progress changes use a transform. Pointer and touch positions update the highlight at press or entry. There is no per-frame pointer loop or continuously running animation. [Chrome animation performance guidance](https://web.dev/articles/animations-guide)
 
-Increased contrast strengthens text and boundaries and makes chrome opaque. Reduced transparency uses the same opaque materials. Reduced motion removes travel and duration. Windows forced colors use system colors for focus and selection. The host can forward native preferences when the WebView lacks the corresponding media query. A theme owner should verify foreground contrast against the brightest and darkest composites of each new backdrop.
+High contrast and reduced transparency make the functional layers opaque and remove the file-stage reflectors. Reduced motion omits the animated changes and sheet tracking. Forced colors preserves native checkboxes. Text, buttons, focus outlines and state labels remain in the normal semantic reading order. Most interactive controls use a 44 CSS px minimum hit area. The 4.5:1 normal-text and 3:1 key control-boundary contrast targets apply when reviewing new backdrops. [WCAG 2.2](https://www.w3.org/TR/WCAG22/) · [Microsoft Acrylic guidance](https://learn.microsoft.com/en-us/windows/apps/design/style/acrylic)
 
-Native Liquid Glass dynamically lenses and refracts underlying pixels, varies light and shape during interaction and participates in system rendering. GLASS uses tint, blur, saturation and static edge highlights in CSS, with its own palette and geometry across the two WebViews. [Apple WWDC25 Meet Liquid Glass](https://developer.apple.com/videos/play/wwdc2025/219/)
+Transparency research supports reducing background detail and using a tint behind text. Tested conditions from glanceable text and tool-palette studies inform these choices. Each new theme and backdrop still needs its own contrast and performance pass. [UIST transparency study](https://www.research.autodesk.com/app/uploads/2023/03/an-experimental-evaluation-of.pdf_recnlGNHgFB63p2GI.pdf) · [Sawyer et al., Ergonomics](https://www.bendsawyer.com/wp-content/uploads/2025/05/Sawyer-et-al_2020_Glanceable-legible-typography-over-complex-backgrounds.pdf)
 
-Browser verification covers the component layout and simulated flows. Native qualification requires Windows WebView2, physical iPhone WebKit, VoiceOver and Narrator. Profile scrolling and transfer updates with long lists and an open sheet on those hosts to establish native frame pacing and battery cost.
+The design uses the same `TransferWorkspace` and semantic tokens in the showcase and host. WebView2, iPhone WebKit, native assistive technology and device performance remain platform qualification checks.

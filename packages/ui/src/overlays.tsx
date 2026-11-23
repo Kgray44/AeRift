@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type PointerEvent, type ReactNode } from "react";
 import { Button } from "./components";
 import type { ColorScheme, Preference, Reduction } from "./theme";
 
@@ -7,14 +7,41 @@ export function Sheet({ open, title, onClose, children }: {
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const drag = useRef<{ pointer: number; startY: number } | null>(null);
   useEffect(() => {
     const node = dialog.current;
     if (open && node && !node.open) node.showModal();
     if (!open && node?.open) node.close();
   }, [open]);
+
+  function dragSheet(event: PointerEvent<HTMLDivElement>) {
+    const state = drag.current;
+    if (state?.pointer === event.pointerId) {
+      const distance = Math.max(0, event.clientY - state.startY);
+      dialog.current?.style.setProperty("--ae-sheet-swipe", `${distance}px`);
+    }
+  }
+
+  function finishDrag(event: PointerEvent<HTMLDivElement>, dismissed: boolean) {
+    const state = drag.current;
+    if (state?.pointer !== event.pointerId) return;
+    drag.current = null;
+    dialog.current?.removeAttribute("data-dragging");
+    dialog.current?.style.removeProperty("--ae-sheet-swipe");
+    if (dismissed && event.clientY - state.startY > 72) onClose();
+  }
   return (
     <dialog ref={dialog} className="ae-sheet ae-surface" data-material="overlay" aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); onClose(); }}>
+      <div className="ae-sheet-grip" aria-hidden="true"
+        onPointerDown={event => {
+          if (!event.isPrimary || event.button !== 0) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          drag.current = { pointer: event.pointerId, startY: event.clientY };
+          dialog.current?.setAttribute("data-dragging", "");
+        }}
+        onPointerMove={dragSheet} onPointerUp={event => finishDrag(event, true)}
+        onPointerCancel={event => finishDrag(event, false)} onLostPointerCapture={event => finishDrag(event, false)} />
       <div className="ae-sheet-header">
         <h2 id={titleId}>{title}</h2><Button variant="quiet" onClick={onClose}>Close</Button>
       </div>
@@ -35,23 +62,31 @@ export function SettingsPanel({ value, onChange, themes }: {
   value: AppearanceSettings; onChange: (settings: AppearanceSettings) => void;
   themes: readonly { id: string; label: string }[];
 }) {
+  function switchRow(label: string, checked: boolean, toggle: (enabled: boolean) => void) {
+    return <label className="ae-setting-switch">
+      <span>{label}</span>
+      <input type="checkbox" checked={checked} onChange={event => toggle(event.target.checked)} />
+      <span className="ae-switch-track" aria-hidden="true" />
+    </label>;
+  }
   return <div className="ae-settings">
-    <label>Theme<select value={value.theme} onChange={event => onChange({ ...value, theme: event.target.value })}>
-      {themes.map(theme => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
-    </select></label>
-    <label>Appearance<select value={value.scheme}
-      onChange={event => onChange({ ...value, scheme: event.target.value as ColorScheme })}>
-      <option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option>
-    </select></label>
-    <label><input type="checkbox" checked={value.contrast === "increase"}
-      onChange={event => onChange({ ...value, contrast: event.target.checked ? "increase" : "system" })} />
-      Increase contrast</label>
-    <label><input type="checkbox" checked={value.transparency === "reduce"}
-      onChange={event => onChange({ ...value, transparency: event.target.checked ? "reduce" : "system" })} />
-      Reduce transparency</label>
-    <label><input type="checkbox" checked={value.motion === "reduce"}
-      onChange={event => onChange({ ...value, motion: event.target.checked ? "reduce" : "system" })} />
-      Reduce motion</label>
+    <div className="ae-settings-group" role="group" aria-label="Visual theme">
+      <label>Theme<select value={value.theme} onChange={event => onChange({ ...value, theme: event.target.value })}>
+        {themes.map(theme => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
+      </select></label>
+      <label>Appearance<select value={value.scheme}
+        onChange={event => onChange({ ...value, scheme: event.target.value as ColorScheme })}>
+        <option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option>
+      </select></label>
+    </div>
+    <div className="ae-settings-group" role="group" aria-label="Accessibility preferences">
+      {switchRow("Increase contrast", value.contrast === "increase",
+        enabled => onChange({ ...value, contrast: enabled ? "increase" : "system" }))}
+      {switchRow("Reduce transparency", value.transparency === "reduce",
+        enabled => onChange({ ...value, transparency: enabled ? "reduce" : "system" }))}
+      {switchRow("Reduce motion", value.motion === "reduce",
+        enabled => onChange({ ...value, motion: enabled ? "reduce" : "system" }))}
+    </div>
   </div>;
 }
 
@@ -70,6 +105,7 @@ export function Popover({ label, actions }: {
         const below = clientHeight - rect.bottom;
         const above = rect.top;
         const openBelow = below >= Math.min(256, above);
+        panel.current.style.transformOrigin = openBelow ? "top right" : "bottom right";
         panel.current.style.top = openBelow ? `${rect.bottom + 8}px` : "auto";
         panel.current.style.bottom = openBelow ? "auto" : `${clientHeight - rect.top + 8}px`;
         panel.current.style.maxHeight = `${Math.max(0, Math.min(clientHeight / 2, (openBelow ? below : above) - 20))}px`;
