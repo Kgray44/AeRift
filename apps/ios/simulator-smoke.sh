@@ -28,7 +28,7 @@ import sys
 with open(sys.argv[1], "rb") as bundle_info:
     info = plistlib.load(bundle_info)
 
-assert info["CFBundleIdentifier"] == "com.aerift.app"
+assert info["CFBundleIdentifier"] == "com.kgamazing44.aerift"
 assert info["NSCameraUsageDescription"]
 assert info["NSLocalNetworkUsageDescription"]
 assert info["NSBonjourServices"] == ["_aerift._tcp"]
@@ -63,7 +63,7 @@ if ! xcrun simctl list devices booted | grep -F "$device" > /dev/null; then
 fi
 xcrun simctl bootstatus "$device" -b
 xcrun simctl install "$device" "$app"
-launch="$(xcrun simctl launch --terminate-running-process "$device" com.aerift.app)"
+launch="$(xcrun simctl launch --terminate-running-process "$device" com.kgamazing44.aerift)"
 echo "$launch"
 pid="${launch##*: }"
 sleep 5

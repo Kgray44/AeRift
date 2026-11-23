@@ -18,7 +18,7 @@ use security_framework_sys::{
 };
 use std::{fmt, ptr};
 
-const SERVICE: &str = "com.aerift.app.peers.v1";
+const SERVICE: &str = "com.kgamazing44.aerift.peers.v1";
 const IDENTITY: &str = "identity";
 const TRUST: &str = "trust";
 

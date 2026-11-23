@@ -1,0 +1,159 @@
+.ae-theme {
+  color-scheme: dark;
+  --ae-font: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --ae-text: #f4f5ff;
+  --ae-muted: #b7bed6;
+  --ae-base: #101425;
+  --ae-field: #192038;
+  --ae-content: #1c233b;
+  --ae-raised: #171d33;
+  --ae-chrome-solid: #1c243d;
+  --ae-overlay-solid: #202841;
+  --ae-chrome-tint: rgb(23 29 50 / 81%);
+  --ae-overlay-tint: rgb(29 37 62 / 94%);
+  --ae-edge: #3d4665;
+  --ae-control-edge: #7781a3;
+  --ae-highlight: rgb(244 249 255 / 16%);
+  --ae-accent: #a7f2dc;
+  --ae-on-accent: #112a28;
+  --ae-focus: #87e6ff;
+  --ae-success: #a7f2dc;
+  --ae-error: #ffb9c4;
+  --ae-warning: #f1d196;
+  --ae-track: #37415d;
+  --ae-veil: rgb(7 10 19 / 63%);
+  --ae-ambient-a: #392958;
+  --ae-ambient-b: #16424b;
+  --ae-ambient-c: #203458;
+  --ae-shadow-raised: 0 14px 32px rgb(5 8 18 / 21%);
+  --ae-shadow-overlay: 0 16px 56px rgb(5 8 18 / 43%);
+  --ae-size-caption: .8125rem;
+  --ae-size-body: .9375rem;
+  --ae-size-title: 1.25rem;
+  --ae-size-display: clamp(2.5rem, 7vw, 5rem);
+  --ae-space-1: .25rem;
+  --ae-space-2: .5rem;
+  --ae-space-3: .75rem;
+  --ae-space-4: 1rem;
+  --ae-space-5: 1.5rem;
+  --ae-space-6: 2rem;
+  --ae-radius-control: .875rem;
+  --ae-radius-content: 1rem;
+  --ae-radius-panel: 1.5rem;
+  --ae-target: 2.75rem;
+  --ae-press-scale: .98;
+  --ae-enter-distance: .5rem;
+  --ae-duration-quick: 130ms;
+  --ae-duration-enter: 200ms;
+  --ae-duration-progress: 240ms;
+  --ae-ease: cubic-bezier(.2, .72, .28, 1);
+  --ae-blur-chrome: 14px;
+  --ae-blur-overlay: 12px;
+  --ae-saturation: 1.18;
+  --ae-layer-chrome: 2;
+  --ae-layer-feedback: 3;
+}
+
+.ae-theme[data-scheme="light"] {
+  color-scheme: light;
+  --ae-text: #19243a;
+  --ae-muted: #46536e;
+  --ae-base: #edf0f8;
+  --ae-field: #e4ebf7;
+  --ae-content: #f1f5ff;
+  --ae-raised: #fbfcff;
+  --ae-chrome-solid: #f6f7ff;
+  --ae-overlay-solid: #f8faff;
+  --ae-chrome-tint: rgb(245 248 255 / 84%);
+  --ae-overlay-tint: rgb(249 251 255 / 95%);
+  --ae-edge: #c2cce1;
+  --ae-control-edge: #6f7d99;
+  --ae-highlight: rgb(255 255 255 / 82%);
+  --ae-accent: #126854;
+  --ae-on-accent: #fff;
+  --ae-focus: #005f9e;
+  --ae-success: #176650;
+  --ae-error: #952743;
+  --ae-warning: #785211;
+  --ae-track: #c8d2e5;
+  --ae-veil: rgb(37 48 72 / 43%);
+  --ae-ambient-a: #d7caed;
+  --ae-ambient-b: #b8ddd6;
+  --ae-ambient-c: #c4d9f3;
+  --ae-shadow-raised: 0 14px 30px rgb(42 56 98 / 10%);
+  --ae-shadow-overlay: 0 16px 48px rgb(37 48 72 / 27%);
+}
+
+@media (prefers-color-scheme: light) {
+  .ae-theme[data-scheme="system"] {
+    color-scheme: light;
+    --ae-text: #19243a;
+    --ae-muted: #46536e;
+    --ae-base: #edf0f8;
+    --ae-field: #e4ebf7;
+    --ae-content: #f1f5ff;
+    --ae-raised: #fbfcff;
+    --ae-chrome-solid: #f6f7ff;
+    --ae-overlay-solid: #f8faff;
+    --ae-chrome-tint: rgb(245 248 255 / 84%);
+    --ae-overlay-tint: rgb(249 251 255 / 95%);
+    --ae-edge: #c2cce1;
+    --ae-control-edge: #6f7d99;
+    --ae-highlight: rgb(255 255 255 / 82%);
+    --ae-accent: #126854;
+    --ae-on-accent: #fff;
+    --ae-focus: #005f9e;
+    --ae-success: #176650;
+    --ae-error: #952743;
+    --ae-warning: #785211;
+    --ae-track: #c8d2e5;
+    --ae-veil: rgb(37 48 72 / 43%);
+    --ae-ambient-a: #d7caed;
+    --ae-ambient-b: #b8ddd6;
+    --ae-ambient-c: #c4d9f3;
+    --ae-shadow-raised: 0 14px 30px rgb(42 56 98 / 10%);
+    --ae-shadow-overlay: 0 16px 48px rgb(37 48 72 / 27%);
+  }
+}
+
+.ae-theme[data-contrast="increase"] {
+  --ae-display-muted: var(--ae-text);
+  --ae-display-edge: var(--ae-text);
+  --ae-material-filter: none;
+  --ae-material-tint: var(--ae-material-solid);
+}
+
+.ae-theme[data-transparency="reduce"] {
+  --ae-material-filter: none;
+  --ae-material-tint: var(--ae-material-solid);
+}
+
+.ae-theme[data-motion="reduce"] {
+  --ae-duration-quick: 0ms;
+  --ae-duration-enter: 0ms;
+  --ae-duration-progress: 0ms;
+  --ae-enter-distance: 0px;
+  --ae-press-scale: 1;
+}
+
+@media (prefers-contrast: more) {
+  .ae-theme {
+    --ae-display-muted: var(--ae-text);
+    --ae-display-edge: var(--ae-text);
+  }
+  .ae-theme .ae-surface { backdrop-filter: none; background: var(--ae-material-solid); }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ae-theme .ae-surface { backdrop-filter: none; background: var(--ae-material-solid); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ae-theme {
+    --ae-duration-quick: 0ms;
+    --ae-duration-enter: 0ms;
+    --ae-duration-progress: 0ms;
+    --ae-enter-distance: 0px;
+    --ae-press-scale: 1;
+  }
+}

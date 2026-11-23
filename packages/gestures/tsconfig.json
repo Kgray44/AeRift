@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "outDir": "../../dist/gestures" },
+  "include": ["src/**/*.ts", "../app-contract/src/v1.ts"]
+}
