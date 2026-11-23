@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:gestures
+      - run: npm run test:ui
 
   apple:
     name: macOS - iOS simulator Rust target
