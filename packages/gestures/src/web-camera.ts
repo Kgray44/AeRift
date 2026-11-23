@@ -2,6 +2,8 @@
 import { GestureIntent, MAX_ATTEMPT_MS, type CameraState, type GestureFeedback, type GestureInterruption, type GestureTarget } from "./intent.js";
 import { HandLandmarkTracker, type LandmarkFrame } from "./landmarks.js";
 
+const CAPTURE_INTERVAL_MS = 64;
+
 interface CameraOptions {
   workerUrl: URL;
   facing?: "user" | "environment";
@@ -239,7 +241,9 @@ export class WebGestureCamera {
           captureMs: data.capture, width: data.width, height: data.height, hands: data.hands,
         });
         if (this.publish(this.intent.observe(observation, performance.now()))) return this.stop();
-        this.poll = setTimeout(() => void pump(), 40);
+        // Bound the capture rate without adding idle time after a slow inference.
+        const wait = Math.max(0, data.capture + CAPTURE_INTERVAL_MS - performance.now());
+        this.poll = setTimeout(() => void pump(), wait);
       } catch {
         this.stop("error");
       }
