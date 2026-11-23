@@ -1,7 +1,10 @@
 #![cfg(target_os = "ios")]
 
+mod keychain;
+
+pub use keychain::{IosKeychain, KeychainError};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, io, path::PathBuf};
 use tauri::plugin::mobile::PluginInvokeError;
 use tauri::{
     ipc::Channel,
@@ -108,4 +111,30 @@ pub async fn stop_hand_camera<R: Runtime>(app: &AppHandle<R>) -> Result<(), Plug
         .0
         .run_mobile_plugin_async("stopCamera", ())
         .await
+}
+
+pub struct ReceiveDirectories {
+    pub partials: PathBuf,
+    pub published: PathBuf,
+}
+
+/// The Apple Files app exposes Documents. The receiver writes, verifies and
+/// removes partial files in the private cache before publishing to Documents.
+pub fn receive_directories<R: Runtime>(app: &AppHandle<R>) -> io::Result<ReceiveDirectories> {
+    let partials = app
+        .path()
+        .app_cache_dir()
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "iOS cache directory unavailable"))?
+        .join("IncomingPartials");
+    let published = app
+        .path()
+        .document_dir()
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "iOS Documents directory unavailable"))?
+        .join("Received");
+    fs::create_dir_all(&partials)?;
+    fs::create_dir_all(&published)?;
+    Ok(ReceiveDirectories {
+        partials,
+        published,
+    })
 }
