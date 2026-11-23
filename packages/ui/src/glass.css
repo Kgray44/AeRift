@@ -441,7 +441,12 @@
   }
   .ae-theme[data-ae-theme="glass"] .ae-workspace-nav { justify-self: start; }
   .ae-theme[data-ae-theme="glass"] .ae-toolbar { min-block-size: 3.5rem; padding-inline: .6rem .35rem; }
-  .ae-theme[data-ae-theme="glass"] .ae-toolbar .ae-status { display: none; }
+  .ae-theme[data-ae-theme="glass"] .ae-toolbar .ae-status {
+    border-inline-end: 0;
+    margin-inline-end: 0;
+    padding-inline-end: 0;
+    white-space: nowrap;
+  }
   .ae-theme[data-ae-theme="glass"] .ae-toolbar .ae-button { padding-inline: .65rem; }
   .ae-theme[data-ae-theme="glass"] .ae-surface[data-material="chrome"] { --ae-blur-chrome: 8px; }
   .ae-theme[data-ae-theme="glass"] .ae-file-slot { min-height: 6.5rem; }
