@@ -16,3 +16,6 @@ tauri-build = "2"
 
 [dependencies]
 tauri = "2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-aerift-ios = { path = "src/platform/ios" }

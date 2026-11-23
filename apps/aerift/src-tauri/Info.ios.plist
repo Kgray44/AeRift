@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>AeRift uses the camera while you enable transfer gestures. Video stays on this iPhone.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>AeRift finds and connects to devices on your local network to pair and transfer files.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_aerift._tcp</string>
+  </array>
+  <key>UIFileSharingEnabled</key>
+  <true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+</dict>
+</plist>

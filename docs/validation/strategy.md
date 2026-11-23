@@ -17,6 +17,24 @@ Run `node --test "tests/acceptance/*.test.mjs"` with Node 24. Windows and macOS 
 
 For loopback, use production APIs with two isolated native stores, temporary roots, ephemeral identities, a listener on a dynamically assigned loopback port, bounded timeouts and deterministic teardown. Swap sender and receiver roles. Capture event stream, terminal states, destination entry count and hashes. Exercise malformed inputs and unauthorized requests through the approved native test interfaces. Include invalid destinations, permission errors and path-boundary rejection through the filesystem adapter. Assert no publication on denial or failure, no overwrite on collision, and no success before remote confirmation. Record unsupported OS semantics where a simulated adapter error substitutes for real permission denial.
 
+## Two-process peer integration
+
+From the integrated checkout containing the peer crate, build the existing Rust example with `cargo build --manifest-path crates/peers/Cargo.toml --example loopback_node`. Run `node tests/acceptance/validate-peer-demo.mjs <compiled loopback_node> <scratch directory> <source SHA>` with Node 24. Find the executable under target/debug/examples or under the equivalent examples directory in `CARGO_TARGET_DIR`; on Windows it has the `.exe` suffix. Reserve at least 256 MiB for the generated fixtures, received files and temporary copies before the run.
+
+This uses two separate Rust processes on loopback, with fresh ephemeral identity and trust stores for each case. It checks file visibility before consent, refusal without publication, empty and binary integrity, preservation of both same-name contents, and a 64 MiB transfer at the demo receiver limit. The driver keeps the pairing invitation in memory and prints a JSON receipt without it. Local fixtures and saved output remain in the scratch directory for inspection.
+
+The receipt includes pairing-request latency from writing the invitation to observing the consent prompt and approval-to-result latency from entering the approval to observing both terminal receipts. These elapsed times include harness observation, HTTP and polling where applicable. Keep them scoped to this loopback run. Use the instrumented benchmark driver and physical run for upload throughput, process memory and UI timing.
+
+Append `disconnect` to the command to terminate the test's sender after observing bytes in the staging file. The driver checks the receiver's failed receipt and an unchanged destination, then creates a fresh pairing and checks the retry's saved hash. The result covers a fresh paired session on the same host.
+
+On Windows, append `windows-benchmark` for one observed 64 MiB transfer or use the series launcher with a compiled executable, scratch folder and source SHA.
+
+```powershell
+./tests/acceptance/run-windows-peer-benchmark.ps1 -Executable <compiled-exe> -ScratchDirectory <scratch-folder> -SourceSha <source-sha>
+```
+
+The launcher captures five samples by default and retains a per-trial receipt and a summary with the executable hash. Allow 256 MiB of scratch space per trial. The Windows observer samples each peer's OS-reported peak working set while the process is available. Receiver timing begins when the filesystem watcher first sees the staging file and ends when it sees the final file. This spans local receive and publication with filesystem notification and observer delays. Report the measured range. Use instrumented native builds for precise upload and progress-event costs.
+
 ## Defensive review gates
 
 These are review targets from the protocol. The foundation does not implement the control paths. Link each review to a PR head, implementation locations and executed evidence.
@@ -39,3 +57,23 @@ Measure setup from connect request to authenticated usable connection. Time tran
 Run `node tests/acceptance/benchmark.mjs receipt.json` to compute nearest-rank p50, p95 and maximum. The JSON input has `commit`, `environment`, `payloadBytes` and `trials`. Each trial has `connectionMs`, `transferMs`, `peakRssBytes` and `integrityVerified`. Optional per-trial fields are `progressOffMs`, `gestureMs` and `uiInputMs`. Supply each optional field in all trials of a series when measured. Throughput uses MiB/s. Negative progress overhead is retained as measured. The analyzer checks and summarizes input. Candidate instrumentation and physical measurements are pending.
 
 For an instrumented local or simulator driver, run `node tests/acceptance/run-benchmark.mjs config.json -- <executable> [args...]`. The config contains `commit`, `environment`, `payloadBytes` and optional `trialCount`, `timeoutMs` and `compareProgress`. The harness starts a fresh process for each trial, discards trial zero, and alternates the order of paired progress runs. The trusted driver reads `AERIFT_BENCH_TRIAL`, `AERIFT_BENCH_PROGRESS` (`on` or `off`), and `AERIFT_BENCH_PAYLOAD_BYTES`. It must perform and verify one transfer, clean up its own fixtures and subprocesses, and print a single JSON measurement object to stdout. The runner emits the individual measurements and summary. Collect physical-device traces directly and use the analyzer when a single executable cannot coordinate both devices.
+
+### Rust progress callback benchmark
+
+Build and run the probe from a pinned peer checkout or source export. Pass a generated fixture between 1 and 64 MiB and its checkout SHA. The launcher builds against the checkout's locked peer libraries and uses the existing peer test store.
+
+```powershell
+./tests/acceptance/run-peer-progress-probe.ps1 -PeerSource <peer-checkout> -SourceSha <source-sha> -Fixture <fixture-file> -ScratchDirectory <scratch-folder>
+```
+
+On Windows the probe creates two authenticated peers on loopback within one process. It discards a warmup pair and alternates five retained pairs with and without forwarding each upload progress callback to a Tokio watch subscriber. It verifies saved bytes against the source SHA-256 before retaining each trial. The timed callback region includes forwarding when enabled and excludes bookkeeping in both modes. The launcher saves raw trials, lockfile and executable hashes, and paired per-callback timing differences.
+
+The transfer rate uses bytes remaining after the first upload progress event and elapsed time to remote completion. It includes receiver persistence and confirmation. The pairing span runs from invitation redemption start to receiver consent prompt. These measurements describe the production Rust peer engine and the test subscriber. Packaged native progress delivery and UI responsiveness require a separate run through the actual application bridge.
+
+### Native UI responsiveness benchmark
+
+Measure one action per receipt on each platform. Open Settings from the transfer workspace five times while idle and five times while a large file is streaming. Reset to the same screen before each timed action. Use the same interaction method and capture settings in both phases. If a transfer finishes before the response or before the observation window for a missed action, repeat that trial during another verified transfer. Capture cancellation and accessibility behavior separately in the physical checklist.
+
+Use a local recording of the physical input and screen in the same shot. Keep cameras used by the app disabled and use synthetic filenames. Read millisecond timestamps from the video presentation timeline. Mark the first frame showing touch or key actuation and the first showing the Settings dialog. Record capture resolution in time, such as the frame rate or timestamp granularity. Keep the raw recording private and retain only redacted timestamps and evidence references in the receipt.
+
+Run `node tests/acceptance/ui-timing.mjs <measured-ui-receipt.json>`. The receipt has `commit` (full candidate SHA), `platform` (`windows` or `ios`), `environment`, `action`, `capture` (capture method, time resolution and evidence reference), and `observationMs` (the same prespecified response window for both phases). Its `idle` and `streaming` arrays contain entries with `inputMs`, `responseMs` and `observedThroughMs`. Use `null` for `responseMs` if the render is absent within the full observation window. The report counts missed actions separately and summarizes observed durations with p50, p95 and maximum. Compare the recorded behavior and timing against the physical acceptance criteria for the candidate.
