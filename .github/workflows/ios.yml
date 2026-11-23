@@ -9,14 +9,14 @@ permissions:
 jobs:
   mobile-fixtures:
     name: Combined mobile WebKit and loopback transport
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     timeout-minutes: 22
     env:
       PRODUCT_SHA: 470707db8dcf875be65a8fba9315c2f24caa4ed5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
@@ -37,7 +37,7 @@ jobs:
           tools="$RUNNER_TEMP/playwright"
           mkdir -p "$tools"
           npm install --prefix "$tools" --no-save --ignore-scripts --package-lock=false playwright@1.56.1
-          node "$tools/node_modules/playwright/cli.js" install webkit
+          node "$tools/node_modules/playwright/cli.js" install --with-deps webkit
           npm exec -- vite --config tests/ui/vite.config.mts --host 127.0.0.1 --port 4173 --strictPort > "$output/server.log" 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
