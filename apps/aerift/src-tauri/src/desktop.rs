@@ -126,7 +126,7 @@ fn handle_menu(app: &AppHandle, event: tauri::menu::MenuEvent) {
     show_main(app, route);
 }
 
-fn show_main(app: &AppHandle, route: Option<&'static str>) {
+pub(crate) fn show_main(app: &AppHandle, route: Option<&'static str>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();

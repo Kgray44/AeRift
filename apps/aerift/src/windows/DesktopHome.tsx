@@ -11,7 +11,7 @@ export function DesktopHome({ connection, gestures, onNavigate }: {
   const online = snapshot?.devices.filter(device => device.online) ?? [];
   const active = snapshot?.transfers.filter(transfer =>
     transfer.state === "pending" || transfer.state === "accepted" || transfer.state === "transferring") ?? [];
-  const completed = snapshot?.transfers.filter(transfer => transfer.state === "completed").slice(0, 5) ?? [];
+  const completed = snapshot?.transfers.filter(transfer => transfer.state === "completed") ?? [];
   const recent = [...new Map(completed.map(transfer => [transfer.file.name, transfer])).values()].slice(0, 3);
 
   return <>
@@ -42,7 +42,13 @@ export function DesktopHome({ connection, gestures, onNavigate }: {
       <section>
         <h3>Transfer activity</h3>
         {active.length ? <p>{active.length} in progress or awaiting a response.</p> : <p>No active transfers.</p>}
-        {completed.length > 0 && <p>{completed.length} recent completed {completed.length === 1 ? "transfer" : "transfers"}.</p>}
+        {completed.length > 0 && <ul className="aerift-summary" aria-label="Recent completed transfers">
+          {completed.slice(0, 3).map(transfer => <li key={transfer.id}>
+            <strong>{transfer.file.name}</strong>
+            <span>{transfer.direction === "incoming" ? "Received from" : "Delivered to"}{" "}
+              {snapshot?.devices.find(device => device.id === transfer.deviceId)?.name ?? "paired device"}</span>
+          </li>)}
+        </ul>}
         <Button onClick={() => onNavigate("activity")}>View activity</Button>
       </section>
     </div>

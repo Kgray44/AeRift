@@ -21,7 +21,7 @@ const fixture = {
 async function capture(page, name) {
   if (!evidence) return;
   const viewport = page.viewportSize();
-  const compact = name === "light-compact-workspace";
+  const compact = name === "light-compact-workspace" || name === "dark-production-rift";
   const height = compact ? await page.evaluate(() => document.documentElement.scrollHeight) : viewport.height;
   if (compact) await page.setViewportSize({ width: viewport.width, height });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -32,7 +32,7 @@ async function capture(page, name) {
 
 try {
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 900 }, colorScheme: "dark", permissions: ["clipboard-read", "clipboard-write"],
+    viewport: { width: 1280, height: 900 }, colorScheme: "dark",
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36",
   });
 
@@ -41,9 +41,14 @@ try {
     let onDrop;
     let openTrayRoute;
     let startedAtSignIn = false;
+    let explorerAction = false;
+    let previewTransfer = transfer;
     const publish = (channel, event) => queueMicrotask(() => channel.onmessage(event));
     const nextId = (() => { let current = 0; return () => ++current; })();
 
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: async () => "A deliberately captured test snippet" },
+    });
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
       transformCallback: nextId,
@@ -62,11 +67,13 @@ try {
             } });
             return { name: "Local specimen.txt", sizeBytes: 12, selectionId: "picker-selection" };
           case "watch_desktop_ambient": openTrayRoute = args.route; return true;
+          case "desktop_explorer_enabled": return explorerAction;
+          case "set_desktop_explorer": explorerAction = args.enabled; return explorerAction;
           case "desktop_startup_enabled": return startedAtSignIn;
           case "set_desktop_startup": startedAtSignIn = args.enabled; return startedAtSignIn;
           case "pair_app_peer": throw new Error("Pairing requires physical verification");
           case "transfer_app_file": throw new Error("File delivery requires physical verification");
-          case "desktop_transfer_preview": return transfer;
+          case "desktop_transfer_preview": return previewTransfer;
           case "open_workspace_url":
           case "set_desktop_ambient":
           case "set_desktop_shortcut":
@@ -80,6 +87,7 @@ try {
       count: name => calls.filter(call => call.channel === name).length,
       last: name => calls.findLast(call => call.channel === name)?.args,
       tray(route) { publish(openTrayRoute, route); },
+      updatePreview(next) { previewTransfer = { ...previewTransfer, ...next }; },
     };
 
     const key = "aerift.settings.v1";
@@ -127,6 +135,9 @@ try {
   await page.getByRole("combobox", { name: /^Windows shortcut to open the Rift/ }).selectOption("alt-shift-r");
   await page.waitForFunction(() => window.desktopFixture.last("set_desktop_shortcut")?.choice === "alt-shift-r");
   await page.getByLabel("Open AeRift when I sign in").check();
+  await page.getByLabel("Allow manual clipboard capture").check();
+  await page.getByLabel("Add Stage in AeRift").check();
+  await page.waitForFunction(() => window.desktopFixture.last("set_desktop_explorer")?.enabled === true);
   await page.waitForFunction(() => window.desktopFixture.last("set_desktop_startup")?.enabled === true);
 
   const nav = label => slot.getByRole("button", { name: label, exact: true });
@@ -149,6 +160,30 @@ try {
   await page.getByText("Expedition", { exact: true }).waitFor();
   await capture(page, "dark-full-workspace");
 
+  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await page.getByLabel("Import photos and videos").setInputFiles({
+    name: "sample.png", mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jXNYAAAAASUVORK5CYII=", "base64"),
+  });
+  await page.getByRole("button", { name: "Actions for sample.png", exact: true }).click();
+  await page.getByRole("button", { name: "File details", exact: true }).click();
+  const importedPhoto = page.getByRole("img", { name: "sample.png" });
+  await importedPhoto.waitFor();
+  const imageHandle = await importedPhoto.elementHandle();
+  await page.waitForFunction(img => img.complete && img.naturalWidth > 0, imageHandle);
+
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await page.getByLabel("Title").fill("Project reference");
+  await page.getByLabel("Web address").fill("https://example.test/");
+  await page.getByRole("button", { name: "Save link" }).click();
+  await page.getByRole("button", { name: "Actions for Project reference" }).click();
+  await page.getByRole("button", { name: "Open in browser" }).click();
+  assert.equal(await page.evaluate(() => window.desktopFixture.last("open_workspace_url").url), "https://example.test/");
+
+  await page.getByRole("button", { name: "Clipboard", exact: true }).click();
+  await page.getByRole("button", { name: "Capture clipboard text" }).click();
+  await page.getByText("A deliberately captured test snippet", { exact: true }).waitFor();
+
   await page.evaluate(() => window.desktopFixture.tray("activity"));
   await destination("Activity").waitFor();
   assert.equal(await page.getByRole("progressbar", { name: fixture.transfer.file.name }).getAttribute("aria-valuenow"), "43");
@@ -157,7 +192,8 @@ try {
   await page.getByRole("combobox", { name: /^Show/ }).selectOption("all");
   await page.getByText("Outgoing · Studio laptop", { exact: true }).filter({ visible: true }).waitFor();
 
-  await nav("Settings").click();
+  await page.getByRole("button", { name: "Control Center" }).click();
+  await destination("Settings").waitFor();
   await page.getByLabel("Window mode").selectOption("simplified");
   assert.equal(await nav("Workspace").count(), 0);
   await nav("Rift").click();
@@ -187,6 +223,10 @@ try {
   await preview.getByRole("heading", { name: "Transfer preview" }).waitFor();
   assert.equal(await preview.getByRole("progressbar").getAttribute("aria-valuenow"), "43");
   await capture(preview, "light-ambient-preview");
+  await preview.evaluate(() => window.desktopFixture.updatePreview({ bytesTransferred: 1000 }));
+  await preview.getByText("Awaiting delivery confirmation", { exact: true }).waitFor();
+  await preview.evaluate(() => window.desktopFixture.updatePreview({ state: "completed" }));
+  await preview.getByText("Delivered", { exact: true }).waitFor();
   assert.deepEqual(errors, []);
   console.log("PASS: desktop shell, mode and module persistence, simulated native selection and progress, keyboard focus, tray commands, compact width.");
 } finally {

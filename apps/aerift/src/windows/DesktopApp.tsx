@@ -157,11 +157,11 @@ export function DesktopApp() {
   return <ThemeProvider {...settings.experience}>
     <AppShell hideToolbar>
       <header className="ae-experience-nav aerift-desktop-header" data-destination={route}>
-        <GlassSurface material="chrome" className="ae-nav-brand"><AppBrand /></GlassSurface>
         <Orbit destinations={navigation.primary} active={route} onNavigate={navigate} surfaceRef={surfaceRef}
           presentation={navigation.presentation === "conventional" ? "conventional" : "orbit"}
           shortcut={settings.orbitShortcut} reducedMotion={settings.experience.motion === "reduce"}
           status={activeTransfers ? { activity: `${activeTransfers} active` } : undefined} />
+        <GlassSurface material="chrome" className="ae-nav-brand"><AppBrand /></GlassSurface>
         <GlassSurface material="chrome" className="ae-nav-tools">
           <GestureCameraIndicator status={cameraStatus} />
           <ConnectionStatus state={pairedOnline ? "connected" : connection.state === "disconnected" ? "offline" : "searching"}

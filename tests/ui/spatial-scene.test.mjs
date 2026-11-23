@@ -33,10 +33,12 @@ test("extra peers retain individual positions in the compact list", () => {
 });
 
 test("native shells expose an accessible Control Center gear", async () => {
-  for (const file of ["App.tsx", "ios/IosApp.tsx"]) {
-    const source = await readFile(new URL(`../../apps/aerift/src/${file}`, import.meta.url), "utf8");
+  const [desktop, mobile] = await Promise.all(["windows/DesktopApp.tsx", "ios/IosApp.tsx"].map(file =>
+    readFile(new URL(`../../apps/aerift/src/${file}`, import.meta.url), "utf8")));
+  for (const source of [desktop, mobile]) {
     assert.match(source, /aria-label="Control Center"/);
     assert.match(source, /<SpatialIcon name="settings"/);
-    assert.match(source, /<Sheet[^>]+title="Control Center"/);
   }
+  assert.match(desktop, /onClick=\{\(\) => navigate\("settings"\)\}/);
+  assert.match(mobile, /<Sheet[^>]+title="Control Center"/);
 });

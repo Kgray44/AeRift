@@ -21,6 +21,9 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
   retryCamera(): void;
 }) {
   const { experience } = value;
+  const [explorerEnabled, setExplorerEnabled] = useState<boolean>();
+  const [explorerUpdating, setExplorerUpdating] = useState(false);
+  const [explorerError, setExplorerError] = useState(false);
   const [startupEnabled, setStartupEnabled] = useState<boolean>();
   const [startupPending, setStartupPending] = useState(false);
   const [startupError, setStartupError] = useState(false);
@@ -57,11 +60,23 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
 
   useEffect(() => {
     let disposed = false;
+    void command<boolean>("desktop_explorer_enabled").then(result => {
+      if (!disposed && result.ok) setExplorerEnabled(result.value);
+    });
     void command<boolean>("desktop_startup_enabled").then(result => {
       if (!disposed && result.ok) setStartupEnabled(result.value);
     });
     return () => { disposed = true; };
   }, []);
+
+  async function setExplorer(enabled: boolean) {
+    setExplorerUpdating(true);
+    setExplorerError(false);
+    const result = await command<boolean>("set_desktop_explorer", { enabled });
+    if (result.ok) setExplorerEnabled(result.value);
+    else setExplorerError(true);
+    setExplorerUpdating(false);
+  }
 
   async function setStartup(enabled: boolean) {
     setStartupPending(true);
@@ -152,6 +167,15 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
       {folder?.next && <p>Restart AeRift to use <strong>{folder.next}</strong> for incoming files.</p>}
       <Button onClick={chooseFolder} loading={openingFolderPicker} loadingLabel="Opening folder picker">Choose receive folder</Button>
       {folderError && <p role="alert">AeRift could not use that folder.</p>}
+      {explorerEnabled !== undefined && <>
+        <label className="aerift-check">
+          <input type="checkbox" checked={explorerEnabled} disabled={explorerUpdating}
+            onChange={event => void setExplorer(event.currentTarget.checked)} />
+          Add Stage in AeRift to the File Explorer context menu
+        </label>
+        <p>Stage one file, then choose a device and confirm the transfer in the Rift.</p>
+        {explorerError && <p role="alert">AeRift could not update the File Explorer menu.</p>}
+      </>}
     </section>
     <section aria-labelledby="clipboard-heading">
       <h3 id="clipboard-heading">Clipboard privacy</h3>

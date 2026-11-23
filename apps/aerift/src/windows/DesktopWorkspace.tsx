@@ -1,6 +1,6 @@
 import type { DigitalObject } from "@aerift/app-contract/digital-objects";
 import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@aerift/app-contract/experience";
-import { Button } from "@aerift/ui";
+import { Button, Popover } from "@aerift/ui";
 import { useEffect, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { applyWorkspaceChanges, loadWorkspace, type WorkspaceEntry } from "./workspaceStore";
@@ -238,19 +238,19 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
             {captured?.kind === "text" && <p className="aerift-note-text">{captured.text}</p>}
             {object.kind === "collection" && (object.itemIds.length
               ? <ol>{object.itemIds.map(id => <li key={id}>{label(id)}</li>)}</ol> : <p>This collection is empty.</p>)}
-            <div className="ae-actions">
-              {entry.asset && <Button variant="quiet" onClick={() => setPreview(preview === object.id ? undefined : object.id)}>
-                {preview === object.id ? "Close file details" : "File details"}
-              </Button>}
-              {object.kind === "note" && <Button variant="quiet" onClick={() => setEditing(object.id)}>Edit note</Button>}
-              {object.kind === "url" && <Button variant="quiet" onClick={() => {
+            <Popover label={`Actions for ${object.name}`} actions={[
+              ...(entry.asset ? [{ id: "preview", label: preview === object.id ? "Close file details" : "File details",
+                onSelect: () => setPreview(preview === object.id ? undefined : object.id) }] : []),
+              ...(object.kind === "note" ? [{ id: "edit", label: "Edit note",
+                onSelect: () => setEditing(object.id) }] : []),
+              ...(object.kind === "url" ? [{ id: "open-link", label: "Open in browser", onSelect: () => {
                 setError(undefined);
                 void command<void>("open_workspace_url", { url: object.url }).then(result => {
                   if (!result.ok) setError("AeRift could not open the saved link in your browser.");
                 });
-              }}>Open in browser</Button>}
-              <Button variant="quiet" disabled={disabled} onClick={() => removeObjects([object.id])}>Remove</Button>
-            </div>
+              } }] : []),
+              { id: "remove", label: "Remove", disabled, onSelect: () => removeObjects([object.id]) },
+            ]} />
             {preview === object.id && <AssetPreview entry={entry} />}
           </div></li>;
         })}</ol>}
