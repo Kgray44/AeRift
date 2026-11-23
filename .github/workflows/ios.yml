@@ -21,7 +21,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Lint privacy configuration
-        run: plutil -lint apps/ios/Info.ios.plist
+        run: plutil -lint apps/aerift/src-tauri/Info.ios.plist
       - name: Typecheck Swift against the simulator SDK
         run: |
           xcodebuild -version
@@ -29,3 +29,49 @@ jobs:
           xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
             -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
             apps/ios/native/FilePicker.swift
+
+  simulator-app:
+    name: iOS simulator - Tauri app build and launch
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check for the shared host
+        id: host
+        run: |
+          if test -f apps/aerift/src-tauri/tauri.conf.json; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
+      # Temporary while the shared Windows/Tauri host in PR #7 awaits integration.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: steps.host.outputs.ready != 'true'
+        with:
+          ref: c5470a72e2ffda5149c6e94d2861503a7024542f
+          path: ios-host
+          persist-credentials: false
+      - name: Add the iOS plist to the pinned host
+        if: steps.host.outputs.ready != 'true'
+        run: |
+          echo "Pinned shared host: $(git -C ios-host rev-parse HEAD)"
+          cp apps/aerift/src-tauri/Info.ios.plist ios-host/apps/aerift/src-tauri/
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install iOS toolchain prerequisites
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+          command -v xcodegen || brew install xcodegen
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Build, install and launch AeRift
+        env:
+          HOST_READY: ${{ steps.host.outputs.ready }}
+        run: |
+          host=apps/aerift
+          if [[ "$HOST_READY" != true ]]; then
+            host=ios-host/apps/aerift
+          fi
+          bash apps/ios/simulator-smoke.sh "$host"
