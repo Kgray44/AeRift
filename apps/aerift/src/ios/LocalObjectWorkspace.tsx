@@ -206,11 +206,12 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
           onClick={() => setMediaRetry(attempt => attempt + 1)}>Retry loading imported copies</Button>
           : !mediaItems ? <p>Loading imported copies…</p>
           : attachmentOptions?.length ? <>
-            <label>Imported copy <select value={pendingAttachment}
+            <label htmlFor="ios-note-attachment">Imported copy</label>
+            <select id="ios-note-attachment" value={pendingAttachment}
               onChange={event => setPendingAttachment(event.currentTarget.value)}>
               <option value="">Choose a file, photo, or video</option>
               {attachmentOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select></label>
+            </select>
             <Button type="button" variant="quiet"
               disabled={!attachmentOptions.some(item => item.id === pendingAttachment)}
               onClick={() => {
