@@ -17,7 +17,7 @@ The callback receives existing app-contract v1 commands **arm**, **release**, an
 
 ### Windows
 
-The browser camera adapter reuses the Reach/Sextant pattern of explicit foreground capture, a single lease, bounded startup, one bitmap in flight, and teardown. It requests video only and honors existing WebView2/OS camera permission. On the trusted local app origin, ship `gesture-assets/` under the frontend public directory and resolve the classic worker URL from that origin. Allow same-origin model fetches in the host CSP (`connect-src 'self'` plus existing IPC) and allow same-origin workers and WASM evaluation (`worker-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`). Keep permission bound to the trusted origin. A missing capability or denied permission leaves ordinary controls available.
+The browser camera adapter reuses the Reach/Sextant pattern of explicit foreground capture, a single lease, bounded startup, one bitmap in flight, and teardown. It schedules recognition against a 64 ms minimum capture interval, giving a slow inference the next available video frame without a fixed delay after the result. It requests video only and honors existing WebView2/OS camera permission. On the trusted local app origin, ship `gesture-assets/` under the frontend public directory and resolve the classic worker URL from that origin. Allow same-origin model fetches in the host CSP (`connect-src 'self'` plus existing IPC) and allow same-origin workers and WASM evaluation (`worker-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`). Keep permission bound to the trusted origin. A missing capability or denied permission leaves ordinary controls available.
 
 ### iOS
 
