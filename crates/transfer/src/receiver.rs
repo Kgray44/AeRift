@@ -32,6 +32,7 @@ pub struct IncomingTransfer {
 
 pub struct Receiver {
     destination: PathBuf,
+    staging: PathBuf,
     limits: ReceiveLimits,
     entries: Mutex<HashMap<TransferKey, Entry>>,
     changes: watch::Sender<u64>,
@@ -55,19 +56,40 @@ struct Entry {
 impl Receiver {
     /// The native host provides a private, receiver-owned directory.
     pub fn new(destination: &Path, limits: ReceiveLimits) -> Result<Self, TransferError> {
+        Self::with_staging_directory(destination, destination, limits)
+    }
+
+    /// Stage incomplete transfers in a private, receiver-owned directory.
+    ///
+    /// The native host must provide existing directories on the same volume so
+    /// verified files can be published without overwriting an existing file.
+    pub fn with_staging_directory(
+        destination: &Path,
+        staging: &Path,
+        limits: ReceiveLimits,
+    ) -> Result<Self, TransferError> {
         let destination = destination
             .canonicalize()
             .map_err(|_| ErrorCode::StorageFailed)?;
-        if !destination.is_dir() {
+        let staging = staging
+            .canonicalize()
+            .map_err(|_| ErrorCode::StorageFailed)?;
+        if !destination.is_dir() || !staging.is_dir() {
             return Err(ErrorCode::StorageFailed.into());
         }
         let (changes, _) = watch::channel(0);
         Ok(Self {
             destination,
+            staging,
             limits,
             entries: Mutex::default(),
             changes,
         })
+    }
+
+    /// Native-only path for checking the volume that receives partial files.
+    pub fn staging_directory(&self) -> &Path {
+        &self.staging
     }
 
     /// Subscribe before enumerating transfers. A watch wakeup may represent multiple updates.
@@ -296,7 +318,7 @@ impl Upload {
     pub fn tempfile(&self) -> Result<NamedTempFile, TransferError> {
         tempfile::Builder::new()
             .prefix(".aerift-part-")
-            .tempfile_in(&self.receiver.destination)
+            .tempfile_in(&self.receiver.staging)
             .map_err(|_| ErrorCode::StorageFailed.into())
     }
 

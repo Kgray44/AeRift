@@ -87,6 +87,28 @@ test("brief fist and brief reopening do not advance stable phases", () => {
   assert.deepEqual(s.commands.map(([action]) => action), ["arm", "release"]);
 });
 
+test("a confirmed fist gives the user a fresh release window", () => {
+  const s = setup();
+  s.ready();
+  for (let at = 300; at <= 2800; at += 100) s.sample(at, 0);
+  [2850, 2920, 2990].forEach(at => s.sample(at, 4));
+  assert.equal(s.intent.feedback.phase, "held");
+  [3100, 3170, 3240].forEach(at => s.sample(at, 0));
+  assert.equal(s.intent.feedback.phase, "released");
+  assert.deepEqual(s.commands.map(([action]) => action), ["arm", "release"]);
+});
+
+test("the reopen window expires three seconds after the fist is confirmed", () => {
+  const s = setup();
+  s.ready();
+  s.grasp();
+  for (let at = 500; at <= 3400; at += 100) s.sample(at, 4);
+  assert.equal(s.intent.feedback.phase, "held");
+  assert.equal(s.intent.tick(3440).interruption, "confirmation-timeout");
+  s.sample(3500, 0);
+  assert.deepEqual(s.commands.map(([action]) => action), ["arm", "interrupt"]);
+});
+
 const interruptionCases = {
   "lost hand": (s) => s.sample(500, null),
   "two hands": (s) => s.sample(500, 0, { two: true }),
@@ -145,4 +167,29 @@ test("an activated attempt expires while continuous frames see no hand", () => {
   s.grasp();
   s.release();
   assert.deepEqual(s.commands.map(([action]) => action), ["interrupt"]);
+});
+
+test("confirmation interruption feedback retains the first cause through camera teardown", () => {
+  const cases = [
+    ["cancelled", /cancelled/i, interruptionCases["explicit cancellation"]],
+    ["frame-gap", /camera frames paused/i, interruptionCases.silence],
+    ["frame-gap", /camera frames paused/i, interruptionCases["capture gap"]],
+    ["stale-frame", /recognition fell behind/i, interruptionCases["stale inference"]],
+    ["tracking-lost", /lost track/i, interruptionCases["lost hand"]],
+    ["confirmation-timeout", /confirmation timed out/i, interruptionCases["held deadline"]],
+    ["capture-timeout", /camera stopped responding/i, (s) => s.intent.setCamera("error", "capture-timeout")],
+    ["target-changed", /selection changed/i, interruptionCases["changed file"]],
+  ];
+  for (const [cause, message, interrupt] of cases) {
+    const s = setup();
+    s.ready();
+    s.grasp();
+    assert.equal(s.intent.feedback.phase, "held");
+    interrupt(s);
+    s.intent.setCamera("disabled");
+    s.release();
+    assert.equal(s.intent.feedback.interruption, cause);
+    assert.match(s.intent.feedback.message, message);
+    assert.deepEqual(s.commands.map(([action]) => action), ["arm", "interrupt"]);
+  }
 });

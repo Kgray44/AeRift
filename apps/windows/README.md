@@ -15,6 +15,8 @@ Run development and installer builds separately. The first Windows frontend buil
 
 ## Use the app
 
+Put the Windows PC and iPhone on the same trusted private network. If Windows Firewall asks to allow the installed AeRift app, verify the name and allow it on **Private networks**. Leave **Public networks** unchecked and keep the firewall enabled. Return to AeRift to continue setup. Review the installed app’s permission under **Windows Security → Firewall &amp; network protection → Allow an app through firewall**. [Microsoft’s guide to app permissions](https://support.microsoft.com/en-us/windows/security/firewall/risks-of-allowing-apps-through-windows-firewall).
+
 1. Open **Pair a device** on both apps. On either device, create an invitation and copy it to the other device. Connect, then approve the request on the invitation device.
 2. Choose a file or drop one regular file into the window. Select the online paired device and click **Send file**. The receiver sees an offer it can accept or decline.
 3. Use **Settings** to find the current receiving folder or choose one for the next app launch. The default is `Received` in AeRift's local app-data directory. Existing files keep their contents when a name conflicts.

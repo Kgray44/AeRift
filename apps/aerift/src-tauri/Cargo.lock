@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "aerift-peers",
  "aerift-transfer",
+ "libc",
  "serde",
  "serde_json",
  "tauri",
@@ -3822,9 +3823,12 @@ dependencies = [
 name = "tauri-plugin-aerift-ios"
 version = "0.1.0"
 dependencies = [
+ "aerift-peers",
+ "aerift-transfer",
  "core-foundation",
  "security-framework-sys",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-plugin",
 ]

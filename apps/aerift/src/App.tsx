@@ -8,13 +8,16 @@ import {
   ThemeProvider,
   TransferWorkspace,
   type AppearanceSettings,
+  type WorkspaceConnection,
 } from "@aerift/ui";
 import "@aerift/ui/styles.css";
-import type { AppSnapshot, FileSelection } from "@aerift/app-contract";
+import type { FileSelection } from "@aerift/app-contract";
 import { useCallback, useEffect, useState } from "react";
-import { desktopSettings, nativeAppPort, watchFileSelection, type ReceiveFolder } from "./windows/nativeAppPort";
+import { nativeAppPort } from "./nativeAppPort";
+import { desktopSettings, watchFileSelection, type ReceiveFolder } from "./windows/nativeAppPort";
 import { GestureCamera, cameraShortcutLabels, type CameraShortcut } from "./windows/GestureCamera";
-import { DeviceTrust } from "./windows/DeviceTrust";
+import { DeviceTrust } from "./DeviceTrust";
+import { IosApp } from "./ios/IosApp";
 
 const defaults: AppearanceSettings = {
   theme: "glass",
@@ -46,30 +49,15 @@ function readSettings(): Settings {
 }
 
 function WindowsApp() {
-  const [snapshot, setSnapshot] = useState<AppSnapshot>();
-  const [watchAttempt, retryWatch] = useState(0);
+  const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
+  const [watchAttempt, setWatchAttempt] = useState(0);
+  const snapshot = connection.state === "ready" ? connection.snapshot : undefined;
   const [sheet, setSheet] = useState<"devices" | "settings">();
   const [settings, setSettings] = useState(readSettings);
   const [dropError, setDropError] = useState<string>();
   const [folder, setFolder] = useState<ReceiveFolder>();
   const [folderError, setFolderError] = useState(false);
   const [openingFolderPicker, setOpeningFolderPicker] = useState(false);
-
-  useEffect(() => {
-    let disposed = false;
-    let unwatch: (() => void) | undefined;
-    void nativeAppPort.watch((next) => {
-      if (!disposed) setSnapshot(next);
-    }).then((result) => {
-      if (!result.ok) return;
-      if (disposed) result.value();
-      else unwatch = result.value;
-    });
-    return () => {
-      disposed = true;
-      unwatch?.();
-    };
-  }, [watchAttempt]);
 
   useEffect(() => {
     let disposed = false;
@@ -102,6 +90,10 @@ function WindowsApp() {
     }
   }
 
+  function retryConnection() {
+    setWatchAttempt(attempt => attempt + 1);
+  }
+
   async function selectDestination() {
     setOpeningFolderPicker(true);
     setFolderError(false);
@@ -110,7 +102,7 @@ function WindowsApp() {
       if (!result.ok) setFolderError(true);
       else if (result.value) {
         setFolder(result.value);
-        if (!snapshot) retryWatch((attempt) => attempt + 1);
+        if (!snapshot) retryConnection();
       }
     } finally {
       setOpeningFolderPicker(false);
@@ -123,8 +115,8 @@ function WindowsApp() {
     <ThemeProvider {...settings.appearance}>
       <AppShell brand={<h1 className="aerift-title">AeRift</h1>} toolbar={
         <>
-          <ConnectionStatus state={pairedOnline ? "connected" : snapshot ? "searching" : "offline"}
-            label={pairedOnline ? "Paired" : snapshot ? "Searching" : "Disconnected"} />
+          <ConnectionStatus state={pairedOnline ? "connected" : connection.state === "disconnected" ? "offline" : "searching"}
+            label={pairedOnline ? "Paired" : connection.state === "disconnected" ? "Disconnected" : snapshot ? "Searching" : "Connecting"} />
           <Button onClick={() => setSheet("devices")}>Devices</Button>
           <Button onClick={() => setSheet("settings")}>Settings</Button>
         </>
@@ -133,6 +125,7 @@ function WindowsApp() {
         <TransferWorkspace
           port={nativeAppPort}
           watchSelection={watchSelection}
+          connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
           activityFooter={folder?.active && <p>Incoming files are saved to {folder.active}.</p>}
           gesture={(controls) => <GestureCamera controls={controls}
             shortcut={settings.cameraShortcut} enabled={!sheet} />}
@@ -168,7 +161,11 @@ function WindowsApp() {
 }
 
 export function App() {
-  if (isTauri() && /Windows/.test(navigator.userAgent)) return <WindowsApp />;
+  if (isTauri()) {
+    if (/Windows/.test(navigator.userAgent)) return <WindowsApp />;
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) return <IosApp />;
+  }
   return (
     <ThemeProvider>
       <AppShell brand={<h1 className="aerift-title">AeRift</h1>}>

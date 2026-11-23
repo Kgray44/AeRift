@@ -2,6 +2,7 @@ import type { GestureCommand } from "../../app-contract/src/v1.js";
 import { MAX_FRAME_GAP_MS, type GestureObservation, type Posture } from "./landmarks.js";
 
 export const MAX_ATTEMPT_MS = 30_000;
+const PHASE_WINDOW_MS = 3_000;
 
 export type CameraState = "disabled" | "requesting" | "starting" | "ready" | "denied" |
   "unavailable" | "busy" | "suspended" | "error";
@@ -30,7 +31,21 @@ const cameraInstructions: Partial<Record<CameraState, string>> = {
   error: "Camera recognition stopped. You can still use the button.",
 };
 
+const interruptionMessages = {
+  cancelled: "Gesture cancelled. Start again or use the button.",
+  "attempt-timeout": "Gesture attempt timed out. Start again or use the button.",
+  "confirmation-timeout": "Gesture confirmation timed out. Start again or use the button.",
+  "frame-gap": "Camera frames paused. Start again or use the button.",
+  "stale-frame": "Hand recognition fell behind. Start again or use the button.",
+  "tracking-lost": "Lost track of your hand. Start again or use the button.",
+  "target-changed": "The transfer selection changed. Start again or use the button.",
+  "capture-timeout": "The camera stopped responding. Start again or use the button.",
+} as const;
+
+export type GestureInterruption = keyof typeof interruptionMessages;
+
 export interface GestureFeedback {
+  interruption: GestureInterruption | null;
   camera: CameraState;
   phase: Phase;
   posture: Posture;
@@ -46,12 +61,13 @@ export class GestureIntent {
   private readonly bound: Readonly<GestureTarget>;
   private camera: CameraState = "disabled";
   private phase: Phase = "acquiring";
+  private interruption: GestureInterruption | null = null;
   private posture: Posture = "unusable";
   private confidence: number | null = null;
   private progress = 0;
   private track: number | null = null;
   private last = -Infinity;
-  private armedAt = Infinity;
+  private phaseDeadline = Infinity;
   private attemptDeadline = Infinity;
   private dwell: { posture: Posture; start: number; samples: number } | null = null;
 
@@ -66,18 +82,20 @@ export class GestureIntent {
     return {
       camera: this.camera,
       phase: this.phase,
+      interruption: this.interruption,
       posture: this.posture,
       confidence: this.confidence,
       progress: this.progress,
       message: this.phase === "released" ? instructions.released :
-        cameraInstructions[this.camera] ?? instructions[this.phase],
+        this.interruption ? interruptionMessages[this.interruption] :
+          cameraInstructions[this.camera] ?? instructions[this.phase],
     };
   }
 
-  setCamera(camera: CameraState): GestureFeedback {
+  setCamera(camera: CameraState, reason: GestureInterruption | null = null): GestureFeedback {
     const wasReady = this.camera === "ready";
     this.camera = camera;
-    if (camera !== "ready" && (wasReady || !["requesting", "starting"].includes(camera))) this.cancel();
+    if (camera !== "ready" && (wasReady || !["requesting", "starting"].includes(camera))) this.cancel(reason);
     return this.feedback;
   }
 
@@ -86,11 +104,12 @@ export class GestureIntent {
     const matches = target?.kind === "send" && bound.kind === "send"
       ? target.deviceId === bound.deviceId && target.selectionId === bound.selectionId
       : target?.kind === "receive" && bound.kind === "receive" && target.transferId === bound.transferId;
-    return matches ? this.feedback : this.cancel();
+    return matches ? this.feedback : this.cancel("target-changed");
   }
 
-  cancel(): GestureFeedback {
+  cancel(reason: GestureInterruption | null = "cancelled"): GestureFeedback {
     if (this.active) {
+      this.interruption = reason;
       this.phase = "interrupted";
       this.progress = 0;
       this.dispatch({ version: 1, action: "interrupt", intentId: this.id }, this.bound);
@@ -104,15 +123,18 @@ export class GestureIntent {
   }
 
   tick(now: number): GestureFeedback {
-    if (this.active && now >= this.attemptDeadline) return this.cancel();
-    if (this.active && this.phase !== "acquiring" &&
-        (now - this.last > MAX_FRAME_GAP_MS || now - this.armedAt > 3000)) return this.cancel();
+    if (!this.active) return this.feedback;
+    if (now >= this.attemptDeadline) return this.cancel("attempt-timeout");
+    if (this.phase !== "acquiring") {
+      if (now - this.last > MAX_FRAME_GAP_MS) return this.cancel("frame-gap");
+      if (now >= this.phaseDeadline) return this.cancel("confirmation-timeout");
+    }
     return this.feedback;
   }
 
   observe(observation: GestureObservation, now: number): GestureFeedback {
     if (!this.active || this.camera !== "ready") return this.feedback;
-    if (now >= this.attemptDeadline) return this.cancel();
+    if (now >= this.attemptDeadline) return this.cancel("attempt-timeout");
     const { captureMs: at, posture, track, confidence } = observation;
     const fresh = Number.isFinite(now) && Number.isFinite(at) && now - at <= 150 && at <= now + 5 && at > this.last;
     const usable = fresh && track !== null && posture !== "unusable" &&
@@ -121,7 +143,10 @@ export class GestureIntent {
     this.posture = usable ? posture : "unusable";
     this.confidence = usable ? confidence : null;
     if (!continuous) {
-      if (this.phase !== "acquiring") return this.cancel();
+      if (this.phase !== "acquiring") {
+        if (!fresh) return this.cancel("stale-frame");
+        return this.cancel(usable && at - this.last > MAX_FRAME_GAP_MS ? "frame-gap" : "tracking-lost");
+      }
       this.dwell = null;
       this.progress = 0;
     }
@@ -129,7 +154,7 @@ export class GestureIntent {
 
     this.track = track;
     this.last = at;
-    if (now - this.armedAt > 3000) return this.cancel();
+    if (now >= this.phaseDeadline) return this.cancel("confirmation-timeout");
     if (this.dwell?.posture !== posture) this.dwell = { posture, start: at, samples: 0 };
     this.dwell.samples++;
 
@@ -143,7 +168,7 @@ export class GestureIntent {
       : 0;
     if (acquiring && this.progress === 1) {
       this.phase = "ready";
-      this.armedAt = at;
+      this.phaseDeadline = now + PHASE_WINDOW_MS;
       this.progress = 0;
     } else if (held && this.progress === 1) {
       this.phase = "released";
@@ -152,6 +177,7 @@ export class GestureIntent {
       this.phase = posture === "fist" ? "grasping" : "ready";
       if (this.progress === 1) {
         this.phase = "held";
+        this.phaseDeadline = now + PHASE_WINDOW_MS;
         this.progress = 0;
         this.dispatch({ version: 1, action: "arm", intentId: this.id }, this.bound);
       }

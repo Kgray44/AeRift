@@ -1,35 +1,57 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fs::{self, File, OpenOptions},
-    net::{Ipv4Addr, SocketAddr},
-    os::windows::{ffi::OsStrExt, fs::OpenOptionsExt},
+    fs::File,
+    net::SocketAddr,
     path::{Path, PathBuf},
-    ptr::null_mut,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime},
 };
 
-use aerift_peers::{Device, DiscoveredPeer, Discovery, Identity, PeerNode, Platform};
+#[cfg(windows)]
+use std::{
+    fs::{self, OpenOptions},
+    net::Ipv4Addr,
+    os::windows::{ffi::OsStrExt, fs::OpenOptionsExt},
+    ptr::null_mut,
+};
+
+use aerift_peers::{Device, DiscoveredPeer, PeerNode};
+#[cfg(windows)]
+use aerift_peers::{Discovery, Identity, Platform};
 use aerift_transfer::{
     ErrorCode, IncomingTransfer, PeerId, ReceiveLimits, Receiver, State, Status, TransferError,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
+#[cfg(target_os = "ios")]
+use tauri_plugin_aerift_ios::{BonjourState, BonjourUpdate};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
-use tokio::{
-    net::TcpListener,
-    sync::{watch, OnceCell},
-};
+#[cfg(windows)]
+use tokio::net::TcpListener;
+use tokio::sync::{watch, OnceCell};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+#[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, FILE_SHARE_READ};
 
-use crate::{
-    selection::{FileSelection, SelectionRegistry},
-    windows_storage::{lock_profile, storage_failed, ReceiveFolder, WindowsIdentity, WindowsTrust},
+use crate::selection::{FileSelection, SelectionRegistry};
+#[cfg(windows)]
+use crate::windows_storage::{
+    lock_profile, storage_failed, ReceiveFolder, WindowsIdentity, WindowsTrust,
 };
 
+#[cfg(target_os = "ios")]
+mod ios;
+#[cfg(target_os = "ios")]
+use ios::{disk_free, storage_failed};
+
 const MAX_RECEIPTS: usize = 256;
+const RECEIVE_HEADROOM_BYTES: u64 = 256 * 1024 * 1024;
+const RECEIVE_LIMITS: ReceiveLimits = ReceiveLimits {
+    // The host enforces live staging capacity at approval.
+    active_bytes: u64::MAX,
+    session_offers: MAX_RECEIPTS,
+};
 const DECISION_TIMEOUT: Duration = Duration::from_secs(300);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -82,6 +104,8 @@ pub(crate) struct AppSnapshot {
     devices: Vec<PeerView>,
     transfers: Vec<TransferView>,
     pending_pairing: Vec<PairingView>,
+    #[cfg(target_os = "ios")]
+    local_network: BonjourState,
 }
 
 #[derive(Deserialize)]
@@ -133,6 +157,7 @@ pub(crate) enum TransferRequest {
     },
 }
 
+#[cfg(windows)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FolderView {
@@ -149,15 +174,17 @@ struct Outgoing {
 struct LiveState {
     peers: Vec<DiscoveredPeer>,
     outgoing: Vec<Outgoing>,
+    #[cfg(target_os = "ios")]
+    local_network: Option<BonjourState>,
 }
 
-pub(crate) struct DesktopRuntime {
+pub(crate) struct AppRuntime {
     session: OnceCell<Arc<Session>>,
     stop: CancellationToken,
     subscriptions: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 
-impl Default for DesktopRuntime {
+impl Default for AppRuntime {
     fn default() -> Self {
         Self {
             session: OnceCell::new(),
@@ -168,12 +195,17 @@ impl Default for DesktopRuntime {
 }
 
 pub(crate) struct Session {
-    #[cfg(test)]
+    #[cfg(any(all(test, windows), target_os = "ios"))]
     port: u16,
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     root: PathBuf,
     destination: PathBuf,
+    #[cfg(windows)]
     _profile_lock: File,
+    #[cfg(target_os = "ios")]
+    discovery_start: tokio::sync::Mutex<()>,
+    #[cfg(target_os = "ios")]
+    discovery_events: std::sync::OnceLock<Channel<BonjourUpdate>>,
     peer: Arc<PeerNode>,
     receiver: Arc<Receiver>,
     state: Mutex<LiveState>,
@@ -182,10 +214,22 @@ pub(crate) struct Session {
     stop: CancellationToken,
 }
 
-impl DesktopRuntime {
+impl AppRuntime {
+    #[cfg(windows)]
     pub(crate) async fn session(&self, root: PathBuf) -> Result<Arc<Session>, TransferError> {
         self.session
             .get_or_try_init(|| Session::open(root, self.stop.child_token()))
+            .await
+            .map(Arc::clone)
+    }
+
+    #[cfg(target_os = "ios")]
+    pub(crate) async fn ios_session(
+        &self,
+        app: &tauri::AppHandle,
+    ) -> Result<Arc<Session>, TransferError> {
+        self.session
+            .get_or_try_init(|| Session::open_ios(app, self.stop.child_token()))
             .await
             .map(Arc::clone)
     }
@@ -231,6 +275,7 @@ impl DesktopRuntime {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) fn receive_directory(&self) -> Option<PathBuf> {
         self.session
             .get()
@@ -243,6 +288,7 @@ impl DesktopRuntime {
 }
 
 impl Session {
+    #[cfg(windows)]
     async fn open(root: PathBuf, stop: CancellationToken) -> Result<Arc<Self>, TransferError> {
         let prepare_root = root.clone();
         let (profile_lock, destination, peer, receiver) =
@@ -257,14 +303,8 @@ impl Session {
                     }
                 };
                 let destination = fs::canonicalize(destination).map_err(storage_failed)?;
-                let available = disk_free(&destination)?;
-                let receiver = Arc::new(Receiver::new(
-                    &destination,
-                    ReceiveLimits {
-                        active_bytes: available.min((1 << 53) - 1),
-                        session_offers: MAX_RECEIPTS,
-                    },
-                )?);
+                disk_free(&destination)?;
+                let receiver = Arc::new(Receiver::new(&destination, RECEIVE_LIMITS)?);
                 let identity = Identity::load_or_create(&WindowsIdentity::new(&prepare_root))?;
                 let trust = Arc::new(WindowsTrust::new(&prepare_root));
                 // A generic label avoids advertising the user's Windows account or machine hostname.
@@ -391,6 +431,8 @@ impl Session {
             devices: devices.into_values().collect(),
             transfers,
             pending_pairing,
+            #[cfg(target_os = "ios")]
+            local_network: state.local_network.unwrap_or(BonjourState::Disabled),
         }
     }
 
@@ -496,10 +538,10 @@ impl Session {
             DECISION_TIMEOUT,
             UPLOAD_TIMEOUT,
         )?;
-        let (details, path) = registry
+        let (details, source) = registry
             .lookup(selection_id)
             .ok_or(ErrorCode::InvalidRequest)?;
-        let opened_path = path.clone();
+        let opened_path = source.path.clone();
         let opened =
             tauri::async_runtime::spawn_blocking(move || open_source(&opened_path, details))
                 .await
@@ -543,12 +585,13 @@ impl Session {
             let callback = Arc::clone(&active);
             let receipt_id = id.clone();
             let result = sender
-                .send_file(&path, &name, cancel, move |_, status| {
+                .send_file(&source.path, &name, cancel, move |_, status| {
                     callback.outgoing_update(&receipt_id, Ok(status));
                 })
                 .await;
             active.outgoing_update(&id, result);
             drop(hold);
+            drop(source);
         });
         Ok(view)
     }
@@ -578,14 +621,14 @@ impl Session {
     }
 
     fn respond(&self, id: &str, accept: bool) -> Result<TransferView, TransferError> {
-        self.respond_with_capacity(id, accept, || disk_free(&self.destination))
+        self.respond_with_capacity(id, accept, disk_free)
     }
 
     fn respond_with_capacity(
         &self,
         id: &str,
         accept: bool,
-        available: impl FnOnce() -> Result<u64, TransferError>,
+        available: impl FnOnce(&Path) -> Result<u64, TransferError>,
     ) -> Result<TransferView, TransferError> {
         // Hold the same lock through the capacity check and the receiver reservation.
         let _approval = lock(&self.receive_approvals);
@@ -594,7 +637,7 @@ impl Session {
             .iter()
             .find(|entry| incoming_id(entry) == id)
             .ok_or(ErrorCode::PeerUnavailable)?;
-        if accept {
+        if accept && entry.status.state == State::Pending {
             let remaining = transfers
                 .iter()
                 .filter(|entry| matches!(entry.status.state, State::Accepted | State::Transferring))
@@ -605,7 +648,10 @@ impl Session {
                         .saturating_sub(entry.status.bytes_transferred)
                 })
                 .fold(0u64, u64::saturating_add);
-            if entry.offer.size_bytes > available()?.saturating_sub(remaining) {
+            let budget = available(self.receiver.staging_directory())?
+                .checked_sub(RECEIVE_HEADROOM_BYTES)
+                .and_then(|free| free.checked_sub(remaining));
+            if !budget.is_some_and(|bytes| entry.offer.size_bytes <= bytes) {
                 return Err(ErrorCode::StorageFailed.into());
             }
         }
@@ -639,6 +685,7 @@ impl Session {
     }
 }
 
+#[cfg(windows)]
 pub(crate) fn folder_view(root: &Path, active: Option<&Path>) -> Result<FolderView, TransferError> {
     let next = ReceiveFolder::new(root)
         .load()?
@@ -650,6 +697,7 @@ pub(crate) fn folder_view(root: &Path, active: Option<&Path>) -> Result<FolderVi
     })
 }
 
+#[cfg(windows)]
 pub(crate) fn change_folder(
     root: &Path,
     active: Option<&Path>,
@@ -674,6 +722,7 @@ fn timestamp(instant: SystemTime) -> Result<String, TransferError> {
         .map_err(|_| ErrorCode::InternalError.into())
 }
 
+#[cfg(windows)]
 fn folder_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -699,11 +748,15 @@ fn incoming_view(transfer: &IncomingTransfer) -> TransferView {
 
 fn open_source(path: &Path, selection: FileSelection) -> Result<(File, FileView), TransferError> {
     // This handle excludes writers and deletion while the engine hashes and reads the same file.
+    #[cfg(windows)]
     let handle = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)
         .open(path)
         .map_err(storage_failed)?;
+    // The native picker owns this private copy for the lifetime of the send.
+    #[cfg(target_os = "ios")]
+    let handle = File::open(path).map_err(storage_failed)?;
     let metadata = handle.metadata().map_err(storage_failed)?;
     if !metadata.is_file() || metadata.len() > (1 << 53) - 1 {
         return Err(ErrorCode::InvalidRequest.into());
@@ -717,6 +770,7 @@ fn open_source(path: &Path, selection: FileSelection) -> Result<(File, FileView)
     ))
 }
 
+#[cfg(windows)]
 fn disk_free(path: &Path) -> Result<u64, TransferError> {
     let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut available = 0;
@@ -730,7 +784,7 @@ fn disk_free(path: &Path) -> Result<u64, TransferError> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
@@ -959,6 +1013,19 @@ mod tests {
             })
             .await;
 
+            // Model disk pressure and its recovery without allocating either amount.
+            let modeled_headroom = 256 * 1024 * 1024;
+            assert!(matches!(
+                right.respond_with_capacity(&first, true, |path| {
+                    assert_eq!(path, right.receiver.staging_directory());
+                    Ok(modeled_headroom + 7)
+                }),
+                Err(error) if error.code == ErrorCode::StorageFailed
+            ));
+            assert!(right.snapshot().transfers.iter().any(|transfer| {
+                transfer.id == first && transfer.status.state == State::Pending
+            }));
+
             thread::scope(|scope| {
                 let (checking_first, first_check) = mpsc::sync_channel(1);
                 let (release_first, first_release) = mpsc::sync_channel(1);
@@ -967,17 +1034,17 @@ mod tests {
                 let receiver = &right;
 
                 let approve_first = scope.spawn(move || {
-                    receiver.respond_with_capacity(&first, true, || {
+                    receiver.respond_with_capacity(&first, true, |_| {
                         checking_first.send(()).unwrap();
                         first_release.recv_timeout(Duration::from_secs(5)).unwrap();
-                        Ok(12)
+                        Ok(modeled_headroom + 12)
                     })
                 });
                 first_check.recv_timeout(Duration::from_secs(5)).unwrap();
 
                 let approve_second = scope.spawn(move || {
                     starting_second.send(()).unwrap();
-                    receiver.respond_with_capacity(&second, true, || {
+                    receiver.respond_with_capacity(&second, true, |_| {
                         checking_second.send(()).unwrap();
                         let written = receiver
                             .receiver
@@ -985,7 +1052,7 @@ mod tests {
                             .iter()
                             .map(|entry| entry.status.bytes_transferred)
                             .sum::<u64>();
-                        Ok(12u64.saturating_sub(written))
+                        Ok((modeled_headroom + 12).saturating_sub(written))
                     })
                 });
                 second_started.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1013,6 +1080,26 @@ mod tests {
                 .unwrap();
             assert_eq!(unapproved.status.state, State::Pending);
             assert!(!right.destination.join("second.bin").exists());
+            until(|| {
+                right.snapshot().transfers.into_iter().find(|transfer| {
+                    transfer.file.name == "first.bin" && transfer.status.state == State::Completed
+                })
+            })
+            .await;
+            assert_eq!(
+                right
+                    .respond_with_capacity(&unapproved.id, true, |_| Ok(modeled_headroom + 8))
+                    .unwrap()
+                    .status
+                    .state,
+                State::Accepted
+            );
+            until(|| {
+                right.snapshot().transfers.into_iter().find(|transfer| {
+                    transfer.file.name == "second.bin" && transfer.status.state == State::Completed
+                })
+            })
+            .await;
             stop_pair(left, right, &stop).await;
             left_storage.close().unwrap();
             right_storage.close().unwrap();

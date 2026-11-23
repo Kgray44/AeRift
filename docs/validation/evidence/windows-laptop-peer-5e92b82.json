@@ -1,0 +1,48 @@
+{
+  "scope": "Installed Windows app and local Rust peer on the same laptop",
+  "windowsAppSourceSha": "5e92b82d0169a66912ce26bc3eade7f6e645bb0c",
+  "windowsInstallerSha256": "aa6c362bde724ca9b83e42793b89d69bd656692eb4a38042b69276fe68b8da89",
+  "rustPeerSourceSha": "8c7ae08933e52dbf4dd024accf0081f108bd1e5e",
+  "rustPeerSha256": "eb9fcf639e56e754002b1385972d8909c73cc282f4850b5f8211364d861330d7",
+  "transfer": {
+    "scope": "physical Windows laptop app with local Rust peer",
+    "windowsAppSourceSha": "5e92b82d0169a66912ce26bc3eade7f6e645bb0c",
+    "rustPeerSha256": "eb9fcf639e56e754002b1385972d8909c73cc282f4850b5f8211364d861330d7",
+    "observedAtUtc": "2026-11-23T08:16:06.753Z",
+    "cameraOff": true,
+    "trustRemoved": true,
+    "receiveFolderRestored": true,
+    "results": [
+      {
+        "action": "decline",
+        "pairedWithApproval": true,
+        "unchangedBeforeConsent": true,
+        "outcome": "rejected",
+        "bytes": 0
+      },
+      {
+        "action": "accept",
+        "pairedWithApproval": true,
+        "unchangedBeforeConsent": true,
+        "outcome": "completed",
+        "bytes": 256,
+        "sha256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880"
+      }
+    ]
+  },
+  "restart": {
+    "windowsAppSourceSha": "5e92b82d0169a66912ce26bc3eade7f6e645bb0c",
+    "noTrustedDeviceAfterRestart": true,
+    "receiveFolderEmpty": true,
+    "observedAtUtc": "2026-11-23T08:16:47.993Z"
+  },
+  "outgoing": {
+    "status": "NOT TESTED",
+    "reason": "Windows Firewall dialog intercepted desktop input before the native picker opened"
+  },
+  "physicalWindowsIphoneValidated": false,
+  "screenshotSha256": {
+    "incoming": "edecbec979f6c3bc823ec6f13840e7973b27c4e1700602b6fae2e2278bf0365b",
+    "restart": "02e34620e881d070f9b9f7e688a7a06db7f0c1fd740059650196687beeed30b6"
+  }
+}
