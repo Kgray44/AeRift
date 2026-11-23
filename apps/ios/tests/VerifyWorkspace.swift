@@ -20,10 +20,10 @@ do {
 let visible = (request.results ?? [])
     .compactMap { $0.topCandidates(1).first?.string.lowercased() }
     .joined(separator: " ")
-let expectedControls = ["choose a file", "pair a device", "camera is off"]
+let expectedControls = ["workspace", "activity", "choose file", "pair a device", "signal ready"]
 let missing = expectedControls.filter { !visible.contains($0) }
 if !missing.isEmpty {
     fputs("Missing iPhone workspace controls: \(missing.joined(separator: ", "))\n", stderr)
     exit(EXIT_FAILURE)
 }
-print("Verified the file picker, pairing control and camera status in the iPhone workspace.")
+print("Verified workspace navigation, file selection, pairing and receiver readiness controls.")
