@@ -85,3 +85,18 @@ Measure one action per receipt on each platform. Open Settings from the transfer
 Use a local recording of the physical input and screen in the same shot. Keep cameras used by the app disabled and use synthetic filenames. Read millisecond timestamps from the video presentation timeline. Mark the first frame showing touch or key actuation and the first showing the Settings dialog. Record capture resolution in time, such as the frame rate or timestamp granularity. Keep the raw recording private and retain only redacted timestamps and evidence references in the receipt.
 
 Run `node tests/acceptance/ui-timing.mjs <measured-ui-receipt.json>`. The receipt has `commit` (full candidate SHA), `platform` (`windows` or `ios`), `environment`, `action`, `capture` (capture method, time resolution and evidence reference), and `observationMs` (the same prespecified response window for both phases). Its `idle` and `streaming` arrays contain entries with `inputMs`, `responseMs` and `observedThroughMs`. Use `null` for `responseMs` if the render is absent within the full observation window. The report counts missed actions separately and summarizes observed durations with p50, p95 and maximum. Compare the recorded behavior and timing against the physical acceptance criteria for the candidate.
+
+## Unified experience regression gates
+
+Run npm test for v1 protocol and shared experience contract tests. The contract tests cover object schema round trips, malformed and unsupported documents, live native picker binding versus stored objects, stable destination availability, mode and Ambient independence, the reduced-motion policy and stale navigation events. Retain the UI and gesture suites when integrating either shell.
+
+| Gate | Required evidence |
+| --- | --- |
+| Existing builds and startup | Build the exact integrated Windows and iOS commits. Launch an installed Windows build and a provisioned iPhone build. Record startup and interaction responsiveness on the actual target hardware. |
+| Discovery and pairing | Use a real Windows and iPhone on the same network. Pair, reconnect across app restart, exercise denial and revocation, and confirm locally stored trust and session state behave as intended. |
+| File and photo integrity | Send an ordinary file and an original iPhone photo to Windows using existing controls. Check sender and receiver statuses, identical SHA-256 and size, receiver approval and destination. Include a declined offer and a cancelled transfer. |
+| Theme, accessibility and navigation | Exercise theme switching, high contrast, reduced transparency and reduced motion. Verify keyboard and screen-reader operation, Escape, focus restoration, selected route announcements, fast route changes and the conventional desktop fallback. Check mobile safe areas and rotation. |
+| Mode, module and restart | Switch Simplified and Full during a live transfer and check its ID, progress and result. Toggle Ambient independently and hide and restore a module. Restart both apps and confirm applicable preferences, objects and trust persist. |
+| Gesture and permissions | Check bound object and intent through supported layout changes. On camera permission loss, focus interruption or a real target change, verify safe cancellation and zero duplicate offers. Check conventional input, local network denial, native picker refusal and receive-folder permission failure. |
+
+The Windows preview at 85b11e6 showed existing complete file and photo history and an offline paired iPhone before Mission 0 implementation. This observation establishes which running surface was reviewed. Record new transfers and physical checks on the integrated candidate in the release evidence.
