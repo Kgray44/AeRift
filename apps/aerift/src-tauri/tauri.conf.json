@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; connect-src ipc: http://ipc.localhost",
+      "csp": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' blob:",
       "devCsp": null
     }
   },

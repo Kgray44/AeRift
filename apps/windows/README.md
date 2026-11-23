@@ -1,17 +1,35 @@
 # AeRift on Windows
 
-Build with 64-bit Windows 11, the MSVC Rust toolchain, Visual Studio Build Tools with Desktop development with C++, Node.js 22.12 or later in the 22 release line, and Edge WebView2. See [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+Use 64-bit Windows 11, Node.js 22.12 or later in the 22 release line, stable MSVC Rust, Visual Studio Build Tools with Desktop development with C++, and Microsoft Edge WebView2. See [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+From the repository root:
 
 ```powershell
-Set-Location apps/aerift
-npm ci --workspaces=false
-npm run typecheck
-npm run tauri dev
-npm run tauri build -- --bundles nsis
+npm ci
+npm run build -w '@aerift/app'
+npm run tauri -w '@aerift/app' -- dev
+npm run tauri -w '@aerift/app' -- build --bundles nsis
 ```
 
-The installer is under `src-tauri/target/release/bundle/nsis/`. Install for the current user and launch AeRift from Start. The shell should open to Nearby devices with a Disconnected state. Close the window to exit. Record the commit, installer hash, Windows version, WebView2 version and any startup error. Use the [alpha acceptance gates](../../tests/README.md) for device and transfer validation.
+Run development and installer builds separately. The first Windows frontend build stages the exact MediaPipe runtime, model, and Apache license from the checked asset manifest. The installer embeds these files and needs no model download at runtime. The Windows workflow uploads the unsigned x64 installer, WebView screenshot, and JSON launch receipt.
 
-The first slice contains the native host and its launch screen. Discovery, pairing, transfer, camera, and GLASS integration remain pending. The initial NSIS packaging uses unsigned development builds.
+## Use the app
 
-The Windows app workflow packages on a hosted Windows runner, installs into its temporary directory, and captures the rendered WebView and launch receipt. Retrieve the installer, screenshot and receipt from the aerift-windows-x64 artifact on the corresponding Actions run.
+1. Open **Pair a device** on both apps. On either device, create an invitation and copy it to the other device. Connect, then approve the request on the invitation device.
+2. Choose a file or drop one regular file into the window. Select the online paired device and click **Send file**. The receiver sees an offer it can accept or decline.
+3. Use **Settings** to find the current receiving folder or choose one for the next app launch. The default is `Received` in AeRift's local app-data directory. Existing files keep their contents when a name conflicts.
+4. With a file and online paired device selected, click **Use camera gesture**. Wait for permission and preview. Show an open hand, make a fist, then open the hand when instructed. The same send action handles gesture release and the button. Use **Cancel gesture**, move focus away, or change the selection to release the camera. Settings offer two in-app camera shortcuts and an Off option.
+
+## Validate
+
+Run the native adapter and DPAPI tests from the repository root:
+
+```powershell
+cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --lib
+```
+
+The adapter test supplies loopback endpoints for two Windows-native sessions, requires pairing and explicit receive approval, and compares the actual saved bytes in both directions. Run the [device acceptance gates](../../tests/README.md) separately to qualify real LAN discovery, Windows 11 camera, physical iPhone, and hash-matched file transfers on the exact release builds.
+
+## Alpha limits
+
+Windows currently uses IPv4 peer endpoints. Devices must share a LAN that allows discovery and direct connections. A receive folder change takes effect on the next launch. Camera gestures offer outgoing files. Incoming acceptance uses the visible button. The Windows package is unsigned.
