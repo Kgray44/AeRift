@@ -12,9 +12,11 @@ import {
 import "@aerift/ui/styles.css";
 import type { AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { useCallback, useEffect, useState } from "react";
-import { desktopSettings, nativeAppPort, watchFileSelection, type ReceiveFolder } from "./windows/nativeAppPort";
+import { nativeAppPort } from "./nativeAppPort";
+import { desktopSettings, watchFileSelection, type ReceiveFolder } from "./windows/nativeAppPort";
 import { GestureCamera, cameraShortcutLabels, type CameraShortcut } from "./windows/GestureCamera";
-import { DeviceTrust } from "./windows/DeviceTrust";
+import { DeviceTrust } from "./DeviceTrust";
+import { IosApp } from "./ios/IosApp";
 
 const defaults: AppearanceSettings = {
   theme: "glass",
@@ -168,7 +170,11 @@ function WindowsApp() {
 }
 
 export function App() {
-  if (isTauri() && /Windows/.test(navigator.userAgent)) return <WindowsApp />;
+  if (isTauri()) {
+    if (/Windows/.test(navigator.userAgent)) return <WindowsApp />;
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) return <IosApp />;
+  }
   return (
     <ThemeProvider>
       <AppShell brand={<h1 className="aerift-title">AeRift</h1>}>

@@ -1,8 +1,10 @@
+#[cfg(target_os = "ios")]
+mod ios;
 #[cfg(windows)]
 mod protected_store;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "ios"))]
 mod runtime;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "ios"))]
 mod selection;
 #[cfg(windows)]
 mod windows;
@@ -14,12 +16,23 @@ pub fn run() {
     let builder = tauri::Builder::default();
 
     #[cfg(target_os = "ios")]
-    let builder = builder.plugin(tauri_plugin_aerift_ios::init());
+    let builder = builder
+        .plugin(tauri_plugin_aerift_ios::init())
+        .manage(runtime::AppRuntime::default())
+        .manage(selection::SelectionRegistry::default())
+        .invoke_handler(tauri::generate_handler![
+            ios::watch_app,
+            ios::unwatch_app,
+            ios::select_app_file,
+            ios::pair_app_peer,
+            ios::transfer_app_file,
+            ios::retry_ios_discovery,
+        ]);
 
     #[cfg(windows)]
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
-        .manage(runtime::DesktopRuntime::default())
+        .manage(runtime::AppRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             windows::watch_app,
@@ -37,10 +50,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to launch AeRift")
         .run(|_app, _event| {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "ios"))]
             if matches!(_event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
-                _app.state::<runtime::DesktopRuntime>().shutdown();
+                _app.state::<runtime::AppRuntime>().shutdown();
             }
         });
 }
