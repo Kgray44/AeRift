@@ -6,6 +6,9 @@ import { reconcilePeerSlots } from "./spatial-placement";
 import "./spatial.css";
 
 const icons = {
+  home: <path d="m3.5 11 8.5-7 8.5 7v8a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z" />,
+  rift: <><path d="M16.7 2.5C11 5 7.1 11 7.1 16.8c0 2.2.7 3.9 2.2 4.7M7.3 21.5c5.7-2.5 9.6-8.5 9.6-14.3 0-2.2-.7-3.9-2.2-4.7M4 12h16" /></>,
+  devices: <><rect x="2.5" y="4.5" width="15" height="11.5" rx="1.6" /><rect x="14.5" y="9.5" width="7" height="11" rx="1.5" /><path d="M6.5 20h5m-2.5-4v4" /></>,
   desktop: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></>,
   laptop: <><path d="M5 17V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v11M3 17h18l1 3H2z" /></>,
   phone: <><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M10.5 5h3m-2.5 14h2" /></>,

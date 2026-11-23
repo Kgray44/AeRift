@@ -1,14 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Button, Orbit, OrbitSurface, ThemeProvider, type OrbitShortcut } from "../../packages/ui/src";
+import {
+  AppBrand, AppShell, Button, ConnectionStatus, DeviceCard, GlassSurface, Orbit, OrbitSurface,
+  SettingsPanel, SpatialScene, ThemeProvider, TransferProgress, type AppearanceSettings, type OrbitShortcut,
+} from "../../packages/ui/src";
 import { getNavigation, restorePreferences, type DestinationId } from "@aerift/app-contract/experience";
-import { GlassOptics } from "../../packages/ui/src/GlassOptics";
+import type { Device, Transfer } from "@aerift/app-contract";
+import { RiftExperience, TransferObject } from "../../packages/ui/src/RiftExperience";
 import "../../packages/ui/src/styles.css";
 import "./orbit-lab.css";
 
+const devices: readonly Device[] = [
+  { id: "phone", name: "Mira’s iPhone", platform: "ios", online: true, paired: true },
+  { id: "studio", name: "Studio PC", platform: "windows", online: true, paired: true },
+  { id: "travel", name: "Travel laptop", platform: "windows", online: false, paired: true },
+];
+const currentTransfer: Transfer = {
+  id: "references", deviceId: "studio", file: { name: "Studio references.zip", sizeBytes: 32 * 1024 ** 2 },
+  direction: "outgoing", state: "transferring", bytesTransferred: 19 * 1024 ** 2,
+};
+const completedTransfer: Transfer = {
+  id: "notes", deviceId: "phone", file: { name: "Field notes.pdf", sizeBytes: 2 * 1024 ** 2 },
+  direction: "incoming", state: "completed", bytesTransferred: 2 * 1024 ** 2,
+};
+
 function OrbitLab() {
   const params = new URLSearchParams(location.search);
-  const [scheme, setScheme] = useState<"dark" | "light">(params.get("scheme") === "light" ? "light" : "dark");
+  const [scheme, setScheme] = useState<AppearanceSettings["scheme"]>(params.get("scheme") === "light" ? "light" : "dark");
   const [full, setFull] = useState(params.get("mode") !== "simplified");
   const [reduced, setReduced] = useState(params.has("reduced"));
   const [conventional, setConventional] = useState(params.has("conventional"));
@@ -18,7 +36,9 @@ function OrbitLab() {
   const [morphFrame, setMorphFrame] = useState(160);
   const frame = useRef(morphFrame);
   const [file, setFile] = useState("Field notes.pdf");
-  const [device, setDevice] = useState("Mira’s iPhone");
+  const [device, setDevice] = useState("phone");
+  const [transparency, setTransparency] = useState<AppearanceSettings["transparency"]>("system");
+  const [contrast, setContrast] = useState<AppearanceSettings["contrast"]>("system");
   const [module, setModule] = useState("Files");
   const surface = useRef<HTMLElement>(null);
   const navigation = getNavigation("desktop", restorePreferences({
@@ -44,50 +64,56 @@ function OrbitLab() {
     };
   }, [inspectMorph]);
 
-  return <ThemeProvider scheme={scheme} motion={reduced ? "reduce" : "system"}>
-    <div className="ae-shell orbit-lab">
-      <GlassOptics />
-      <header className="orbit-lab-header">
+  const appearance: AppearanceSettings = { theme: "glass", scheme, transparency, contrast, motion: reduced ? "reduce" : "system" };
+
+  return <ThemeProvider {...appearance}>
+    <AppShell hideToolbar>
+    <div className="orbit-lab">
+      <header className="ae-experience-nav orbit-lab-header">
         <Orbit destinations={destinations} active={active.id} onNavigate={setRoute} surfaceRef={surface}
           presentation={navigation.presentation === "conventional" ? "conventional" : "orbit"} shortcut={shortcut} reducedMotion={reduced}
           status={{ devices: "2 paired devices online", activity: "1 active transfer" }} />
-        <h1>AeRift</h1>
-        <span className="orbit-lab-online"><i /> Local network</span>
+        <GlassSurface material="chrome" className="ae-nav-brand"><AppBrand /></GlassSurface>
+        <GlassSurface material="chrome" className="ae-nav-tools orbit-lab-online">
+          <ConnectionStatus state="connected" label="Local network" />
+        </GlassSurface>
       </header>
-      <main>
-        <OrbitSurface ref={surface} aria-labelledby="orbit-lab-heading">
+      <OrbitSurface ref={surface} aria-labelledby="orbit-lab-heading">
           <div className="orbit-lab-destination">
             <h2 id="orbit-lab-heading" data-orbit-focus tabIndex={-1}>{active.label}</h2>
-            {route === "home" && <>
-              <p>Send and receive across your paired devices.</p>
-              <div className="orbit-lab-rows">
-                <div><strong>Recent transfer</strong><span>Reference images.zip</span></div>
-                <div><strong>Paired devices</strong><span>Mira’s iPhone · Studio PC</span></div>
-              </div>
-              <Button onClick={() => setRoute("rift")}>Open Rift</Button>
-            </>}
-            {route === "rift" && <>
-              <p>Choose what to send and where it should arrive.</p>
-              <div className="orbit-lab-rows">
-                <label>Selected file <input value={file} onChange={event => setFile(event.currentTarget.value)} /></label>
-                <label>Destination <select value={device} onChange={event => setDevice(event.currentTarget.value)}>
-                  <option>Mira’s iPhone</option><option>Studio PC</option>
-                </select></label>
-              </div>
-            </>}
-            {route === "devices" && <div className="orbit-lab-rows">
-              <div><strong>Mira’s iPhone</strong><span>Paired · Online</span></div>
-              <div><strong>Studio PC</strong><span>Paired · Online</span></div>
-              <div><strong>Travel laptop</strong><span>Paired · Offline</span></div>
+            {route === "home" && <div className="ae-workspace-view">
+              <SpatialScene devices={devices} platform="windows" discovery="available" selectedId={device}
+                onSelect={setDevice} onPair={() => setRoute("devices")} />
+              <GlassSurface material="chrome" className="ae-transfer-dock">
+                <Button onClick={() => setRoute("rift")}>Open Rift</Button>
+              </GlassSurface>
             </div>}
-            {route === "activity" && <div className="orbit-lab-rows">
-              <div><strong>Studio references.zip</strong><span>19 of 32 MB sent</span><progress max={32} value={19} /></div>
-              <div><strong>Field notes.pdf</strong><span>Received from Mira’s iPhone</span></div>
+            {route === "rift" && <>
+              <RiftExperience transfer={currentTransfer} deviceName="Studio PC" compactPath />
+              <GlassSurface material="chrome" className="ae-transfer-dock">
+                <TransferObject objectId="fixture" files={[{ name: file, sizeBytes: 2 * 1024 ** 2 }]} state="resting" />
+                <div className="orbit-lab-rows">
+                  <label>Selected file <input value={file} onChange={event => setFile(event.currentTarget.value)} /></label>
+                  <label>Destination <select value={device} onChange={event => setDevice(event.currentTarget.value)}>
+                    {devices.map(peer => <option key={peer.id} value={peer.id} disabled={!peer.online}>{peer.name}</option>)}
+                  </select></label>
+                </div>
+              </GlassSurface>
+            </>}
+            {route === "devices" && <div className="orbit-lab-device-list">
+              {devices.map(peer => <DeviceCard key={peer.id} device={peer} name={peer.name} selected={device === peer.id} onSelect={() => setDevice(peer.id)} />)}
+            </div>}
+            {route === "activity" && <div className="ae-activity-list">
+              <TransferProgress transfer={currentTransfer} deviceName="Studio PC" />
+              <TransferProgress transfer={completedTransfer} deviceName="Mira’s iPhone" />
             </div>}
             {route === "settings" && <div className="orbit-lab-rows">
-              <label>Theme <select value={scheme} onChange={event => setScheme(event.currentTarget.value === "light" ? "light" : "dark")}>
-                <option value="dark">Dark</option><option value="light">Light</option>
-              </select></label>
+              <SettingsPanel value={appearance} themes={[{ id: "glass", label: "GLASS" }]} onChange={settings => {
+                setScheme(settings.scheme);
+                setTransparency(settings.transparency);
+                setContrast(settings.contrast);
+                setReduced(settings.motion === "reduce");
+              }} />
               <label>Orbit shortcut <select value={shortcut} onChange={event => setShortcut(event.currentTarget.value as OrbitShortcut)}>
                 <option value="alt-o">Alt+O</option><option value="alt-shift-o">Alt+Shift+O</option><option value="off">Off</option>
               </select></label>
@@ -100,8 +126,7 @@ function OrbitLab() {
               <div><strong>{module}</strong><span>{module === "Files" ? file : module === "Photos" ? "Reference images.zip" : "Field notes"}</span></div>
             </div>}
           </div>
-        </OrbitSurface>
-      </main>
+      </OrbitSurface>
       <footer className="orbit-lab-controls" aria-label="Orbit lab controls">
         <strong>Orbit lab</strong>
         <label>Light theme <input type="checkbox" checked={scheme === "light"} onChange={event => setScheme(event.currentTarget.checked ? "light" : "dark")} /></label>
@@ -122,6 +147,7 @@ function OrbitLab() {
           }} /></label>}
       </footer>
     </div>
+    </AppShell>
   </ThemeProvider>;
 }
 

@@ -11,7 +11,7 @@ npm run test:ui
 npx vite --config tests/ui/vite.config.mts --host 127.0.0.1 --port 47781
 ```
 
-Open `http://127.0.0.1:47781/orbit.html`. The lab has fixture surfaces and keeps the selected file and target in memory across route changes. Switch between Full and Simplified, light and dark, reduced motion, or conventional navigation in the footer. Change the shortcut on the Settings fixture. Turn on **Inspect morph**, select a destination, and scrub **Morph frame**. Resize or select again while a frame is held to exercise interruption.
+Open `http://127.0.0.1:47781/orbit.html`. The lab composes the production AppShell, SpatialScene, dock, device cards, RiftExperience, Activity rows, and SettingsPanel from UI Overhaul with fixture data. It keeps the selected file and target in memory across route changes. Switch between Full and Simplified, light and dark, reduced motion, or conventional navigation in the footer. Change the shortcut on the Settings fixture. Turn on **Inspect morph**, select a destination, and scrub **Morph frame**. Resize or select again while a frame is held to exercise interruption.
 
 The lab is also built alongside the GLASS showcase. The browser harness uses Playwright installed in the environment and a running lab:
 
@@ -42,12 +42,12 @@ const surface = useRef<HTMLElement>(null);
 </OrbitSurface>
 ```
 
-Keep one stable `OrbitSurface` mounted across destination changes. Commit the controlled route on selection. Orbit takes the clicked orb's displayed bounds, then animates the clipped boundary and GLASS skin of that same live surface from those bounds. It frames the new content at its final layout throughout the reveal. The accessible heading receives focus on commit. The host keeps persistent transfer controllers above visual routing and continues to display consent, errors, and ongoing transfers as appropriate.
+Keep one stable `OrbitSurface` mounted across destination changes. Commit the controlled route on selection. Orbit takes the clicked orb's displayed bounds, then animates the clipped boundary and GLASS skin of that same live surface from those bounds. It reveals the new content within the opening bounds and settles into the existing host material hierarchy. The temporary animation skin clears at settlement, restoring the open workspace canvas and integrated surfaces. The accessible heading receives focus on commit. The host keeps persistent transfer controllers above visual routing and continues to display consent, errors, and ongoing transfers as appropriate.
 
 - Use `status` only for live destination feedback. The fixture demonstrates paired devices and active transfers.
 - `shortcut` accepts `alt-o` (default), `alt-shift-o`, or `off`. The shortcut is inactive while an editable field or modal has focus. The orb is independently keyboard accessible with Enter, Space, and arrow keys.
 - The fan falls back to a scrollable conventional list when its measured footprint exceeds the available viewport. Users can also choose the persistent conventional control.
-- Orbit uses the shared reduced-motion policy and existing GLASS and easing tokens. The bounded, Orbit-specific fan and morph animations cancel when superseded. Changes to layout during a morph settle into the new target. The component exposes opt-in lens roles for the shared optical renderer.
+- Orbit uses the shared reduced-motion policy and the GLASS materials, SpatialIcon family, and shared spring and easing tokens from UI Overhaul. The bounded, Orbit-specific fan and morph animations cancel when superseded. Changes to layout during a morph settle into the new target. The component exposes opt-in lens roles for the shared optical renderer.
 - Press-and-drag and contextual previews were evaluated for scope. The current interaction uses explicit click or keyboard activation. It keeps targets stable during hover and lets visible labels convey destination intent.
 
 ## Browser evidence

@@ -5,6 +5,7 @@ import {
 import { resolveMotion } from "@aerift/app-contract/experience";
 import { orbitNeighbor, orbitSlots, type OrbitArrow, type OrbitPoint } from "./orbit-geometry";
 import { useOrbitMorph } from "./orbit-surface";
+import { SpatialIcon } from "./SpatialScene";
 
 export interface OrbitDestination<Id extends string = string> {
   id: Id;
@@ -25,20 +26,10 @@ export interface OrbitProps<Id extends string> {
   status?: Partial<Record<Id, string>>;
 }
 
-const glyphs: Readonly<Record<string, string>> = {
-  home: "M3.5 11 12 4l8.5 7v8a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z",
-  rift: "M16.7 2.5C11 5 7.1 11 7.1 16.8c0 2.2.7 3.9 2.2 4.7M7.3 21.5c5.7-2.5 9.6-8.5 9.6-14.3 0-2.2-.7-3.9-2.2-4.7M4 12h16",
-  devices: "M14 17H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v2M6 20h8m-4-3v3m6-9h4a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z",
-  activity: "M3 12h4l2.5-6 4 12 2.5-6h5",
-  settings: "M5 6h14M5 12h14M5 18h14M8 4v4m8 2v4m-6 2v4",
-  workspace: "M4 4h7v7H4zM14 4h6v7h-6zM4 14h7v6H4zM14 14h6v6h-6z",
-};
-
 function DestinationIcon({ id }: { id: string }) {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65"
-    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d={glyphs[id] ?? "M12 3.5 20.5 12 12 20.5 3.5 12z"} />
-  </svg>;
+  const name = id === "home" || id === "rift" || id === "devices" || id === "activity" || id === "settings"
+    ? id : "workspace";
+  return <SpatialIcon name={name} size={23} />;
 }
 
 function reflect(event: PointerEvent<HTMLButtonElement>) {
@@ -241,7 +232,7 @@ export function Orbit<Id extends string>({
         setFocusFirst(true);
         setOpen(true);
       }}>
-      <span className="ae-orbit-orb" data-ae-lens-role="orb"><DestinationIcon id={current.icon ?? active} />
+      <span className="ae-orbit-orb ae-surface" data-material="chrome" data-ae-lens-role="orb"><DestinationIcon id={current.icon ?? active} />
         {status?.[active] && <span className="ae-orbit-indicator" aria-hidden="true" />}</span>
       <span className="ae-orbit-current">{current.label}<span aria-hidden="true">⌄</span></span>
     </button>
@@ -263,7 +254,7 @@ export function Orbit<Id extends string>({
           onKeyDown={event => navigateKey(event, index)}
           onClick={event => select(id, event.currentTarget)}
           aria-label={status?.[id] ? `${label}, ${status[id]}` : label}>
-          <span className="ae-orbit-orb" data-ae-lens-role="orb"><DestinationIcon id={icon ?? id} />
+          <span className="ae-orbit-orb ae-surface" data-material="chrome" data-ae-lens-role="orb"><DestinationIcon id={icon ?? id} />
             {status?.[id] && <span className="ae-orbit-indicator" aria-hidden="true" />}</span>
           <span className="ae-orbit-label">{label}</span>
         </button>;

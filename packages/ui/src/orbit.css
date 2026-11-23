@@ -1,6 +1,6 @@
 .ae-orbit {
   --orbit-size: clamp(3.125rem, 5vw, 3.625rem);
-  --orbit-spring: linear(0, .29 13%, .70 31%, .96 52%, 1.025 69%, 1.017 81%, 1);
+  --orbit-spring: var(--ae-motion-spring, var(--ae-ease));
   position: relative;
   z-index: var(--ae-layer-chrome);
   display: inline-flex;
@@ -34,6 +34,13 @@
   line-height: 1.15;
 }
 .ae-orbit-current > span { color: var(--ae-muted); }
+.ae-theme .ae-orbit-orb.ae-surface[data-material="chrome"] {
+  --ae-material-tint:
+    radial-gradient(ellipse at var(--orbit-pointer-x, 30%) var(--orbit-pointer-y, 18%),
+      var(--ae-optical-sheen, var(--ae-highlight)), transparent 64%),
+    var(--ae-chrome-tint);
+  --ae-material-filter: blur(4px) saturate(var(--ae-saturation));
+}
 .ae-orbit-orb {
   position: relative;
   display: grid;
@@ -44,11 +51,6 @@
   border: 1px solid var(--ae-optical-rim, var(--ae-edge));
   border-radius: 50%;
   color: var(--ae-text);
-  background:
-    radial-gradient(ellipse at var(--orbit-pointer-x, 30%) var(--orbit-pointer-y, 18%),
-      var(--ae-optical-sheen, var(--ae-highlight)), transparent 64%),
-    var(--ae-chrome-tint);
-  backdrop-filter: blur(4px) saturate(1.35);
   box-shadow: inset 0 -2px 6px var(--ae-optical-cool, var(--ae-edge)), inset 0 1px 1px var(--ae-highlight),
     0 4px 13px var(--ae-optical-shade, transparent);
   transition: scale 140ms var(--ae-ease), translate 140ms var(--ae-ease);
@@ -153,7 +155,7 @@
   text-align: start;
   border-radius: var(--ae-radius-content);
 }
-.ae-orbit[data-radial="false"] .ae-orbit-choice .ae-orbit-orb {
+.ae-theme .ae-orbit[data-radial="false"] .ae-orbit-choice .ae-orbit-orb.ae-surface[data-material="chrome"] {
   inline-size: 1.6rem;
   block-size: 1.6rem;
   border: 0;
@@ -171,6 +173,7 @@
 .ae-orbit-surface { position: relative; min-inline-size: 0; }
 .ae-theme .ae-orbit-skin {
   position: absolute;
+  visibility: hidden;
   inset: 0;
   pointer-events: none;
 }
@@ -184,11 +187,12 @@
   color: var(--ae-text);
 }
 .ae-orbit-surface[data-morphing="true"] .ae-orbit-skin {
+  visibility: visible;
   background-color: color-mix(in srgb, var(--ae-chrome-tint) 65%, var(--ae-optical-sheen, transparent));
 }
 .ae-orbit-surface[data-morphing="true"] .ae-orbit-content { will-change: opacity, translate; }
 
-.ae-theme:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-orbit-orb {
+.ae-theme:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-orbit-orb.ae-surface[data-material="chrome"] {
   background: var(--ae-chrome-solid);
   backdrop-filter: none;
   box-shadow: none;
@@ -198,7 +202,7 @@
   backdrop-filter: none !important;
 }
 @media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
-  .ae-theme .ae-orbit-orb {
+  .ae-theme .ae-orbit-orb.ae-surface[data-material="chrome"] {
     background: var(--ae-chrome-solid);
     backdrop-filter: none;
     box-shadow: none;
