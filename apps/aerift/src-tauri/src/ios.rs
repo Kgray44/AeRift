@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aerift_transfer::{ErrorCode, TransferError};
+use aerift_transfer::{ErrorCode, PeerId, TransferError};
 use tauri::{ipc::Channel, Manager, WebviewWindow};
 use uuid::Uuid;
 
@@ -12,13 +12,18 @@ use crate::{
 };
 
 async fn session(window: &WebviewWindow) -> Result<Arc<Session>, TransferError> {
-    if window.label() != "main" {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
+    require_main(window)?;
     window
         .state::<AppRuntime>()
         .ios_session(window.app_handle())
         .await
+}
+
+fn require_main(window: &WebviewWindow) -> Result<(), TransferError> {
+    if window.label() != "main" {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -48,17 +53,96 @@ pub(crate) async fn retry_ios_discovery(window: WebviewWindow) -> Result<(), Tra
 #[tauri::command]
 pub(crate) async fn select_app_file(
     window: WebviewWindow,
+    source: Option<tauri_plugin_aerift_ios::PickerSource>,
 ) -> Result<Option<FileSelection>, TransferError> {
-    if window.label() != "main" {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
+    require_main(&window)?;
     let registry = window.state::<SelectionRegistry>();
     let revision = registry.begin()?;
-    match tauri_plugin_aerift_ios::pick_file(window.app_handle()).await {
+    match tauri_plugin_aerift_ios::pick_file(window.app_handle(), source).await {
         Ok(Some(staged)) => registry.select_staged(revision, staged),
         Ok(None) => Ok(None),
         Err(_) => Err(ErrorCode::StorageFailed.into()),
     }
+}
+
+#[tauri::command]
+pub(crate) async fn present_ios_selection(
+    window: WebviewWindow,
+    selection_id: String,
+    action: tauri_plugin_aerift_ios::SelectionAction,
+) -> Result<(), TransferError> {
+    require_main(&window)?;
+    let (_, source) = window
+        .state::<SelectionRegistry>()
+        .lookup(&selection_id)
+        .ok_or(ErrorCode::InvalidRequest)?;
+    // Keep the staging copy alive until the system sheet has closed.
+    tauri_plugin_aerift_ios::present_selection(
+        window.app_handle(),
+        source.staged_selection(),
+        action,
+    )
+    .await
+    .map_err(|_| ErrorCode::InvalidRequest.into())
+}
+
+#[tauri::command]
+pub(crate) async fn stage_ios_text(
+    window: WebviewWindow,
+    text: String,
+    name: String,
+) -> Result<Option<FileSelection>, TransferError> {
+    if window.label() != "main" || text.is_empty() || text.len() > 128 * 1024 || name.len() > 180 {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    let registry = window.state::<SelectionRegistry>();
+    let revision = registry.begin()?;
+    match tauri_plugin_aerift_ios::stage_text(window.app_handle(), &text, &name).await {
+        Ok(Some(staged)) => registry.select_staged(revision, staged),
+        Ok(None) => Ok(None),
+        Err(_) => Err(ErrorCode::StorageFailed.into()),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn open_ios_browser(
+    window: WebviewWindow,
+    url: String,
+) -> Result<(), TransferError> {
+    if window.label() != "main" || url.len() > 4096 {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    tauri_plugin_aerift_ios::open_browser(window.app_handle(), &url)
+        .await
+        .map_err(|_| ErrorCode::InvalidRequest.into())
+}
+
+#[tauri::command]
+pub(crate) fn clear_app_file(
+    window: WebviewWindow,
+    selection_id: String,
+) -> Result<(), TransferError> {
+    require_main(&window)?;
+    window
+        .state::<SelectionRegistry>()
+        .consume(&selection_id)
+        .map(|_| ())
+}
+
+#[tauri::command]
+pub(crate) async fn set_receiver_ready(
+    window: WebviewWindow,
+    ready: bool,
+) -> Result<u64, TransferError> {
+    session(&window).await?.set_receiver_ready(ready)
+}
+
+#[tauri::command]
+pub(crate) async fn check_receiver(
+    window: WebviewWindow,
+    device_id: PeerId,
+) -> Result<bool, TransferError> {
+    session(&window).await?.check_receiver(device_id).await
 }
 
 #[tauri::command]

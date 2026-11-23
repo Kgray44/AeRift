@@ -1,5 +1,9 @@
 @import "./tokens.css";
 @import "./glass.css";
+@import "./motion.css";
+@import "./gesture.css";
+@import "./appearance.css";
+@import "./orbit.css";
 
 .ae-theme {
   color: var(--ae-text);

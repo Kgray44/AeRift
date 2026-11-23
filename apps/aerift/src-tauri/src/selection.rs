@@ -67,6 +67,13 @@ impl State {
     }
 }
 
+#[cfg(target_os = "ios")]
+impl SelectionSource {
+    pub(crate) fn staged_selection(&self) -> &StagedSelection {
+        &self._staging
+    }
+}
+
 impl SelectionRegistry {
     #[cfg(windows)]
     pub(crate) fn watch(&self, updates: Channel<SelectionUpdate>) -> Result<(), TransferError> {
@@ -146,10 +153,8 @@ impl SelectionRegistry {
             .then(|| (entry.details.clone(), entry.source.clone()))
     }
 
-    pub(crate) fn consume(&self, selection_id: &str) -> bool {
-        let Ok(mut state) = self.0.lock() else {
-            return false;
-        };
+    pub(crate) fn consume(&self, selection_id: &str) -> Result<bool, TransferError> {
+        let mut state = self.0.lock().map_err(|_| ErrorCode::InternalError)?;
         if state
             .selected
             .as_ref()
@@ -158,9 +163,9 @@ impl SelectionRegistry {
             state.selected = None;
             #[cfg(windows)]
             state.publish_selection();
-            return true;
+            return Ok(true);
         }
-        false
+        Ok(false)
     }
 
     #[cfg(windows)]
@@ -258,5 +263,38 @@ mod tests {
     #[test]
     fn reverse_drop_completion_preserves_the_newest_drop() {
         assert_latest_selection(true, true);
+    }
+
+    #[test]
+    fn clearing_a_stale_id_keeps_the_replacement_and_clearing_the_current_id_publishes() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("selection.bin");
+        fs::write(&path, b"keep the original file").unwrap();
+        let registry = SelectionRegistry::default();
+        let latest_update = Arc::new(Mutex::new(None));
+        let captured = Arc::clone(&latest_update);
+        registry
+            .watch(Channel::new(move |payload| {
+                let InvokeResponseBody::Json(json) = payload else {
+                    panic!("expected JSON")
+                };
+                *captured.lock().unwrap() =
+                    Some(serde_json::from_str::<serde_json::Value>(&json).unwrap());
+                Ok(())
+            }))
+            .unwrap();
+        let previous = registry
+            .select(registry.begin().unwrap(), &path, false)
+            .unwrap()
+            .unwrap();
+        let current = registry
+            .select(registry.begin().unwrap(), &path, false)
+            .unwrap()
+            .unwrap();
+        assert!(!registry.consume(&previous.selection_id).unwrap());
+        assert!(registry.lookup(&current.selection_id).is_some());
+        assert!(registry.consume(&current.selection_id).unwrap());
+        assert!(latest_update.lock().unwrap().as_ref().unwrap()["selection"].is_null());
+        assert_eq!(fs::read(&path).unwrap(), b"keep the original file");
     }
 }

@@ -56,6 +56,7 @@ struct PickerResponse {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("aerift-ios")
         .invoke_handler(tauri::generate_handler![
+            camera_commands::camera_authorized,
             camera_commands::camera_clock,
             camera_commands::register_camera_events,
             camera_commands::start_camera,
@@ -70,14 +71,94 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .build()
 }
 
-/// Opens the native source chooser. Cancellation resolves to `Ok(None)`.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PickerSource {
+    Files,
+    Photos,
+}
+
+#[derive(Serialize)]
+struct PickerArgs {
+    source: Option<PickerSource>,
+}
+
+/// Opens a native picker or the source chooser. Cancellation resolves to `Ok(None)`.
 /// Call from an asynchronous app command triggered by the trusted UI.
 pub async fn pick_file<R: Runtime>(
     app: &AppHandle<R>,
+    source: Option<PickerSource>,
 ) -> Result<Option<StagedSelection>, PluginInvokeError> {
     let picker = app.state::<IosPlatform<R>>();
-    let response: PickerResponse = picker.0.run_mobile_plugin_async("pickFile", ()).await?;
+    let response: PickerResponse = picker
+        .0
+        .run_mobile_plugin_async("pickFile", PickerArgs { source })
+        .await?;
     Ok(response.selection)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SelectionAction {
+    Preview,
+    Export,
+}
+
+#[derive(Serialize)]
+struct SelectionArgs<'a> {
+    path: &'a std::path::Path,
+    action: SelectionAction,
+}
+
+pub async fn present_selection<R: Runtime>(
+    app: &AppHandle<R>,
+    selection: &StagedSelection,
+    action: SelectionAction,
+) -> Result<(), PluginInvokeError> {
+    app.state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async(
+            "presentSelection",
+            SelectionArgs {
+                path: selection.path(),
+                action,
+            },
+        )
+        .await
+}
+
+#[derive(Serialize)]
+struct TextArgs<'a> {
+    text: &'a str,
+    name: &'a str,
+}
+
+pub async fn stage_text<R: Runtime>(
+    app: &AppHandle<R>,
+    text: &str,
+    name: &str,
+) -> Result<Option<StagedSelection>, PluginInvokeError> {
+    let response: PickerResponse = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("stageText", TextArgs { text, name })
+        .await?;
+    Ok(response.selection)
+}
+
+#[derive(Serialize)]
+struct BrowserArgs<'a> {
+    url: &'a str,
+}
+
+pub async fn open_browser<R: Runtime>(
+    app: &AppHandle<R>,
+    url: &str,
+) -> Result<(), PluginInvokeError> {
+    app.state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("openBrowser", BrowserArgs { url })
+        .await
 }
 
 #[derive(Deserialize, Serialize)]
@@ -154,6 +235,20 @@ pub async fn hand_camera_clock<R: Runtime>(app: &AppHandle<R>) -> Result<f64, Pl
         .run_mobile_plugin_async("cameraClock", ())
         .await?;
     Ok(clock.clock_ms)
+}
+
+#[derive(Deserialize)]
+struct CameraAuthorization {
+    authorized: bool,
+}
+
+async fn hand_camera_authorized<R: Runtime>(app: &AppHandle<R>) -> Result<bool, PluginInvokeError> {
+    let status: CameraAuthorization = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("cameraAuthorized", ())
+        .await?;
+    Ok(status.authorized)
 }
 
 /// Call only from an explicit foreground camera action. Reuse the app's

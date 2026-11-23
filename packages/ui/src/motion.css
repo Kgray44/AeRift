@@ -1,0 +1,320 @@
+.ae-theme {
+  --ae-motion-object: 360ms;
+  --ae-motion-flight: 520ms;
+  --ae-motion-rift: 780ms;
+  --ae-motion-spring: cubic-bezier(.19, 1.32, .32, 1);
+  --ae-motion-travel: cubic-bezier(.38, .08, .23, 1);
+  --ae-object-fill: linear-gradient(145deg, color-mix(in srgb, var(--ae-accent) 10%, var(--ae-content)), var(--ae-field));
+}
+
+.ae-object {
+  --ae-object-accent: var(--ae-accent);
+  --ae-object-edge: var(--ae-display-edge, var(--ae-edge));
+  --ae-object-lift: 0px;
+  --ae-object-scale-x: 1;
+  --ae-object-scale-y: 1;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  min-inline-size: 0;
+  padding: .35rem .6rem .35rem .35rem;
+  border: 1px solid var(--ae-object-edge);
+  border-radius: calc(var(--ae-radius-control) + .25rem);
+  background: var(--ae-object-fill);
+  color: var(--ae-text);
+  box-shadow: inset 0 1px var(--ae-highlight);
+  transform: translateY(var(--ae-object-lift)) scale(var(--ae-object-scale-x), var(--ae-object-scale-y));
+  transition: transform var(--ae-motion-object) var(--ae-motion-spring),
+    border-color var(--ae-duration-enter) var(--ae-ease);
+}
+
+.ae-object::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -.25rem;
+  border: 1px solid var(--ae-object-accent);
+  border-radius: calc(var(--ae-radius-control) + .5rem);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ae-motion-object) var(--ae-ease), transform var(--ae-motion-object) var(--ae-motion-spring);
+}
+
+.ae-object-icon {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  inline-size: 2.125rem;
+  block-size: 2.125rem;
+  border-radius: var(--ae-radius-control);
+  background: color-mix(in srgb, var(--ae-object-accent) 13%, var(--ae-field));
+  color: var(--ae-object-accent);
+}
+
+.ae-object-icon svg { inline-size: 1.35rem; block-size: 1.35rem; }
+.ae-object-icon img { inline-size: 100%; block-size: 100%; border-radius: inherit; object-fit: cover; }
+.ae-object[data-group="true"] .ae-object-icon { margin-inline: .2rem; }
+.ae-object[data-group="true"] .ae-object-icon::before {
+  content: "";
+  position: absolute;
+  inset: .12rem -.15rem -.12rem .25rem;
+  border-inline-end: 1px solid var(--ae-accent);
+  border-block-end: 1px solid var(--ae-accent);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.ae-object-copy { display: grid; min-inline-size: 0; line-height: 1.3; }
+.ae-object-copy :is(strong, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ae-object-copy strong { font-size: var(--ae-size-body); }
+.ae-object-copy small { margin-block-start: .125rem; }
+.ae-object-held { color: var(--ae-object-accent); font-size: var(--ae-size-caption); font-weight: 650; }
+
+.ae-object[data-object-state="anticipating"] { --ae-object-lift: -4px; --ae-object-edge: var(--ae-accent); }
+.ae-object[data-object-state="anticipating"]::before { opacity: .24; transform: scale(1.025); }
+.ae-object[data-object-state="held"] {
+  --ae-object-accent: var(--ae-signal-holding);
+  --ae-object-lift: -6px;
+  --ae-object-scale-x: .978;
+  --ae-object-scale-y: .978;
+  --ae-object-edge: var(--ae-object-accent);
+  animation: ae-object-grasp var(--ae-motion-object) var(--ae-motion-spring);
+}
+.ae-object[data-object-state="held"]::before { opacity: .34; transform: scale(1.03); }
+.ae-object[data-object-state="departing"] { animation: ae-object-depart var(--ae-motion-object) var(--ae-motion-travel); }
+.ae-object[data-object-state="arriving"] { animation: ae-object-arrive var(--ae-motion-object) var(--ae-motion-spring); }
+.ae-object[data-object-state="settled"] {
+  --ae-object-edge: var(--ae-success);
+  animation: ae-object-settle var(--ae-motion-object) var(--ae-motion-spring);
+}
+.ae-object[data-object-state="recovering"] { animation: ae-object-recover var(--ae-motion-object) var(--ae-motion-spring); }
+
+.ae-rift {
+  display: grid;
+  gap: .55rem;
+  min-inline-size: 0;
+  padding-block: .7rem;
+  border-block-start: 1px solid var(--ae-display-edge, var(--ae-edge));
+}
+.ae-rift-head { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: .65rem; }
+.ae-theme .ae-rift-head h2 { font-size: var(--ae-size-body); }
+.ae-rift-head span { color: var(--ae-display-muted, var(--ae-muted)); font-size: var(--ae-size-caption); overflow-wrap: anywhere; }
+.ae-rift-content { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .75rem; min-inline-size: 0; }
+.ae-rift-content > .ae-object { flex: 0 1 16rem; max-inline-size: 100%; }
+.ae-rift-feedback { display: grid; flex: 1 1 10rem; min-inline-size: 0; overflow-wrap: anywhere; }
+.ae-rift-status { font-weight: 600; }
+.ae-rift-measure { color: var(--ae-display-muted, var(--ae-muted)); font-size: var(--ae-size-caption); font-variant-numeric: tabular-nums; }
+.ae-rift-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
+.ae-rift[data-phase="delivered"] .ae-rift-status { color: var(--ae-success); }
+.ae-rift[data-phase="interrupted"] .ae-rift-status { color: var(--ae-warning); }
+.ae-rift[data-transfer-state="failed"] :is(.ae-rift-status, .ae-rift-error) { color: var(--ae-error); }
+
+.ae-rift-inline {
+  --ae-inline-ink: var(--ae-accent);
+  --ae-inline-origin: left;
+  --ae-inline-center: -50%;
+  position: relative;
+  display: grid;
+  align-items: center;
+  inline-size: min(100%, 19rem);
+  min-block-size: 1.65rem;
+  padding-inline: .9rem;
+  direction: ltr;
+}
+.ae-rift-inline[data-direction="incoming"] {
+  --ae-inline-origin: right;
+  --ae-inline-center: 50%;
+  direction: rtl;
+}
+.ae-rift-inline-track {
+  position: relative;
+  block-size: 2px;
+  border-radius: 999px;
+  background: var(--ae-track);
+}
+.ae-rift-inline-track::before, .ae-rift-inline-track::after {
+  content: "";
+  position: absolute;
+  inline-size: .5rem;
+  block-size: .5rem;
+  inset-block-start: 50%;
+  border: 1px solid var(--ae-inline-ink);
+  border-radius: 50%;
+  background: var(--ae-content);
+  translate: var(--ae-inline-center) -50%;
+}
+.ae-rift-inline-track::before { inset-inline-start: 0; }
+.ae-rift-inline-track::after { inset-inline-start: 100%; }
+.ae-rift-inline-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--ae-inline-ink);
+  transform-origin: var(--ae-inline-origin) center;
+  transition: transform var(--ae-duration-progress) var(--ae-motion-travel);
+}
+.ae-rift-inline-object {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 50%;
+  translate: var(--ae-inline-center) -50%;
+  display: grid;
+  place-items: center;
+  inline-size: 1.35rem;
+  block-size: 1.35rem;
+  border: 1px solid var(--ae-inline-ink);
+  border-radius: 50%;
+  color: var(--ae-inline-ink);
+  background: var(--ae-content);
+  transition: inset-inline-start var(--ae-duration-progress) var(--ae-motion-travel);
+}
+.ae-rift-inline-object svg { inline-size: .9rem; block-size: .9rem; }
+.ae-rift-inline[data-arrived="true"] { --ae-inline-ink: var(--ae-success); }
+.ae-rift-inline[data-arrived="true"] .ae-rift-inline-object svg {
+  animation: ae-object-settle var(--ae-motion-object) var(--ae-motion-spring);
+}
+
+.ae-rift-link {
+  --ae-rift-color: var(--ae-accent);
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.ae-rift-link:is([data-phase="ready"], [data-phase="accepted"]) { --ae-rift-color: var(--ae-signal-ready); }
+.ae-rift-link:is([data-phase="transport"], [data-phase="verifying"]) { --ae-rift-color: var(--ae-signal-transit); }
+.ae-rift-link[data-phase="interrupted"] { --ae-rift-color: var(--ae-warning); }
+.ae-rift-link[data-phase="delivered"] {
+  --ae-rift-color: var(--ae-success);
+  animation: ae-rift-close var(--ae-motion-rift) var(--ae-ease) both;
+}
+.ae-rift-vector { display: block; inline-size: 100%; block-size: 100%; overflow: hidden; }
+.ae-rift-vector :is(path, circle) {
+  fill: none;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.ae-rift-guide { stroke: var(--ae-rift-color); stroke-width: 1; opacity: .38; }
+.ae-rift-flow { stroke-width: 7; opacity: .35; transition: opacity var(--ae-duration-enter) var(--ae-ease); }
+.ae-rift-stop-source { stop-color: var(--ae-rift-color); stop-opacity: .07; }
+.ae-rift-stop-center { stop-color: var(--ae-rift-color); stop-opacity: .31; }
+.ae-rift-stop-destination { stop-color: var(--ae-rift-color); stop-opacity: .78; }
+.ae-rift-byte-path {
+  stroke: var(--ae-rift-color);
+  stroke-width: 1.8;
+  transition: stroke-dashoffset var(--ae-duration-progress) var(--ae-motion-travel);
+}
+.ae-rift-link[data-phase="interrupted"] .ae-rift-byte-path { opacity: 0; transition: none; }
+.ae-rift-field { stroke: var(--ae-rift-color); opacity: .22; }
+.ae-rift-origin { stroke-dasharray: 2 5; }
+.ae-rift-wave, .ae-rift-sparks { opacity: 0; }
+.ae-rift-wave { transform-box: fill-box; transform-origin: center; }
+.ae-rift-sparks { stroke: var(--ae-rift-color); stroke-width: 2.1; }
+.ae-rift-link:is([data-phase="selected"], [data-phase="offered"], [data-phase="interrupted"]) .ae-rift-guide { stroke-dasharray: 3 7; }
+.ae-rift-link:is([data-phase="selected"], [data-phase="interrupted"]) :is(.ae-rift-flow, .ae-rift-field) { opacity: 0; }
+.ae-rift-link:is([data-phase="ready"], [data-phase="accepted"], [data-phase="delivered"]) .ae-rift-wave {
+  animation: ae-rift-wave var(--ae-motion-rift) var(--ae-ease) both;
+}
+.ae-rift-link:is([data-phase="ready"], [data-phase="delivered"]) .ae-rift-sparks {
+  animation: ae-rift-sparks var(--ae-motion-rift) var(--ae-ease) both;
+}
+.ae-rift-link:is([data-phase="ready"], [data-phase="accepted"], [data-phase="transport"], [data-phase="verifying"]) .ae-rift-flow { opacity: .78; }
+.ae-rift-link:is([data-phase="ready"], [data-phase="accepted"], [data-phase="verifying"]) .ae-rift-mouth { opacity: .52; }
+
+.ae-rift-flight, .ae-rift-payload {
+  position: absolute;
+  place-items: center;
+  inline-size: 1.8rem;
+  block-size: 1.8rem;
+  border: 1px solid var(--ae-rift-color);
+  border-radius: 50%;
+  background: var(--ae-content);
+  color: var(--ae-rift-color);
+}
+.ae-rift-flight { display: grid; translate: -50% -50%; opacity: 0; }
+.ae-rift-flight svg, .ae-rift-payload svg { inline-size: 1.05rem; block-size: 1.05rem; }
+.ae-rift-launch[data-measured="true"] { animation: ae-rift-launch var(--ae-motion-flight) cubic-bezier(.48, .02, .85, .63) both; }
+.ae-rift-arrival {
+  z-index: 1;
+  animation: ae-rift-arrival var(--ae-motion-flight) var(--ae-motion-spring) both;
+}
+
+.ae-rift-payload { display: none; }
+@supports (offset-path: path("M 0 0 L 10 10")) {
+  .ae-rift-payload {
+    inset: 0 auto auto 0;
+    display: grid;
+    offset-rotate: 0deg;
+    transition: offset-distance var(--ae-duration-progress) var(--ae-motion-travel);
+  }
+  .ae-rift-payload svg {
+    animation: ae-object-depart var(--ae-motion-object) var(--ae-motion-travel);
+  }
+}
+
+@keyframes ae-object-grasp {
+  35% { transform: translateY(-6px) scale(.94, .915); }
+  67% { transform: translateY(-7px) scale(.992); }
+}
+@keyframes ae-object-depart {
+  20% { transform: scale(.96, .92); }
+  52% { transform: translateX(.25rem) scale(1.028, .985); }
+}
+@keyframes ae-object-arrive {
+  from { opacity: .65; transform: translateY(-.4rem) scale(.965); }
+}
+@keyframes ae-object-settle {
+  from { transform: translateY(-.3rem) scale(.96); }
+  60% { transform: translateY(.075rem) scale(1.01, .985); }
+}
+@keyframes ae-object-recover {
+  from { transform: translateY(-.25rem) scale(.975); }
+}
+@keyframes ae-rift-wave {
+  from { transform: scale(.85); opacity: .63; }
+  to { transform: scale(1.38); opacity: 0; }
+}
+@keyframes ae-rift-sparks {
+  0%, 100% { opacity: 0; }
+  25% { opacity: .72; }
+}
+@keyframes ae-rift-close {
+  0%, 19% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ae-rift-launch {
+  from { opacity: .82; transform: translate(var(--ae-launch-x), var(--ae-launch-y)) scale(1.08); }
+  76% { opacity: .78; }
+  to { opacity: 0; transform: scale(.55, .82); }
+}
+@keyframes ae-rift-arrival {
+  from { opacity: .2; transform: translateY(1.6rem) scale(.48, .68); }
+  53% { opacity: 1; }
+  to { opacity: 0; transform: translateY(4rem) scale(1.08); }
+}
+
+/* The same state remains visible in the status, object border and static route. */
+.ae-theme[data-motion="reduce"] { --ae-motion-object: 0ms; --ae-motion-flight: 0ms; --ae-motion-rift: 0ms; }
+.ae-theme[data-motion="reduce"] .ae-object { transform: none; }
+.ae-theme[data-motion="reduce"] :is(.ae-rift-payload, .ae-rift-flight) { display: none; }
+.ae-theme[data-transparency="reduce"] { --ae-object-fill: var(--ae-content); }
+.ae-theme[data-transparency="reduce"] .ae-rift-flow { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ae-theme { --ae-motion-object: 0ms; --ae-motion-flight: 0ms; --ae-motion-rift: 0ms; }
+  .ae-theme .ae-object { transform: none; }
+  .ae-theme :is(.ae-rift-payload, .ae-rift-flight) { display: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .ae-theme { --ae-object-fill: var(--ae-content); }
+  .ae-rift-flow { display: none; }
+}
+@media (forced-colors: active) {
+  .ae-object { --ae-object-edge: CanvasText; }
+  .ae-object-icon, .ae-rift-payload { border: 1px solid CanvasText; }
+  .ae-rift-link { --ae-rift-color: Highlight; }
+  .ae-rift-flow, .ae-rift-sparks { display: none; }
+}

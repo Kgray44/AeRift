@@ -1,4 +1,4 @@
-use aerift_transfer::{ErrorCode, TransferError};
+use aerift_transfer::{ErrorCode, PeerId, TransferError};
 use std::sync::Arc;
 use tauri::{ipc::Channel, DragDropEvent, Manager, Webview, WebviewEvent, Wry};
 use tauri_plugin_dialog::DialogExt;
@@ -14,8 +14,16 @@ use crate::{
 };
 
 async fn session(window: &tauri::WebviewWindow) -> Result<Arc<Session>, TransferError> {
+    require_main(window)?;
     let root = window.path().app_local_data_dir().map_err(storage_failed)?;
     window.state::<AppRuntime>().session(root).await
+}
+
+fn require_main(window: &tauri::WebviewWindow) -> Result<(), TransferError> {
+    if window.label() != "main" {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -61,6 +69,34 @@ pub(crate) async fn select_app_file(
     })
     .await
     .map_err(|_| ErrorCode::InternalError)?
+}
+
+#[tauri::command]
+pub(crate) fn clear_app_file(
+    window: tauri::WebviewWindow,
+    selection_id: String,
+) -> Result<(), TransferError> {
+    require_main(&window)?;
+    window
+        .state::<SelectionRegistry>()
+        .consume(&selection_id)
+        .map(|_| ())
+}
+
+#[tauri::command]
+pub(crate) async fn set_receiver_ready(
+    window: tauri::WebviewWindow,
+    ready: bool,
+) -> Result<u64, TransferError> {
+    session(&window).await?.set_receiver_ready(ready)
+}
+
+#[tauri::command]
+pub(crate) async fn check_receiver(
+    window: tauri::WebviewWindow,
+    device_id: PeerId,
+) -> Result<bool, TransferError> {
+    session(&window).await?.check_receiver(device_id).await
 }
 
 #[tauri::command]

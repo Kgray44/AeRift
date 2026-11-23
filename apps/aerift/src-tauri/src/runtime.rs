@@ -54,6 +54,7 @@ const RECEIVE_LIMITS: ReceiveLimits = ReceiveLimits {
 };
 const DECISION_TIMEOUT: Duration = Duration::from_secs(300);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const RECEIVER_READY_MILLIS: u64 = 45_000;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +91,7 @@ enum Direction {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TransferView {
     id: String,
+    interaction_id: Uuid,
     device_id: PeerId,
     direction: Direction,
     file: FileView,
@@ -218,7 +220,7 @@ impl AppRuntime {
     #[cfg(windows)]
     pub(crate) async fn session(&self, root: PathBuf) -> Result<Arc<Session>, TransferError> {
         self.session
-            .get_or_try_init(|| Session::open(root, self.stop.child_token()))
+            .get_or_try_init(|| Session::open(root, self.stop.child_token(), true))
             .await
             .map(Arc::clone)
     }
@@ -276,6 +278,18 @@ impl AppRuntime {
     }
 
     #[cfg(windows)]
+    pub(crate) fn desktop_transfer_preview(
+        &self,
+        transfer_id: Option<&str>,
+    ) -> Option<TransferView> {
+        let transfers = self.session.get()?.snapshot().transfers;
+        transfers.into_iter().find(|transfer| match transfer_id {
+            Some(id) => transfer.id == id,
+            None => !transfer.status.state.is_terminal(),
+        })
+    }
+
+    #[cfg(windows)]
     pub(crate) fn receive_directory(&self) -> Option<PathBuf> {
         self.session
             .get()
@@ -289,7 +303,11 @@ impl AppRuntime {
 
 impl Session {
     #[cfg(windows)]
-    async fn open(root: PathBuf, stop: CancellationToken) -> Result<Arc<Self>, TransferError> {
+    async fn open(
+        root: PathBuf,
+        stop: CancellationToken,
+        lan_discovery: bool,
+    ) -> Result<Arc<Self>, TransferError> {
         let prepare_root = root.clone();
         let (profile_lock, destination, peer, receiver) =
             tauri::async_runtime::spawn_blocking(move || {
@@ -323,19 +341,16 @@ impl Session {
         let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
             .await
             .map_err(|_| ErrorCode::NetworkError)?;
-        let mut discovery = Discovery::start(
-            peer.pairing().device(),
-            listener
-                .local_addr()
-                .map_err(|_| ErrorCode::NetworkError)?
-                .port(),
-        )?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| ErrorCode::NetworkError)?
+            .port();
+        let discovery = lan_discovery
+            .then(|| Discovery::start(peer.pairing().device(), port))
+            .transpose()?;
         let session = Arc::new(Self {
             #[cfg(test)]
-            port: listener
-                .local_addr()
-                .map_err(|_| ErrorCode::NetworkError)?
-                .port(),
+            port,
             #[cfg(test)]
             root,
             destination,
@@ -344,7 +359,9 @@ impl Session {
             receiver,
             receive_approvals: Mutex::new(()),
             state: Mutex::new(LiveState {
-                peers: discovery.snapshot(),
+                peers: discovery
+                    .as_ref()
+                    .map_or_else(Vec::new, Discovery::snapshot),
                 ..LiveState::default()
             }),
             changes: watch::channel(0).0,
@@ -353,6 +370,9 @@ impl Session {
         let active = Arc::clone(&session);
         tauri::async_runtime::spawn(async move {
             let browse = async {
+                let Some(mut discovery) = discovery else {
+                    return std::future::pending::<()>().await;
+                };
                 while let Ok(peers) = discovery.changed().await {
                     lock(&active.state).peers = peers;
                     active.changed();
@@ -526,6 +546,33 @@ impl Session {
         }
     }
 
+    pub(crate) fn set_receiver_ready(&self, ready: bool) -> Result<u64, TransferError> {
+        // Serialize against the native suspension callback so an in-flight
+        // webview command cannot reopen a cleared background lease.
+        #[cfg(target_os = "ios")]
+        let state = lock(&self.state);
+        #[cfg(target_os = "ios")]
+        if ready && matches!(state.local_network, Some(BonjourState::Suspended)) {
+            return Err(ErrorCode::PeerUnavailable.into());
+        }
+        let deadline = ready
+            .then(|| tokio::time::Instant::now() + Duration::from_millis(RECEIVER_READY_MILLIS));
+        self.receiver.set_ready_until(deadline);
+        Ok(if ready { RECEIVER_READY_MILLIS } else { 0 })
+    }
+
+    pub(crate) async fn check_receiver(&self, device_id: PeerId) -> Result<bool, TransferError> {
+        self.peer
+            .sender(
+                self.endpoint(device_id)?,
+                device_id,
+                DECISION_TIMEOUT,
+                UPLOAD_TIMEOUT,
+            )?
+            .receiver_ready()
+            .await
+    }
+
     async fn offer(
         self: &Arc<Self>,
         registry: &SelectionRegistry,
@@ -547,9 +594,11 @@ impl Session {
                 .await
                 .map_err(|_| ErrorCode::InternalError)??;
         let (hold, file) = opened;
-        let id = Uuid::new_v4().to_string();
+        let interaction_id = Uuid::new_v4();
+        let id = interaction_id.to_string();
         let view = TransferView {
             id: id.clone(),
+            interaction_id,
             device_id,
             direction: Direction::Outgoing,
             file,
@@ -570,7 +619,7 @@ impl Session {
                     .ok_or(ErrorCode::Conflict)?;
                 state.outgoing.remove(oldest);
             }
-            if !registry.consume(selection_id) {
+            if !registry.consume(selection_id)? {
                 return Err(ErrorCode::InvalidRequest.into());
             }
             state.outgoing.push(Outgoing {
@@ -585,9 +634,15 @@ impl Session {
             let callback = Arc::clone(&active);
             let receipt_id = id.clone();
             let result = sender
-                .send_file(&source.path, &name, cancel, move |_, status| {
-                    callback.outgoing_update(&receipt_id, Ok(status));
-                })
+                .send_file_with_id(
+                    interaction_id,
+                    &source.path,
+                    &name,
+                    cancel,
+                    move |_, status| {
+                        callback.outgoing_update(&receipt_id, Ok(status));
+                    },
+                )
                 .await;
             active.outgoing_update(&id, result);
             drop(hold);
@@ -736,6 +791,7 @@ fn incoming_id(transfer: &IncomingTransfer) -> String {
 fn incoming_view(transfer: &IncomingTransfer) -> TransferView {
     TransferView {
         id: incoming_id(transfer),
+        interaction_id: transfer.key.id,
         device_id: transfer.key.peer,
         direction: Direction::Incoming,
         file: FileView {
@@ -854,6 +910,7 @@ mod tests {
         })
         .await;
         assert!(!receiver.destination.join(name).exists());
+        assert_eq!(incoming.interaction_id, outgoing.interaction_id);
 
         receiver
             .transfer(
@@ -891,10 +948,11 @@ mod tests {
         right_root: &Path,
         stop: &CancellationToken,
     ) -> (Arc<Session>, Arc<Session>) {
-        let left = Session::open(left_root.into(), stop.child_token())
+        // The fixture supplies deterministic loopback peers. A live LAN browse would replace them.
+        let left = Session::open(left_root.into(), stop.child_token(), false)
             .await
             .unwrap();
-        let right = Session::open(right_root.into(), stop.child_token())
+        let right = Session::open(right_root.into(), stop.child_token(), false)
             .await
             .unwrap();
         supply_loopback_endpoint(&left, &right);
@@ -950,6 +1008,10 @@ mod tests {
                 Identity::load_or_create(&WindowsIdentity::new(left_storage.path())).unwrap();
             assert_eq!(recovered.id(), left.peer.pairing().device().id);
 
+            assert!(!left.check_receiver(known).await.unwrap());
+            assert_eq!(right.set_receiver_ready(true).unwrap(), 45_000);
+            assert!(left.check_receiver(known).await.unwrap());
+
             let binary: Vec<u8> = (0..160_001).map(|index| (index % 251) as u8).collect();
             send_and_check(&left, &right, "from-left.bin", &binary).await;
             send_and_check(
@@ -959,6 +1021,8 @@ mod tests {
                 b"AeRift right-to-left fixture",
             )
             .await;
+            assert_eq!(right.set_receiver_ready(false).unwrap(), 0);
+            assert!(!left.check_receiver(known).await.unwrap());
             left.pair(PairRequest::Revoke { device_id: known })
                 .await
                 .unwrap();

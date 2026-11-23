@@ -1,0 +1,426 @@
+.ae-shell[data-experience="spatial"] .ae-main { padding-block: 0; }
+.ae-experience-nav {
+  position: relative;
+  z-index: var(--ae-layer-chrome);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(.35rem, 1.3vw, 1rem);
+  inline-size: min(100%, 65rem);
+  margin: 0 auto;
+}
+.ae-nav-brand, .ae-nav-tools, .ae-nav-destinations {
+  display: flex;
+  align-items: center;
+  gap: .275rem;
+  min-inline-size: 0;
+  min-block-size: 3.2rem;
+}
+.ae-nav-brand { gap: .45rem; justify-self: start; padding-inline: .36rem .92rem; }
+.ae-nav-brand .ae-mark { inline-size: 2.15rem; block-size: 2.15rem; }
+.ae-nav-tools { justify-content: end; justify-self: end; flex-wrap: wrap; max-inline-size: 100%; padding-inline: .3rem; }
+.ae-nav-destinations { justify-content: center; padding: .19rem; }
+.ae-nav-destinations > nav {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  align-items: center;
+  isolation: isolate;
+}
+.ae-nav-indicator {
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto 0 0;
+  inline-size: 50%;
+  border-radius: 2rem;
+  border: 1px solid color-mix(in srgb, var(--ae-focus) 22%, var(--ae-edge));
+  background: color-mix(in srgb, var(--ae-field) 82%, transparent);
+  box-shadow: inset 0 1px var(--ae-highlight);
+  pointer-events: none;
+  transition: translate var(--ae-duration-enter) var(--ae-ease);
+}
+.ae-experience-nav[data-destination="activity"] .ae-nav-indicator { translate: 100% 0; }
+.ae-theme .ae-nav-destinations :is(a, button.ae-button[data-variant]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .36rem;
+  min-block-size: var(--ae-target);
+  padding: .4rem .9rem;
+  color: var(--ae-display-muted, var(--ae-muted));
+  font-weight: 650;
+  text-decoration: none;
+  border-radius: 2rem;
+  transition: color var(--ae-duration-quick) var(--ae-ease);
+}
+.ae-theme .ae-nav-destinations :is(a, button.ae-button[data-variant])[aria-current] {
+  color: var(--ae-text);
+}
+.ae-theme .ae-nav-destinations :is(a, button.ae-button[data-variant]):hover { color: var(--ae-text); }
+.ae-nav-destinations svg, .ae-nav-tools svg { flex: none; }
+.ae-theme .ae-nav-tools .ae-control-gear { padding-inline: .62rem; border-radius: 50%; }
+.ae-nav-tools .ae-camera-indicator { overflow-wrap: anywhere; }
+
+.ae-transfer-space {
+  inline-size: min(100%, 66rem);
+  margin-inline: auto;
+  display: grid;
+  gap: .75rem;
+  min-inline-size: 0;
+}
+.ae-transfer-space > section[hidden] { display: none; }
+.ae-transfer-space:has(> .ae-rift-board:not([hidden])) .ae-workspace-view { --ae-scene-budget: 24rem; }
+.ae-offer-notice { inline-size: min(100%, 65rem); margin-inline: auto; }
+.ae-offer-notice:has(button) { display: flex; justify-content: flex-end; }
+.ae-shell:has(.ae-offer-notice button) .ae-workspace-view { --ae-scene-budget: 27rem; }
+.ae-spatial-scene { container-type: inline-size; min-inline-size: 0; }
+.ae-spatial-stage {
+  --ae-stage-compact: 1;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  gap: .36rem;
+}
+.ae-spatial-local, .ae-spatial-peer {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: .48rem;
+  inline-size: 10rem;
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+.ae-spatial-local {
+  --ae-position-x: 50%;
+  --ae-position-y: 46%;
+  --ae-glyph-size: var(--ae-local-glyph, 6.35rem);
+  justify-self: center;
+  margin-block: 1.75rem 1rem;
+}
+.ae-spatial-peer {
+  --ae-position-x: 76%;
+  --ae-position-y: 48%;
+  --ae-glyph-size: var(--ae-peer-glyph, 2.9rem);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  justify-items: start;
+  text-align: start;
+  inline-size: 100%;
+  gap: .8rem;
+  min-block-size: var(--ae-target);
+  padding-block: .25rem;
+  border-block-end: 1px solid var(--ae-display-edge, var(--ae-edge));
+  cursor: pointer;
+}
+.ae-spatial-peer[data-slot="1"] { --ae-position-x: 22%; --ae-position-y: 43%; }
+.ae-spatial-peer[data-slot="2"] { --ae-position-x: 65%; --ae-position-y: 15%; }
+.ae-spatial-peer[data-slot="3"] { --ae-position-x: 33%; --ae-position-y: 14%; }
+.ae-spatial-peer[data-slot="4"] { --ae-position-x: 66%; --ae-position-y: 80%; }
+.ae-spatial-peer[data-slot="5"] { --ae-position-x: 32%; --ae-position-y: 81%; }
+.ae-spatial-peer-group { display: grid; gap: .36rem; padding: .35rem; min-inline-size: 0; }
+.ae-spatial-stage[data-crowded="true"] .ae-spatial-peer-group { max-block-size: 17rem; overflow-y: auto; }
+.ae-spatial-radio {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.ae-spatial-peer:has(.ae-spatial-radio:disabled) { cursor: default; }
+.ae-spatial-caption { display: grid; justify-items: inherit; gap: .08rem; min-inline-size: 0; max-inline-size: 100%; }
+.ae-spatial-caption :is(strong, small) { overflow-wrap: anywhere; }
+.ae-spatial-caption strong { font-weight: 650; line-height: 1.25; }
+.ae-spatial-local .ae-spatial-caption strong { font-size: 1.1rem; letter-spacing: -.015em; }
+.ae-spatial-presence { display: flex; align-items: center; gap: .3rem; font-size: .75rem; line-height: 1.35; }
+.ae-spatial-presence::before {
+  content: "";
+  inline-size: .34rem;
+  block-size: .34rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ae-device-signal, var(--ae-muted));
+}
+.ae-spatial-detail { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+.ae-spatial-glyph {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  inline-size: var(--ae-glyph-size);
+  block-size: var(--ae-glyph-size);
+  translate: 0 var(--ae-object-rise, 0);
+  transition: outline-color var(--ae-duration-enter) var(--ae-ease), color var(--ae-duration-quick) var(--ae-ease),
+    opacity var(--ae-duration-enter) var(--ae-ease), translate var(--ae-motion-object, var(--ae-duration-enter)) var(--ae-motion-spring, var(--ae-ease));
+  outline: 1px solid transparent;
+  outline-offset: 3px;
+  pointer-events: none;
+}
+.ae-theme .ae-spatial-scene .ae-spatial-peer .ae-spatial-glyph[data-material="chrome"] {
+  border-radius: var(--ae-peer-radius, 1rem);
+}
+.ae-spatial-peer .ae-spatial-glyph > svg {
+  inline-size: var(--ae-peer-icon, 1.42rem);
+  block-size: var(--ae-peer-icon, 1.42rem);
+}
+.ae-theme .ae-spatial-scene .ae-spatial-local .ae-spatial-glyph[data-material="chrome"] {
+  border-radius: var(--ae-local-radius, 2.15rem);
+}
+.ae-spatial-local .ae-spatial-glyph > svg { inline-size: var(--ae-local-icon, 2.75rem); block-size: var(--ae-local-icon, 2.75rem); }
+.ae-theme[data-ae-theme="glass"] .ae-spatial-glyph::before,
+.ae-theme[data-ae-theme="glass"] .ae-spatial-glyph::after {
+  content: "";
+  position: absolute;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.ae-theme[data-ae-theme="glass"] .ae-spatial-glyph::before {
+  z-index: -1;
+  inset: 1px;
+  background:
+    radial-gradient(ellipse at 9% 2%, var(--ae-optical-sheen), transparent 55%),
+    radial-gradient(ellipse at 82% 104%, var(--ae-optical-cool), transparent 67%);
+  box-shadow: 0 .45rem .9rem var(--ae-optical-shade), inset 0 1px 1px var(--ae-optical-rim),
+    inset 0 -.16rem .25rem var(--ae-optical-cool);
+}
+.ae-theme[data-ae-theme="glass"] .ae-spatial-glyph::after {
+  inset: 5% 5% auto;
+  block-size: 84%;
+  border: 1px solid transparent;
+  border-block-start-color: var(--ae-optical-rim);
+  opacity: .39;
+}
+.ae-theme[data-ae-theme="glass"] .ae-spatial-local .ae-spatial-glyph::before {
+  background:
+    radial-gradient(ellipse at 8% 0%, var(--ae-optical-sheen), transparent 50%),
+    radial-gradient(ellipse at 77% 106%, var(--ae-optical-cool), transparent 64%),
+    linear-gradient(155deg, transparent 42%, var(--ae-optical-cool), transparent 78%);
+  box-shadow: 0 .65rem 1.55rem var(--ae-optical-shade), inset 0 1px 2px var(--ae-optical-rim),
+    inset 0 -.18rem .45rem var(--ae-optical-cool);
+}
+.ae-spatial-peer[data-peer-state="offline"] .ae-spatial-glyph { opacity: .54; }
+.ae-spatial-peer[data-peer-state="offline"] strong { color: var(--ae-display-muted, var(--ae-muted)); font-weight: 600; }
+.ae-spatial-peer[data-peer-state="unpaired"] .ae-spatial-glyph { opacity: .7; }
+.ae-spatial-peer[data-peer-state="available"] { --ae-device-signal: var(--ae-success); }
+.ae-spatial-peer[data-selected="true"] { --ae-device-signal: var(--ae-focus); }
+.ae-spatial-peer[data-selected="true"] .ae-spatial-glyph { outline-color: var(--ae-focus); }
+@media (hover: hover) and (pointer: fine) {
+  .ae-spatial-peer:has(.ae-spatial-radio:not(:disabled):hover) .ae-spatial-glyph {
+    --ae-object-rise: calc(var(--ae-enter-distance) * -.38);
+    outline-color: var(--ae-focus);
+  }
+}
+.ae-spatial-peer:has(.ae-spatial-radio:focus-visible) .ae-spatial-glyph {
+  outline: 2px solid var(--ae-focus);
+  outline-offset: 4px;
+}
+.ae-spatial-peer { animation: ae-peer-arrival var(--ae-duration-enter) var(--ae-ease) both; }
+@keyframes ae-peer-arrival { from { opacity: 0; } }
+.ae-spatial-stage :is([data-peer-state="ready"], [data-peer-state="active"]) { --ae-device-signal: var(--ae-accent); }
+.ae-spatial-stage :is([data-peer-state="ready"], [data-peer-state="active"]) .ae-spatial-glyph {
+  color: var(--ae-device-signal);
+  outline-color: var(--ae-device-signal);
+}
+.ae-spatial-stage [data-peer-state="ready"] .ae-spatial-glyph { animation: ae-peer-ready var(--ae-motion-object, var(--ae-duration-enter)) var(--ae-ease) both; }
+.ae-spatial-stage [data-peer-state="offered"] .ae-spatial-glyph { outline: 1px dashed var(--ae-accent); }
+.ae-spatial-peer[data-peer-state="interrupted"] { --ae-device-signal: var(--ae-warning); }
+.ae-spatial-peer[data-peer-state="interrupted"] .ae-spatial-glyph { color: var(--ae-device-signal); }
+@keyframes ae-peer-ready { from { outline-offset: 11px; } }
+.ae-spatial-field {
+  position: absolute;
+  z-index: -1;
+  inset: calc(var(--ae-glyph-size) / 2) auto auto 50%;
+  inline-size: var(--ae-spatial-field-size, 11rem);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ae-focus) 11%, transparent), transparent 71%);
+  opacity: var(--ae-field-emphasis, 1);
+  transition: opacity var(--ae-duration-enter) var(--ae-ease);
+}
+.ae-spatial-field span {
+  position: absolute;
+  inset: 0;
+  border: 1px solid color-mix(in srgb, var(--ae-control-edge) 27%, transparent);
+  border-radius: 50%;
+  opacity: 0;
+}
+.ae-spatial-field span:nth-child(2) { inset: 15%; }
+.ae-spatial-field span:nth-child(3) { inset: 29%; opacity: .55; }
+.ae-spatial-scene[data-discovery="searching"] .ae-spatial-field span { opacity: 1; }
+.ae-spatial-scene[data-discovery="searching"] .ae-spatial-field span:first-child {
+  animation: ae-discovery-signal 1.8s ease-out 2;
+}
+@keyframes ae-discovery-signal {
+  from { opacity: .75; transform: scale(.63); }
+  to { opacity: .18; transform: scale(1); }
+}
+.ae-spatial-scene:is([data-discovery="disabled"], [data-discovery="interrupted"]) { --ae-field-emphasis: .54; }
+.ae-transfer-space:is([data-experience-phase="hand"], [data-experience-phase="held"], [data-experience-phase="ready"], [data-experience-phase="departure"], [data-experience-phase="transferring"], [data-experience-phase="receiving"]) {
+  --ae-field-emphasis: .55;
+}
+.ae-spatial-overlay { position: absolute; z-index: 0; inset: 0; pointer-events: none; }
+.ae-spatial-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .38rem .65rem;
+  padding: .15rem .35rem;
+}
+.ae-spatial-status { display: grid; gap: .12rem; }
+.ae-spatial-status p { font-size: var(--ae-size-caption); }
+
+.ae-transfer-dock {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .25rem .55rem;
+  inline-size: fit-content;
+  max-inline-size: min(100%, 56rem);
+  min-block-size: 3.4rem;
+  margin: .55rem auto 0;
+  padding: .35rem .5rem;
+}
+.ae-dock-file, .ae-dock-actions { display: flex; flex-wrap: wrap; align-items: center; min-inline-size: 0; gap: .25rem; }
+.ae-dock-file { gap: .5rem; }
+.ae-dock-file > .ae-object { min-inline-size: 0; max-inline-size: 100%; }
+.ae-dock-file > small { order: 1; line-height: 1.25; }
+.ae-theme[data-ae-theme="glass"] .ae-transfer-dock .ae-dock-actions .ae-button[data-variant="secondary"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.ae-theme .ae-dock-actions .ae-button[aria-label],
+.ae-theme .ae-transfer-dock .ae-dock-status { padding-inline: .55rem; }
+.ae-dock-destination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .3rem .6rem;
+  min-inline-size: 0;
+  transition: opacity var(--ae-duration-enter) var(--ae-ease), translate var(--ae-duration-enter) var(--ae-ease);
+}
+@starting-style {
+  .ae-dock-destination { opacity: 0; translate: 0 var(--ae-enter-distance); }
+}
+.ae-dock-destination > small { max-inline-size: 14rem; overflow-wrap: anywhere; line-height: 1.35; }
+.ae-dock-status, .ae-dock-receive { flex: 0 1 auto; max-inline-size: 100%; }
+.ae-dock-status svg, .ae-dock-receive svg { flex: none; }
+.ae-dock-receive[aria-pressed="true"],
+.ae-transfer-dock[data-dock-phase="completed"] .ae-dock-status { color: var(--ae-success); }
+.ae-transfer-dock:is([data-dock-phase="failed"], [data-dock-phase="interrupted"]) .ae-dock-status { color: var(--ae-error); }
+.ae-workspace-notice {
+  display: grid;
+  gap: .5rem;
+  padding: .45rem .75rem;
+  border-block-start: 1px solid var(--ae-display-edge, var(--ae-edge));
+}
+.ae-activity {
+  display: grid;
+  gap: .85rem;
+  inline-size: min(100%, 52rem);
+  margin: 1.4rem auto;
+}
+.ae-activity-list, .ae-rift-board { display: grid; }
+.ae-rift-board { inline-size: min(100%, 52rem); margin-inline: auto; }
+.ae-theme .ae-activity-list .ae-surface.ae-transfer[data-material="content"] {
+  --ae-material-solid: transparent;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 0;
+  border-block-end: 1px solid var(--ae-display-edge, var(--ae-edge));
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  padding-inline: 0;
+}
+.ae-activity-list .ae-transfer-file small { overflow-wrap: anywhere; }
+.ae-activity-list .ae-transfer-status { justify-self: end; text-align: end; }
+.ae-activity-list .ae-transfer > :not(.ae-transfer-top, .ae-transfer-status) { grid-column: 1 / -1; }
+.ae-theme .ae-transfer-space .ae-activity .ae-activity-empty {
+  display: grid;
+  justify-items: center;
+  gap: .5rem;
+  margin: 1.5rem 0;
+  padding: 1rem 0;
+  min-block-size: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.ae-activity .ae-activity-empty svg { color: var(--ae-accent); }
+
+@container (width > 41rem) {
+  .ae-spatial-stage:not([data-crowded="true"]) {
+    --ae-stage-compact: 0;
+    --ae-local-glyph: clamp(6.5rem, 12cqi, 7.45rem);
+    --ae-local-radius: clamp(2.25rem, 3.5cqi, 2.8rem);
+    --ae-local-icon: clamp(2.75rem, 5.1cqi, 3.25rem);
+    --ae-peer-glyph: clamp(4.95rem, 9cqi, 5.7rem);
+    --ae-peer-radius: clamp(1.7rem, 3cqi, 2.1rem);
+    --ae-peer-icon: clamp(1.9rem, 4.15cqi, 2.42rem);
+    --ae-spatial-field-size: clamp(13rem, 29cqi, 20rem);
+    min-block-size: clamp(20rem, calc(100dvh - var(--ae-scene-budget, 17rem)), 33rem);
+  }
+  .ae-spatial-stage:not([data-crowded="true"]) :is(.ae-spatial-local, .ae-spatial-peer) {
+    position: absolute;
+    inset-inline-start: var(--ae-position-x);
+    inset-block-start: var(--ae-position-y);
+    translate: -50% calc(var(--ae-glyph-size) / -2);
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    text-align: center;
+    inline-size: 10rem;
+    gap: .48rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+}
+@media (min-width: 45rem) {
+  .ae-workspace-view:not([hidden]) ~ .ae-rift-board { max-block-size: 12rem; overflow-y: auto; }
+}
+
+@media (max-width: 31rem) {
+  .ae-shell[data-experience="spatial"] { padding-block-end: max(1.5rem, env(safe-area-inset-bottom)); }
+  .ae-experience-nav { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .ae-nav-destinations { justify-self: center; gap: 0; }
+  .ae-theme .ae-nav-destinations :is(a, button.ae-button[data-variant]) { padding-inline: .45rem; font-size: var(--ae-size-caption); }
+  .ae-experience-nav:has(.ae-nav-tools > :nth-child(2)) { grid-template-columns: auto minmax(0, 1fr); }
+  .ae-experience-nav:has(.ae-nav-tools > :nth-child(2)) .ae-nav-destinations { grid-row: 2; grid-column: 1 / -1; }
+  .ae-nav-destinations svg { display: none; }
+  .ae-nav-brand { padding-inline: .65rem; }
+  .ae-nav-brand .ae-mark { display: none; }
+  .ae-transfer-dock { padding-inline: .45rem; }
+  .ae-theme .ae-transfer-dock .ae-button[data-variant] { padding-inline: .7rem; }
+  .ae-spatial-footer { gap: .38rem .4rem; padding-inline: .1rem; }
+  .ae-theme .ae-spatial-footer .ae-button[data-variant] { padding-inline: .6rem; }
+  .ae-transfer-dock:has(.ae-dock-destination) { inline-size: 100%; }
+  .ae-dock-file:has(.ae-object) { flex-basis: 100%; flex-direction: column; align-items: stretch; }
+  .ae-dock-destination { flex: 1 1 auto; justify-content: space-between; }
+  .ae-dock-file > small { display: none; }
+}
+@media (max-width: 24rem) {
+  .ae-nav-brand h1 { font-size: .9rem; }
+}
+@media (forced-colors: active) {
+  .ae-nav-destinations [aria-current] { outline: 1px solid Highlight; outline-offset: -2px; }
+  .ae-spatial-peer[data-selected="true"] .ae-spatial-glyph { outline-color: Highlight; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .ae-theme[data-ae-theme="glass"] .ae-spatial-glyph::before,
+  .ae-theme[data-ae-theme="glass"] .ae-spatial-glyph::after { display: none; }
+}
+.ae-theme[data-ae-theme="glass"]:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-spatial-glyph::before,
+.ae-theme[data-ae-theme="glass"]:is([data-transparency="reduce"], [data-contrast="increase"]) .ae-spatial-glyph::after { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ae-spatial-scene :is(.ae-spatial-peer, .ae-spatial-glyph, .ae-spatial-field span) { animation: none !important; }
+}
+.ae-theme[data-motion="reduce"] .ae-spatial-scene :is(.ae-spatial-peer, .ae-spatial-glyph, .ae-spatial-field span) { animation: none !important; }

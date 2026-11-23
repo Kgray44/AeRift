@@ -1,4 +1,5 @@
 const COMMANDS: &[&str] = &[
+    "camera_authorized",
     "camera_clock",
     "register_camera_events",
     "start_camera",
@@ -6,5 +7,7 @@ const COMMANDS: &[&str] = &[
 ];
 
 fn main() {
-    tauri_plugin::Builder::new(COMMANDS).ios_path("swift").build();
+    tauri_plugin::Builder::new(COMMANDS)
+        .ios_path("swift")
+        .build();
 }

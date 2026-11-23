@@ -14,6 +14,13 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Limited};
 use hyper::body::Incoming;
 
+const RECEIVER_READY_ROUTE: &str = "/v1/receiver-ready";
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct ReceiverReady {
+    ready: bool,
+}
+
 async fn read_control(body: Incoming) -> Result<Bytes, bool> {
     Limited::new(body, model::MAX_CONTROL_BYTES)
         .collect()

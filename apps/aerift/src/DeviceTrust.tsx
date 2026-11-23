@@ -1,9 +1,9 @@
 import { Button, ConnectionStatus } from "@aerift/ui";
 import { useState } from "react";
-import type { AppSnapshot } from "@aerift/app-contract";
+import type { AppPort, AppSnapshot } from "@aerift/app-contract";
 import { nativeAppPort } from "./nativeAppPort";
 
-export function DeviceTrust({ snapshot }: { snapshot: AppSnapshot | undefined }) {
+export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppSnapshot | undefined; port?: AppPort }) {
   const [selected, setSelected] = useState<string>();
   const [revoking, setRevoking] = useState(false);
   const [feedback, setFeedback] = useState<{ message: string; error: boolean }>();
@@ -13,7 +13,7 @@ export function DeviceTrust({ snapshot }: { snapshot: AppSnapshot | undefined })
     setRevoking(true);
     setFeedback(undefined);
     try {
-      const result = await nativeAppPort.pair({ action: "revoke", deviceId });
+      const result = await port.pair({ action: "revoke", deviceId });
       if (result.ok) {
         setSelected(undefined);
         setFeedback({ message: "Device trust removed.", error: false });
