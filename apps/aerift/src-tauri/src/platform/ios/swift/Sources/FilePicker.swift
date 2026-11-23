@@ -3,19 +3,10 @@ import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Passed to native code. The bridge must retain the path and issue an opaque
-/// selection ID before returning the display name and size to the webview.
-struct StagedSelection {
-    let url: URL
-    let name: String
-    let sizeBytes: Int
-}
-
 enum FilePickerError: Error {
     case unavailable
     case alreadyPresenting
     case badRepresentation
-    case invalidFile
 }
 
 @MainActor
@@ -48,8 +39,9 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
             }
             switch source {
             case .files:
-                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: false)
                 picker.delegate = self
+                picker.isModalInPresentation = true
                 presenter.present(picker, animated: true)
             case .photos:
                 var configuration = PHPickerConfiguration()
@@ -58,6 +50,7 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
                 configuration.preferredAssetRepresentationMode = .current
                 let picker = PHPickerViewController(configuration: configuration)
                 picker.delegate = self
+                picker.isModalInPresentation = true
                 presenter.present(picker, animated: true)
             }
         }
@@ -78,8 +71,13 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
         DispatchQueue.global(qos: .userInitiated).async {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            let result = Result { try Self.stage(url) as StagedSelection? }
-            DispatchQueue.main.async { self.finish(result) }
+            var coordinationError: NSError?
+            var result: Result<StagedSelection?, Error> = .failure(FilePickerError.unavailable)
+            NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { file in
+                result = Result { try FileStaging.stage(file) as StagedSelection? }
+            }
+            let coordinatedResult = coordinationError.map { Result<StagedSelection?, Error>.failure($0) } ?? result
+            DispatchQueue.main.async { self.finish(coordinatedResult) }
         }
     }
 
@@ -101,7 +99,7 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
             let result = Result {
                 if let error { throw error }
                 guard let url else { throw FilePickerError.badRepresentation }
-                return try Self.stage(url, preferredName: provider.suggestedName) as StagedSelection?
+                return try FileStaging.stage(url, preferredName: provider.suggestedName) as StagedSelection?
             }
             DispatchQueue.main.async { self.finish(result) }
         }
@@ -111,34 +109,6 @@ final class FilePicker: NSObject, UIDocumentPickerDelegate, PHPickerViewControll
         let callback = completion
         completion = nil
         callback?(result)
-    }
-
-    private nonisolated static func stage(_ source: URL, preferredName: String? = nil) throws -> StagedSelection {
-        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true,
-              let size = values.fileSize, size >= 0, size <= 9_007_199_254_740_991 else {
-            throw FilePickerError.invalidFile
-        }
-
-        let manager = FileManager.default
-        let cache = try manager.url(for: .cachesDirectory, in: .userDomainMask,
-                                    appropriateFor: nil, create: true)
-        let directory = cache.appendingPathComponent("AeRift-Imports", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = directory.appendingPathComponent("content", isDirectory: false)
-        do {
-            try manager.copyItem(at: source, to: destination)
-            let copiedSize = try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            guard copiedSize == size else { throw FilePickerError.invalidFile }
-            let name = preferredName.map { ($0 as NSString).lastPathComponent } ?? source.lastPathComponent
-            let displayName = (name as NSString).pathExtension.isEmpty && !source.pathExtension.isEmpty
-                ? "\(name).\(source.pathExtension)" : name
-            return StagedSelection(url: destination, name: displayName, sizeBytes: size)
-        } catch {
-            try? manager.removeItem(at: directory)
-            throw error
-        }
     }
 }
 

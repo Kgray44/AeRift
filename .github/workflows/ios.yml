@@ -21,14 +21,24 @@ jobs:
         with:
           persist-credentials: false
       - name: Lint privacy configuration
-        run: plutil -lint apps/aerift/src-tauri/Info.ios.plist
+        run: |
+          plutil -lint apps/aerift/src-tauri/Info.ios.plist
+          plutil -lint apps/ios/PrivacyInfo.xcprivacy
+          bash -n apps/ios/prepare-apple.sh
+          bash -n apps/ios/simulator-smoke.sh
       - name: Typecheck Swift against the simulator SDK
         run: |
           xcodebuild -version
           sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
           xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
             -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
-            apps/ios/native/FilePicker.swift
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift"
+      - name: Test bounded native file staging
+        run: |
+          swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
+            apps/ios/tests/FileStagingSmoke.swift -o "$RUNNER_TEMP/file-staging-smoke"
+          "$RUNNER_TEMP/file-staging-smoke"
 
   simulator-app:
     name: iOS simulator - Tauri app build and launch

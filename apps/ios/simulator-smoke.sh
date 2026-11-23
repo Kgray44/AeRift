@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ios_dir="$(cd "$(dirname "$0")" && pwd)"
 host_dir="$(cd "${1:-apps/aerift}" && pwd)"
 cd "$host_dir"
 if [[ -f package-lock.json ]]; then
@@ -18,9 +19,7 @@ case "$(uname -m)" in
   *) echo 'Unsupported macOS architecture' >&2; exit 1 ;;
 esac
 
-if [[ ! -d src-tauri/gen/apple ]]; then
-  npm run tauri -- ios init --ci --skip-targets-install
-fi
+bash "$ios_dir/prepare-apple.sh" "$host_dir"
 npm run tauri -- ios build --ci --debug --target "$target"
 
 app="$(find src-tauri/gen/apple/build -type d -name 'AeRift.app' -print -quit)"
@@ -29,7 +28,7 @@ if [[ -z "$app" ]]; then
   exit 1
 fi
 
-python3 - "$app/Info.plist" <<'PY'
+python3 - "$app/Info.plist" "$app/PrivacyInfo.xcprivacy" <<'PY'
 import plistlib
 import sys
 
@@ -43,6 +42,12 @@ assert info["NSBonjourServices"] == ["_aerift._tcp"]
 assert info["UIFileSharingEnabled"] is True
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
 assert not info.get("UIBackgroundModes")
+with open(sys.argv[2], "rb") as bundle_privacy:
+    privacy = plistlib.load(bundle_privacy)
+assert {
+    "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
+    "NSPrivacyAccessedAPITypeReasons": ["E174.1"],
+} in privacy["NSPrivacyAccessedAPITypes"]
 print("AeRift bundle privacy settings verified")
 PY
 
