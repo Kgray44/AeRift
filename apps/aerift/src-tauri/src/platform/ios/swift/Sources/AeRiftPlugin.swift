@@ -41,6 +41,7 @@ private struct BrowserArgs: Decodable {
 
 private struct PickerArgs: Decodable {
     let source: PickerSource?
+    let limit: Int
 }
 
 private struct PickerResponse: Encodable {
@@ -48,9 +49,18 @@ private struct PickerResponse: Encodable {
         let path: String
         let name: String
         let sizeBytes: Int
+        var kind: StagedKind = .file
     }
 
     let selection: Selection?
+}
+
+private struct ClipboardImageCapability: Encodable {
+    let supported: Bool
+}
+
+private struct BatchPickerResponse: Encodable {
+    let selections: [PickerResponse.Selection]
 }
 
 private struct CameraArgs: Decodable {
@@ -66,8 +76,12 @@ private struct CameraClock: Encodable {
     let clockMs: Double
 }
 
-private struct CameraAuthorization: Encodable {
-    let authorized: Bool
+private struct CameraPermissionRequest: Decodable {
+    let request: Bool
+}
+
+private struct CameraPermission: Encodable {
+    let status: String
 }
 
 private struct CameraUpdate: Encodable {
@@ -112,11 +126,11 @@ final class AeRiftPlugin: Plugin {
             if let attempt = self.cameraAttempt {
                 self.stopCameraAttempt(attempt.attemptId)
             }
-            self.filePicker.present(from: presenter, source: args.source) { result in
+            self.filePicker.present(from: presenter, source: args.source, limit: args.limit) { result in
                 switch result {
-                case .success(let selection):
-                    invoke.resolve(PickerResponse(selection: selection.map {
-                        .init(path: $0.url.path, name: $0.name, sizeBytes: $0.sizeBytes)
+                case .success(let selections):
+                    invoke.resolve(BatchPickerResponse(selections: selections.map {
+                        .init(path: $0.url.path, name: $0.name, sizeBytes: $0.sizeBytes, kind: $0.kind)
                     }))
                 case .failure(let error):
                     let message: String
@@ -135,6 +149,8 @@ final class AeRiftPlugin: Plugin {
                             message = "A file chooser is already open."
                         case .unavailable:
                             message = "The file chooser is unavailable."
+                        case .tooManyItems:
+                            message = "Choose fewer items and try again."
                         default:
                             message = "AeRift could not import this item."
                         }
@@ -142,6 +158,39 @@ final class AeRiftPlugin: Plugin {
                     invoke.reject(message)
                 }
             }
+        }
+    }
+
+    @objc func clipboardImageAvailable(_ invoke: Invoke) {
+        if #available(iOS 16.0, *) {
+            invoke.resolve(ClipboardImageCapability(supported: true))
+        } else {
+            invoke.resolve(ClipboardImageCapability(supported: false))
+        }
+    }
+
+    @objc func pasteClipboardImage(_ invoke: Invoke) {
+        DispatchQueue.main.async {
+            guard #available(iOS 16.0, *), UIApplication.shared.applicationState == .active,
+                  let presenter = self.manager.viewController,
+                  presenter.viewIfLoaded?.window != nil, presenter.presentedViewController == nil else {
+                invoke.reject("The image paste sheet is unavailable.")
+                return
+            }
+            if let attempt = self.cameraAttempt {
+                self.stopCameraAttempt(attempt.attemptId)
+            }
+            let picker = ClipboardImagePicker { result in
+                switch result {
+                case .success(let selected):
+                    invoke.resolve(PickerResponse(selection: selected.map {
+                        .init(path: $0.url.path, name: $0.name, sizeBytes: $0.sizeBytes)
+                    }))
+                case .failure:
+                    invoke.reject("AeRift could not prepare the pasted image.")
+                }
+            }
+            presenter.present(picker, animated: true)
         }
     }
 
@@ -260,8 +309,24 @@ final class AeRiftPlugin: Plugin {
         invoke.resolve(CameraClock(clockMs: HandCamera.clockMs()))
     }
 
-    @objc func cameraAuthorized(_ invoke: Invoke) {
-        invoke.resolve(CameraAuthorization(authorized: AVCaptureDevice.authorizationStatus(for: .video) == .authorized))
+    @objc func cameraPermission(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(CameraPermissionRequest.self)
+        Task { @MainActor in
+            if args.request, UIApplication.shared.applicationState == .active,
+               AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
+                _ = await AVCaptureDevice.requestAccess(for: .video)
+            }
+
+            let status: String
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .notDetermined: status = "notDetermined"
+            case .authorized: status = "authorized"
+            case .denied: status = "denied"
+            case .restricted: status = "restricted"
+            @unknown default: status = "unavailable"
+            }
+            invoke.resolve(CameraPermission(status: status))
+        }
     }
 
     @objc func startCamera(_ invoke: Invoke) throws {

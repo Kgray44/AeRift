@@ -1,23 +1,27 @@
 import { useState } from "react";
 import { WORKSPACE_MODULES } from "@aerift/app-contract/experience";
+import { MobileMediaTray } from "./MobileMediaTray";
+import type { MediaSource, MobileMediaPort } from "./mobile-media";
 import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
 import { command } from "../nativeAppPort";
 import type { AppPort, Transfer } from "@aerift/app-contract";
 import { Button, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
 
-export const pickerSources = ["files", "photos"] as const;
-export type PickerSource = typeof pickerSources[number];
+export type PickerSource = MediaSource;
 export type ModuleVisibility = Record<PickerSource | LocalModule, boolean>;
 
-export function MobileWorkspace({ regions, modules, pick, received, openRift, objects, save }: {
+export function MobileWorkspace({ regions, modules, pick, media, received, openRift, objects, save, clipboardSharing, markClipboardSelection }: {
   regions: TransferWorkspaceRegions;
   modules: ModuleVisibility;
   pick: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
+  media: MobileMediaPort;
   received: readonly Transfer[];
   openRift: () => void;
   objects: readonly MobileObject[] | undefined;
   save: (next: readonly MobileObject[]) => boolean;
+  clipboardSharing: boolean;
+  markClipboardSelection: (id: string) => void;
 }) {
   const [presenting, setPresenting] = useState<"preview" | "export">();
   const [presentationError, setPresentationError] = useState("");
@@ -37,7 +41,7 @@ export function MobileWorkspace({ regions, modules, pick, received, openRift, ob
     {regions.selection && <section className="ios-section" aria-label="Selected object">
       <h3>Ready for Rift</h3>
       <TransferObject files={[regions.selection]} objectId={regions.selection.selectionId} state="resting" />
-      <p>Staged copy. The source item stays where it is.</p>
+      <p>Temporary Rift selection. The source item stays where it is.</p>
       <div className="ae-actions">
         <Button variant="quiet" disabled={!!presenting} onClick={() => void present("preview")}>Preview</Button>
         <Button variant="quiet" disabled={!!presenting} onClick={() => void present("export")}>Export copy</Button>
@@ -52,7 +56,7 @@ export function MobileWorkspace({ regions, modules, pick, received, openRift, ob
     {current === "files" && <section className="ios-section" aria-labelledby="ios-files">
       <div className="ios-section-head">
         <div><h3 id="ios-files">Files</h3><p>Browse Files, cloud providers and On My iPhone.</p></div>
-        <Button disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose file</Button>
+        <Button disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose for Rift</Button>
       </div>
       {received.length > 0 && <>
         <h4>Received on this iPhone</h4>
@@ -63,13 +67,16 @@ export function MobileWorkspace({ regions, modules, pick, received, openRift, ob
     {current === "photos" && <section className="ios-section" aria-labelledby="ios-photos">
       <div className="ios-section-head">
         <div><h3 id="ios-photos">Photos and videos</h3>
-          <p>The system picker shares only the item you choose.</p></div>
-        <Button disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("photos"))}>Choose media</Button>
+          <p>AeRift can only access items you choose in the system picker.</p></div>
+        <Button disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("photos"))}>Choose for Rift</Button>
       </div>
     </section>}
+    {(current === "files" || current === "photos") &&
+      <MobileMediaTray key={current} source={current} port={media} regions={regions} />}
     {current && current !== "files" && current !== "photos" && (objects
       ? <LocalObjectWorkspace key={current} module={current} objects={objects} save={save}
-        regions={regions} openRift={openRift} />
+        regions={regions} openRift={openRift} clipboardSharing={clipboardSharing}
+        markClipboardSelection={markClipboardSelection} />
       : <p role="alert">AeRift couldn't read the saved workspace. Files and Photos are still available.</p>)}
     {regions.selecting && <p role="status">Opening picker or preparing item…</p>}
   </>;

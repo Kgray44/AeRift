@@ -8,8 +8,9 @@ import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift
 import { useEffect, useRef, useState } from "react";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
-import { IosGestureCamera } from "./IosGestureCamera";
+import { IosGestureCamera, iosCameraPermission, type IosCameraPermission } from "./IosGestureCamera";
 import { MobileNavigation } from "./MobileNavigation";
+import { nativeMobileMedia, type MobileMediaPort } from "./mobile-media";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileObject } from "./local-objects";
 import { decodeMobileHistory, historyStorageKey, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
@@ -59,6 +60,7 @@ function readWorkspace() {
     files: settings.files !== false, photos: settings.photos !== false,
     notes: settings.notes !== false, browser: settings.browser !== false,
     clipboard: settings.clipboard === true, collections: settings.collections !== false,
+    clipboardShare: settings.clipboardShare === true,
     rememberActivity: settings.rememberActivity === true,
     gestures: typeof settings.gestures === "boolean" ? settings.gestures :
       readSettings("aerift.ios.gestures.enabled") === true,
@@ -83,8 +85,9 @@ function readHistory() {
 
 const pickNative = (source: PickerSource) => command<FileSelection | null>("select_app_file", { source });
 
-export function IosApp({ port = nativeAppPort, pick = pickNative }: {
+export function IosApp({ port = nativeAppPort, pick = pickNative, media = nativeMobileMedia }: {
   port?: AppPort;
+  media?: MobileMediaPort;
   pick?: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
 } = {}) {
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
@@ -92,6 +95,9 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const snapshot: IosSnapshot | undefined = connection.state === "ready" ? connection.snapshot : undefined;
   const [appearance, setAppearance] = useState(readAppearance);
   const [preferences, setPreferences] = useState(readWorkspace);
+  const canShareClipboard = preferences.clipboard && preferences.clipboardShare;
+  const clipboardAllowed = useRef(canShareClipboard);
+  const clipboardSelections = useRef(new Set<string>());
   const [objects, setObjects] = useState(readObjects);
   const [objectError, setObjectError] = useState("");
   const [history, setHistory] = useState(readHistory);
@@ -106,6 +112,10 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
   const [cameraRetry, setCameraRetry] = useState(0);
+  const [cameraPermission, setCameraPermission] = useState<IosCameraPermission>();
+  const [requestingCamera, setRequestingCamera] = useState(false);
+  const cameraPermissionRequest = useRef(0);
+  const cameraPermissionPending = useRef(false);
   const [discovering, setDiscovering] = useState(false);
   const destinationHeading = useRef<HTMLHeadingElement>(null);
   const navigationRequested = useRef(false);
@@ -198,8 +208,41 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
     setDiscovering(false);
   }
 
-  function updatePreferences(key: keyof ModuleVisibility | "gestures" | "rememberActivity", checked: boolean) {
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let active = true;
+    const refresh = async () => {
+      if (cameraPermissionPending.current) return;
+      const request = ++cameraPermissionRequest.current;
+      const status = await iosCameraPermission();
+      if (active && request === cameraPermissionRequest.current) setCameraPermission(status);
+    };
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [settingsOpen]);
+
+  async function requestCameraAccess() {
+    if (cameraPermissionPending.current) return;
+    cameraPermissionPending.current = true;
+    cameraPermissionRequest.current++;
+    setRequestingCamera(true);
+    try {
+      const status = await iosCameraPermission(true);
+      setCameraPermission(status);
+      if (status === "authorized") setCameraRetry(value => value + 1);
+    } finally {
+      cameraPermissionPending.current = false;
+      setRequestingCamera(false);
+    }
+  }
+
+  function updatePreferences(key: keyof ModuleVisibility | "gestures" | "rememberActivity" | "clipboardShare", checked: boolean) {
     const next = { ...preferences, [key]: checked };
+    clipboardAllowed.current = next.clipboard && next.clipboardShare;
     setPreferences(next);
     setSettingsError(!writeSettings(workspaceKey, next));
   }
@@ -252,6 +295,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
             actionsBlocked={settingsOpen} retryKey={cameraRetry} onStatus={setCameraStatus} />}
           mobile={{
             archivedTransfers: history,
+            offerBlockedReason: selection => clipboardSelections.current.has(selection.selectionId) && !clipboardAllowed.current
+              ? "Enable clipboard sharing in Control Center to offer this file." : undefined,
             view: destination === "rift" || destination === "activity" ? destination : "supplement",
             openRift: () => navigate("rift"),
             openActivity: () => navigate("activity"),
@@ -292,8 +337,9 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
               </>}
               {destination === "workspace" && <>
                 <MobileWorkspace regions={regions} modules={preferences}
-                  pick={pick} received={summary.received} openRift={() => navigate("rift")}
-                  objects={objects} save={saveObjects} />
+                  pick={pick} media={media} received={summary.received} openRift={() => navigate("rift")}
+                  objects={objects} save={saveObjects} clipboardSharing={canShareClipboard}
+                  markClipboardSelection={id => { clipboardSelections.current.add(id); }} />
                 {objectError && <p role="alert">{objectError}</p>}
               </>}
               {destination === "devices" && <div className="ios-section">
@@ -321,7 +367,10 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
             <legend>Workspace modules</legend>
             {WORKSPACE_MODULES.map(({ id, label }) => <label key={id}><input type="checkbox" checked={preferences[id]}
                 onChange={event => updatePreferences(id, event.currentTarget.checked)} />{label}</label>)}
-            <p>Clipboard is off by default. AeRift saves only text you explicitly pin, and sends it only on request.</p>
+            <p>Clipboard is off by default. AeRift saves only text you explicitly pin.</p>
+            <label><input type="checkbox" checked={preferences.clipboardShare} disabled={!preferences.clipboard}
+              onChange={event => updatePreferences("clipboardShare", event.currentTarget.checked)} />
+              Allow sending clipboard copies through Rift</label>
             {pins.length > 0 && (confirmClearPins ? <div className="ae-actions">
               <Button variant="danger" onClick={() => {
                 if (!objects) return;
@@ -338,15 +387,23 @@ export function IosApp({ port = nativeAppPort, pick = pickNative }: {
             <legend>Gesture recognition</legend>
             <label className="ae-camera-toggle">Enable camera gestures in Rift
               <input type="checkbox" checked={preferences.gestures}
-                onChange={event => updatePreferences("gestures", event.currentTarget.checked)} />
+                onChange={event => {
+                  const enabled = event.currentTarget.checked;
+                  updatePreferences("gestures", enabled);
+                  if (enabled) void requestCameraAccess();
+                }} />
             </label>
             <p>The front camera listens in Rift with a selected file and recipient or an incoming offer while AeRift is open in portrait. Recognition stays on this iPhone.</p>
             {preferences.gestures && <p role="status"><strong>{cameraStatus?.label ?? "Camera standby"}</strong> {cameraStatus?.detail}</p>}
-            {preferences.gestures && (cameraStatus?.state === "permission" || cameraStatus?.state === "unavailable" ||
-              cameraStatus?.state === "paused") && <div>
-                <p>Allow camera access for AeRift in iOS Settings, then return to Rift.</p>
-                <Button onClick={() => setCameraRetry(value => value + 1)}>Retry camera</Button>
-              </div>}
+            {preferences.gestures && <div>
+              {cameraPermission === "denied" && <p>Allow camera access for AeRift in iOS Settings, then return to Rift.</p>}
+              {cameraPermission === "restricted" && <p>Camera access is restricted on this iPhone.</p>}
+              {cameraPermission === "unavailable" && <p>AeRift couldn’t check camera access. Try again while the app is open.</p>}
+              {cameraPermission !== "restricted" && <Button loading={requestingCamera} loadingLabel="Checking camera access…"
+                onClick={() => void requestCameraAccess()}>
+                {cameraPermission === "notDetermined" || !cameraPermission ? "Request camera access" : "Retry camera"}
+              </Button>}
+            </div>}
           </fieldset>
           <fieldset className="ae-settings">
             <legend>Activity history</legend>

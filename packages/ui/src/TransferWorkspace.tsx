@@ -67,6 +67,7 @@ export interface TransferWorkspaceRegions {
 export interface MobileTransferPresentation {
   view: "rift" | "activity" | "supplement";
   archivedTransfers?: readonly Transfer[];
+  offerBlockedReason?: (selection: FileSelection) => string | undefined;
   openRift: () => void;
   openActivity: () => void;
   render: (regions: TransferWorkspaceRegions) => ReactNode;
@@ -258,7 +259,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const devices = snapshot?.devices ?? [];
   const chosen = devices.find(device => device.id === selectedId && device.paired);
   const target = chosen?.online ? chosen : undefined;
-  const intent = target && selection ? { deviceId: target.id, selectionId: selection.selectionId } : null;
+  const offerBlocked = selection && mobile?.offerBlockedReason?.(selection);
+  const intent = target && selection && !offerBlocked ? { deviceId: target.id, selectionId: selection.selectionId } : null;
   const reportGesture = useCallback((feedback: WorkspaceGestureFeedback) => {
     setGestureFeedback(current => current?.target === feedback.target && current.phase === feedback.phase ? current : feedback);
   }, []);
@@ -369,6 +371,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   function send(captured: TransferIntent) {
     const request = Symbol();
     return run(composerKey, "send", session => {
+      if (session.selection && mobile?.offerBlockedReason?.(session.selection)) return Promise.resolve(null);
       const peer = session.snapshot?.devices.find(device => device.id === session.selectedId);
       const result = offerTransfer(port, peer, session.selection, captured);
       if (peer?.online && peer.paired && peer.id === captured.deviceId && session.selection?.selectionId === captured.selectionId) {
@@ -672,8 +675,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
             </div>
           </div>
           {outgoingObject && <div className="ae-dock-destination">
-            <small role="status">{ready ? `${target?.name} is ready to receive` : chosen
-              ? `${chosen.name}${chosen.online ? "" : " · Offline"}` : "Choose a paired device"}</small>
+            <small role="status">{offerBlocked || (ready ? `${target?.name} is ready to receive` : chosen
+              ? `${chosen.name}${chosen.online ? "" : " · Offline"}` : "Choose a paired device")}</small>
             {(intent || pending === "send") && <Button variant="primary" disabled={pending !== "send" && !!pending}
               loading={pending === "send"} loadingLabel="Offering…" onClick={() => { if (intent) void send(intent); }}>
               <SpatialIcon name="send" />Send file

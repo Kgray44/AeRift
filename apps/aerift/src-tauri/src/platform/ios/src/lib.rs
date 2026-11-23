@@ -23,6 +23,15 @@ tauri::ios_plugin_binding!(init_plugin_aerift_ios);
 
 struct IosPlatform<R: Runtime>(PluginHandle<R>);
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StagedKind {
+    #[default]
+    File,
+    Photo,
+    Video,
+}
+
 /// Owns a sandbox copy. Keep it alive while the selected file can be offered or
 /// read by a transfer. Only the display name and size may cross the AppPort.
 #[derive(Deserialize)]
@@ -31,6 +40,8 @@ pub struct StagedSelection {
     path: PathBuf,
     pub name: String,
     pub size_bytes: u64,
+    #[serde(default)]
+    pub kind: StagedKind,
 }
 
 impl StagedSelection {
@@ -53,10 +64,15 @@ struct PickerResponse {
     selection: Option<StagedSelection>,
 }
 
+#[derive(Deserialize)]
+struct BatchPickerResponse {
+    selections: Vec<StagedSelection>,
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("aerift-ios")
         .invoke_handler(tauri::generate_handler![
-            camera_commands::camera_authorized,
+            camera_commands::camera_permission,
             camera_commands::camera_clock,
             camera_commands::register_camera_events,
             camera_commands::start_camera,
@@ -81,6 +97,7 @@ pub enum PickerSource {
 #[derive(Serialize)]
 struct PickerArgs {
     source: Option<PickerSource>,
+    limit: usize,
 }
 
 /// Opens a native picker or the source chooser. Cancellation resolves to `Ok(None)`.
@@ -89,10 +106,45 @@ pub async fn pick_file<R: Runtime>(
     app: &AppHandle<R>,
     source: Option<PickerSource>,
 ) -> Result<Option<StagedSelection>, PluginInvokeError> {
+    Ok(pick_files(app, source, 1).await?.pop())
+}
+
+pub async fn pick_files<R: Runtime>(
+    app: &AppHandle<R>,
+    source: Option<PickerSource>,
+    limit: usize,
+) -> Result<Vec<StagedSelection>, PluginInvokeError> {
     let picker = app.state::<IosPlatform<R>>();
-    let response: PickerResponse = picker
+    let response: BatchPickerResponse = picker
         .0
-        .run_mobile_plugin_async("pickFile", PickerArgs { source })
+        .run_mobile_plugin_async("pickFile", PickerArgs { source, limit })
+        .await?;
+    Ok(response.selections)
+}
+
+#[derive(Deserialize)]
+struct ClipboardImageCapability {
+    supported: bool,
+}
+
+pub async fn clipboard_image_available<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<bool, PluginInvokeError> {
+    let response: ClipboardImageCapability = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("clipboardImageAvailable", ())
+        .await?;
+    Ok(response.supported)
+}
+
+pub async fn paste_clipboard_image<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Option<StagedSelection>, PluginInvokeError> {
+    let response: PickerResponse = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("pasteClipboardImage", ())
         .await?;
     Ok(response.selection)
 }
@@ -237,18 +289,26 @@ pub async fn hand_camera_clock<R: Runtime>(app: &AppHandle<R>) -> Result<f64, Pl
     Ok(clock.clock_ms)
 }
 
-#[derive(Deserialize)]
-struct CameraAuthorization {
-    authorized: bool,
+#[derive(Serialize)]
+struct CameraPermissionRequest {
+    request: bool,
 }
 
-async fn hand_camera_authorized<R: Runtime>(app: &AppHandle<R>) -> Result<bool, PluginInvokeError> {
-    let status: CameraAuthorization = app
+#[derive(Deserialize)]
+struct CameraPermission {
+    status: String,
+}
+
+async fn hand_camera_permission<R: Runtime>(
+    app: &AppHandle<R>,
+    request: bool,
+) -> Result<String, PluginInvokeError> {
+    let permission: CameraPermission = app
         .state::<IosPlatform<R>>()
         .0
-        .run_mobile_plugin_async("cameraAuthorized", ())
+        .run_mobile_plugin_async("cameraPermission", CameraPermissionRequest { request })
         .await?;
-    Ok(status.authorized)
+    Ok(permission.status)
 }
 
 /// Call only from an explicit foreground camera action. Reuse the app's
