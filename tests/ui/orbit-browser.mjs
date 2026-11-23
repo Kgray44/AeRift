@@ -163,6 +163,8 @@ try {
   await expectRoute("Settings");
   assert.equal(await surface.getAttribute("data-morphing"), null);
   assert.equal(await page.locator(".ae-orbit-trigger .ae-orbit-orb").evaluate(orb => getComputedStyle(orb).backdropFilter), "none");
+  await trigger.hover({ position: { x: 5, y: 9 } });
+  assert.equal(await page.locator(".ae-orbit-trigger .ae-orbit-orb").evaluate(orb => getComputedStyle(orb).translate), "none");
   assert.deepEqual(errors, []);
   console.log("PASS Chromium: geometry continuity from actual orb bounds, both modes and themes, keyboard, Escape, outside click, rapid reroute, resize, retained fixture state, reduced motion, conventional routing.");
 } finally {

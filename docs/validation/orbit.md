@@ -52,7 +52,7 @@ Keep one stable `OrbitSurface` mounted across destination changes. Commit the co
 
 ## Browser evidence
 
-Windows Edge, 1240 × 760 unless indicated. The four paused morph frames are from the live destination surface. At 0 ms its skin bounds match the displayed, hovered Devices orb to within 2 CSS px. The harness resumes the real animation to capture settlement.
+Windows Edge, 1240 × 760 unless indicated. The four paused morph frames are from the live destination surface. At 0 ms its skin bounds match the displayed, hovered Devices orb to within 2 CSS px. The harness resumes the real animation to capture settlement. The [live Edge recording](evidence/orbit/orbit-live.webm) shows the full sequence at real speed.
 
 | State | Capture |
 | --- | --- |
@@ -64,4 +64,4 @@ Windows Edge, 1240 × 760 unless indicated. The four paused morph frames are fro
 | Resized while open, 420 × 220 | [Compact fallback](evidence/orbit/06-compact-fallback.jpg) |
 | Light theme with reduced motion | [Direct route settlement](evidence/orbit/07-reduced-motion.jpg) |
 
-The harness checks keyboard focus and direction, dismissal, consecutive route changes, live resize, retained fixture state, conventional navigation, forced colors, and both explicit and OS reduced-motion settings. Mission 3 owns installed Windows shell integration and native transfer qualification. The lab uses fixtures for these checks. Native screen readers and hardware frame pacing remain acceptance checks.
+The harness checks keyboard focus and direction, dismissal, consecutive route changes, live resize, retained fixture state, conventional navigation, forced colors, and both explicit and OS reduced-motion settings. A 1024 × 690, 2× device-scale WebKit preview also passed light-mode routing, focus, settlement, and Escape. Mission 3 owns installed Windows shell integration and native transfer qualification. The lab uses fixtures for these checks. Native screen readers and hardware frame pacing remain acceptance checks.

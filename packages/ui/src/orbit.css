@@ -227,5 +227,5 @@
     transition-delay: 0s !important;
     scale: none !important;
   }
-  .ae-orbit .ae-orbit-orb { translate: none; }
+  .ae-orbit .ae-orbit-orb { translate: none !important; }
 }
