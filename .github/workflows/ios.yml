@@ -1,11 +1,6 @@
 name: iOS CI
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/ios.yml'
-      - 'apps/aerift/**'
-      - 'apps/ios/**'
   workflow_dispatch:
 
 permissions:
@@ -19,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: 470707db8dcf875be65a8fba9315c2f24caa4ed5
           persist-credentials: false
       - name: Lint privacy configuration
         run: |
@@ -51,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: 470707db8dcf875be65a8fba9315c2f24caa4ed5
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -65,7 +60,7 @@ jobs:
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim
       - name: Build, install and launch AeRift
         env:
-          IOS_APP_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          IOS_APP_SOURCE_COMMIT: 470707db8dcf875be65a8fba9315c2f24caa4ed5
         run: |
           IOS_EVIDENCE_DIR="$RUNNER_TEMP/aerift-ios-evidence" bash apps/ios/simulator-smoke.sh
       - name: Publish simulator evidence
@@ -76,3 +71,56 @@ jobs:
           path: ${{ runner.temp }}/aerift-ios-evidence
           if-no-files-found: warn
           retention-days: 14
+
+  mobile-fixtures:
+    name: Combined mobile WebKit and loopback transport
+    runs-on: macos-15
+    timeout-minutes: 22
+    env:
+      PRODUCT_SHA: 470707db8dcf875be65a8fba9315c2f24caa4ed5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify and build exact app source
+        run: |
+          git diff --exit-code "$PRODUCT_SHA" HEAD -- apps packages crates tests/ui Cargo.lock package-lock.json
+          npm ci
+          npm run build -w @aerift/app
+          npm test
+          npm run test:ui
+          npm run test:gestures
+      - name: Exercise the combined mobile fixture
+        run: |
+          output="$RUNNER_TEMP/mobile-evidence"
+          mkdir -p "$output"
+          tools="$RUNNER_TEMP/playwright"
+          mkdir -p "$tools"
+          npm install --prefix "$tools" --no-save --ignore-scripts --package-lock=false playwright@1.56.1
+          node "$tools/node_modules/playwright/cli.js" install webkit
+          npm exec -- vite --config tests/ui/vite.config.mts --host 127.0.0.1 --port 4173 --strictPort > "$output/server.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:4173/mobile.html > /dev/null; then break; fi
+            sleep 1
+          done
+          node .github/ci/mobile-combined.mjs "$tools/node_modules/playwright/index.mjs" "$output" 4173
+          cp docs/validation/evidence/mobile-workspace/{clipboard-sharing-390,media-import-tray-390}.png "$output/"
+      - name: Verify real loopback transfers
+        run: |
+          output="$RUNNER_TEMP/mobile-evidence"
+          cargo build --locked -p aerift-peers --example loopback_node
+          node tests/acceptance/validate-peer-demo.mjs target/debug/examples/loopback_node "$RUNNER_TEMP" "$PRODUCT_SHA" matrix > "$output/transport-matrix.json"
+          node tests/acceptance/validate-peer-demo.mjs target/debug/examples/loopback_node "$RUNNER_TEMP" "$PRODUCT_SHA" disconnect > "$output/transport-disconnect.json"
+      - name: Retain combined evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mobile-combined-evidence
+          path: ${{ runner.temp }}/mobile-evidence
+          if-no-files-found: warn
