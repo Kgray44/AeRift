@@ -168,5 +168,38 @@ async (page) => {
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removal survives restart");
   await media.getByRole("button", { name: "Select for Rift", exact: true }).click();
   await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, durable multi-item imports, and phone/rotation/tablet bounds.";
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  const notes = page.getByRole("region", { name: "notes", exact: true });
+  await notes.getByRole("button", { name: "Edit", exact: true }).click();
+  const attachmentPicker = notes.getByLabel("Imported copy", { exact: true });
+  await attachmentPicker.selectOption({ label: "Navigation chart.pdf" });
+  await notes.getByRole("button", { name: "Attach", exact: true }).click();
+  await attachmentPicker.selectOption({ label: "Harbor approach.mov" });
+  await notes.getByRole("button", { name: "Attach", exact: true }).click();
+  await notes.getByRole("button", { name: "Save changes", exact: true }).click();
+
+  await page.reload();
+  await go("Workspace");
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await notes.getByText("2 attachments", { exact: true }).click();
+  const savedNote = notes.locator(".ios-object-list > li").filter({ hasText: "Packing list" });
+  const attachments = savedNote.locator("details li");
+  await attachments.filter({ hasText: "Harbor approach.mov" }).getByRole("button", { name: "Preview" }).click();
+  check((await attachments.allTextContents())[0].includes("Navigation chart.pdf"), "note attachments keep their order after restart");
+  await savedNote.getByRole("button", { name: "Send note text", exact: true }).waitFor();
+  await screenshot("note-attachments-390");
+  await attachments.filter({ hasText: "Navigation chart.pdf" }).getByRole("button", { name: "Select for Rift" }).click();
+  await page.locator(".ae-dock-file").getByText("Navigation chart.pdf", { exact: true }).waitFor();
+
+  await go("Workspace");
+  await files.getByRole("button", { name: "Remove Navigation chart.pdf", exact: true }).click();
+  await files.getByRole("button", { name: "Remove Navigation chart.pdf", exact: true }).waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await notes.getByText("2 attachments", { exact: true }).click();
+  await attachments.first().getByText("Imported copy unavailable", { exact: true }).waitFor();
+  await notes.getByRole("button", { name: "Edit", exact: true }).click();
+  await notes.getByRole("button", { name: "Detach Attachment 1", exact: true }).click();
+  await notes.getByRole("button", { name: "Save changes", exact: true }).click();
+  await notes.getByText("1 attachment", { exact: true }).waitFor();
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, durable multi-item imports, note attachments, and phone/rotation/tablet bounds.";
 }

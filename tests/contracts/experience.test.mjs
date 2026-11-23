@@ -91,3 +91,18 @@ test("a cancelled or superseded Orbit animation cannot commit after a newer requ
   assert.deepEqual(cancelled, initial);
   assert.equal(applyNavigationEvent(cancelled, { ...second, phase: "committed" }), cancelled);
 });
+
+test("notes retain ordered attachment object IDs and older notes still decode", () => {
+  const note = { schemaVersion: 1, id: "note", name: "Trip", kind: "note",
+    ownership: "local", format: "plain", text: "Packing list" };
+  const attached = { ...note, attachmentIds: ["photo", "chart"] };
+  assert.deepEqual(decodeObject(serializeObject(attached)), attached);
+  assert.deepEqual(decodeObject(serializeObject(note)), note);
+  for (const candidate of [
+    { ...attached, kind: "text" },
+    { ...note, attachmentIds: ["photo", "photo"] },
+    { ...note, attachmentIds: ["note"] },
+    { ...note, attachmentIds: [""] },
+    { ...note, attachmentIds: "chart" },
+  ]) assert.equal(decodeObject(JSON.stringify(candidate)), undefined);
+});

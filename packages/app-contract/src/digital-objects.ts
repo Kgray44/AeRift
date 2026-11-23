@@ -25,7 +25,8 @@ export type MediaPayload = {
 
 export type DigitalObject = { schemaVersion: 1; id: ObjectId; name: string } & Ownership & (
   | MediaPayload
-  | { kind: "text" | "note"; format: TextFormat; text: string }
+  | { kind: "text"; format: TextFormat; text: string }
+  | { kind: "note"; format: TextFormat; text: string; attachmentIds?: readonly ObjectId[] }
   | { kind: "url"; url: string }
   | { kind: "clipboard"; objectId: ObjectId }
   | { kind: "collection"; itemIds: readonly ObjectId[] }
@@ -116,7 +117,7 @@ const payloadKeys = {
   file: ["sizeBytes", "mediaType", "assetId"],
   photo: ["sizeBytes", "mediaType", "assetId"],
   video: ["sizeBytes", "mediaType", "assetId"],
-  text: ["format", "text"], note: ["format", "text"], url: ["url"],
+  text: ["format", "text"], note: ["format", "text", "attachmentIds"], url: ["url"],
   clipboard: ["objectId"], collection: ["itemIds"], structured: ["namespace", "version", "value"],
 } as const satisfies Record<DigitalObject["kind"], readonly string[]>;
 
@@ -160,6 +161,11 @@ export function decodeObject(serialized: string): DigitalObject | undefined {
   return value as DigitalObject;
 }
 
+function validObjectReferences(ids: unknown, objectId: unknown): boolean {
+  return Array.isArray(ids) && ids.every(id => nonempty(id) && id !== objectId) &&
+    new Set(ids).size === ids.length;
+}
+
 function validPayload(kind: DigitalObject["kind"], value: Record<string, unknown>): boolean {
   switch (kind) {
     case "file":
@@ -169,15 +175,16 @@ function validPayload(kind: DigitalObject["kind"], value: Record<string, unknown
         (value.mediaType === undefined || nonempty(value.mediaType)) &&
         (value.assetId === undefined || nonempty(value.assetId));
     case "text":
-    case "note":
       return (value.format === "plain" || value.format === "markdown") && typeof value.text === "string";
+    case "note":
+      return (value.format === "plain" || value.format === "markdown") && typeof value.text === "string" &&
+        (value.attachmentIds === undefined || validObjectReferences(value.attachmentIds, value.id));
     case "url":
       return isWebUrl(value.url);
     case "clipboard":
       return nonempty(value.objectId) && value.objectId !== value.id;
     case "collection":
-      return Array.isArray(value.itemIds) && value.itemIds.every((id) => nonempty(id) && id !== value.id) &&
-        new Set(value.itemIds).size === value.itemIds.length;
+      return validObjectReferences(value.itemIds, value.id);
     case "structured":
       return typeof value.namespace === "string" && /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/.test(value.namespace) &&
         safeInteger(value.version, 1) && Object.hasOwn(value, "value");

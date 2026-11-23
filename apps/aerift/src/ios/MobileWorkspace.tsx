@@ -73,7 +73,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
     {(current === "files" || current === "photos") &&
       <MobileMediaTray key={current} source={current} port={media} regions={regions} />}
     {current && current !== "files" && current !== "photos" && (objects
-      ? <LocalObjectWorkspace key={current} module={current} objects={objects} save={save}
+      ? <LocalObjectWorkspace key={current} module={current} objects={objects} save={save} media={media}
         regions={regions} openRift={openRift} />
       : <p role="alert">AeRift couldn't read the saved workspace. Files and Photos are still available.</p>)}
     {regions.selecting && <p role="status">Opening picker or preparing item…</p>}
