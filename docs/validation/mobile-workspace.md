@@ -9,12 +9,12 @@ The iPhone still uses the shared v1 pairing, consent and file transport. One sub
 | Notes | Local Markdown source and plain text, editable and sent as ordinary .md or .txt files after selecting an existing trusted destination | Attachments and rendered rich previews |
 | Browser | Safari Services in-app browsing and explicit link collection. Link copies use .txt. Web pages are outside the transfer webview. | In-app page capture and download import from the browser, along with physical qualification of the browser's external-open controls |
 | Clipboard | Optional text pins through an editable field and the native Paste menu. No automatic clipboard reads or background sync. Each send is explicit. | Image paste and optional history, image and sensitivity controls |
-| Collections | Persistent ordering and removal of saved notes, links and text pins | Media membership and a receiver-compatible collection transfer format |
+| Collections | Persistent ordering and removal of saved notes, links and text pins. Send their ordered contents as one portable text copy. | Media membership and automatic receiver-side import |
 | Rift | UI Overhaul spatial peers, authenticated receiver readiness, shared Rift animation, manual consent and cancellation, and opt-in foreground gesture recognition. | Real-device sender and receiver choreography, readiness expiry, permission and interruption qualification |
 | Devices and Activity | Discovery, pairing, trust revocation and real pending, active and final transfer states. Optional local retention for up to 60 final outcomes, with an explicit clear action. | Device capability negotiation |
 | Android | Experience contract and platform adapter plan below | Native host, integrations and device validation |
 
-Saved local objects use the versioned Mission 0 object contract. Opaque native selection IDs stay session-scoped. The v1 sender offers one ordinary file at a time. A receiver does not need workspace support to accept a note, link or pin copy. A staged file is released after its last native reader is done. Collection membership never implies that a recipient has its objects.
+Saved local objects use the versioned Mission 0 object contract. Opaque native selection IDs stay session-scoped. The v1 sender offers one ordinary file at a time. A receiver does not need workspace support to accept a note, link or pin copy. A staged file is released after its last native reader is done. A collection copy carries the ordered versioned objects in one text file. A recipient can read the file without a new protocol capability. The receiving app does not automatically recreate the collection.
 
 System surfaces used here are [Quick Look](https://developer.apple.com/documentation/quicklook/qlpreviewcontroller), the [iOS share sheet](https://developer.apple.com/documentation/uikit/uiactivityviewcontroller) and [Safari Services](https://developer.apple.com/documentation/safariservices/sfsafariviewcontroller).
 

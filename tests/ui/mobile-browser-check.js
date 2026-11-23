@@ -133,5 +133,19 @@ async (page) => {
   await dialog.getByRole("button", { name: "Clear saved outcomes", exact: true }).click();
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   check(await history.getByText("Cancelled", { exact: true }).count() === 0, "clear removes archived outcomes");
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence, saved Activity, consent reading order, and phone/rotation/tablet bounds.";
+  await go("Workspace");
+  await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__.invoke = (command, args) => {
+      if (command !== "stage_ios_text") throw new Error("Unexpected fixture command");
+      window.mobileCollectionCopy = JSON.parse(args.text);
+      return Promise.resolve({ name: args.name, sizeBytes: new TextEncoder().encode(args.text).length, selectionId: "fixture-collection" });
+    };
+  });
+  await page.getByRole("button", { name: "Send collection copy", exact: true }).click();
+  await page.getByRole("heading", { name: "Rift", exact: true, level: 2 }).waitFor();
+  await page.locator(".ae-dock-file").getByText("AeRift - Harbor Trip.txt", { exact: true }).waitFor();
+  check(await page.evaluate(() => window.mobileCollectionCopy.items[0].name === "Packing list"),
+    "the staged collection copy includes its saved objects");
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, clipboard opt-in, collection persistence and copy staging, saved Activity, consent reading order, and phone/rotation/tablet bounds.";
 }
