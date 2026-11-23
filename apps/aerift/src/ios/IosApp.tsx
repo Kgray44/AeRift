@@ -13,7 +13,7 @@ import { MobileNavigation } from "./MobileNavigation";
 import { observeMobileMedia } from "./mobile-media-observer";
 import { nativeMobileMedia, type MobileMediaPort } from "./mobile-media";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
-import { decodeMobileObjects, objectStorageKey, removeMobileObject, type MobileObject } from "./local-objects";
+import { decodeMobileObjects, persistMobileObjects, readMobileObjects, removeMobileObject, type MobileObject } from "./local-objects";
 import { decodeMobileHistory, historyStorageKey, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
 import { mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
 import "./ios.css";
@@ -69,7 +69,7 @@ function readWorkspace() {
 
 function readObjects() {
   try {
-    return decodeMobileObjects(localStorage.getItem(objectStorageKey) ?? "[]");
+    return readMobileObjects(localStorage);
   } catch {
     return undefined;
   }
@@ -217,7 +217,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
       return false;
     }
     try {
-      localStorage.setItem(objectStorageKey, serialized);
+      persistMobileObjects(localStorage, objects, next);
       setObjects([...next]);
       return true;
     } catch {

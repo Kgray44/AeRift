@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeMobileObjects, normalWebUrl, portableText, removeMobileObject } from "../../apps/aerift/src/ios/local-objects.ts";
+import { decodeMobileObjects, normalWebUrl, noteAttachmentStorageKey, objectStorageKey, persistMobileObjects,
+  portableText, readMobileObjects, removeMobileObject } from "../../apps/aerift/src/ios/local-objects.ts";
 
 const base = { schemaVersion: 1, ownership: "local" };
 const note = { ...base, id: "note", kind: "note", name: "A résumé", format: "markdown", text: "## Harbor" };
@@ -26,4 +27,46 @@ test("links remain web-only and transfer as inert text", () => {
   assert.equal(normalWebUrl("file:///etc/hosts"), undefined);
   assert.deepEqual(portableText(note), { name: "AeRift - A resume.md", text: note.text });
   assert.deepEqual(portableText(link), { name: "AeRift - Map.txt", text: link.url });
+});
+
+test("a previous build can edit note text while attachment references stay readable", () => {
+  const entries = new Map([[objectStorageKey, JSON.stringify([note])]]);
+  const storage = {
+    getItem: key => entries.get(key) ?? null,
+    setItem: (key, value) => entries.set(key, value),
+    removeItem: key => entries.delete(key),
+  };
+  const attached = { ...note, attachmentIds: ["chart", "video"] };
+  persistMobileObjects(storage, [note], [attached]);
+  assert.deepEqual(JSON.parse(storage.getItem(objectStorageKey)), [note]);
+
+  const edited = { ...note, text: "Edited on the earlier build" };
+  storage.setItem(objectStorageKey, JSON.stringify([edited]));
+  assert.deepEqual(readMobileObjects(storage), [{ ...edited, attachmentIds: attached.attachmentIds }]);
+
+  storage.setItem(objectStorageKey, "[]");
+  assert.deepEqual(readMobileObjects(storage), []);
+});
+
+test("a failed note write restores its previous attachment references", () => {
+  const entries = new Map([[objectStorageKey, JSON.stringify([note])]]);
+  const storage = {
+    getItem: key => entries.get(key) ?? null,
+    setItem: (key, value) => entries.set(key, value),
+    removeItem: key => entries.delete(key),
+  };
+  const attached = { ...note, attachmentIds: ["chart"] };
+  persistMobileObjects(storage, [note], [attached]);
+  const before = storage.getItem(noteAttachmentStorageKey);
+  assert.throws(() => persistMobileObjects({
+    ...storage,
+    setItem(key, value) {
+      if (key === objectStorageKey) throw new Error("disk full");
+      storage.setItem(key, value);
+    },
+  }, [attached], [{ ...note, attachmentIds: ["photo"] }]), /disk full/);
+  assert.equal(storage.getItem(noteAttachmentStorageKey), before);
+  assert.deepEqual(readMobileObjects(storage), [attached]);
+  storage.setItem(noteAttachmentStorageKey, "invalid index");
+  assert.deepEqual(readMobileObjects(storage), [note]);
 });

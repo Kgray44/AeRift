@@ -178,11 +178,20 @@ async (page) => {
   await notes.getByRole("button", { name: "Attach", exact: true }).click();
   await notes.getByRole("button", { name: "Save changes", exact: true }).click();
 
+  await page.evaluate(() => {
+    const key = "aerift.ios.objects.v1";
+    const objects = JSON.parse(localStorage.getItem(key));
+    const note = objects.find(item => item.kind === "note");
+    if (Object.hasOwn(note, "attachmentIds")) throw new Error("The earlier build rejects this note record");
+    note.text = "Note edited by an earlier build.";
+    localStorage.setItem(key, JSON.stringify(objects));
+  });
   await page.reload();
   await go("Workspace");
   await page.getByRole("button", { name: "Notes", exact: true }).click();
   await notes.getByText("2 attachments", { exact: true }).click();
   const savedNote = notes.locator(".ios-object-list > li").filter({ hasText: "Packing list" });
+  await savedNote.getByText("Note edited by an earlier build.", { exact: true }).waitFor();
   const attachments = savedNote.locator("details li");
   await attachments.filter({ hasText: "Harbor approach.mov" }).getByRole("button", { name: "Preview" }).click();
   check((await attachments.allTextContents())[0].includes("Navigation chart.pdf"), "note attachments keep their order after restart");

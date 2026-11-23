@@ -14,7 +14,7 @@ The iPhone still uses the shared v1 pairing, consent and file transport. One sub
 | Devices and Activity | Discovery, pairing, trust revocation and real pending, active and final transfer states. Optional local retention for up to 60 final outcomes, with an explicit clear action. | Device capability negotiation |
 | Android | Experience contract and platform adapter plan below | Native host, integrations and device validation |
 
-Saved local objects use the versioned Mission 0 object contract. Opaque native selection IDs stay session-scoped. The v1 sender offers one ordinary file at a time. A receiver does not need workspace support to accept a note, link or pin copy. A staged file is released after its last native reader is done. Collection membership never implies that a recipient has its objects.
+Saved local objects use the versioned Mission 0 object contract. Note attachment references have a separate local index so older app builds can read and edit the note text. Opaque native selection IDs stay session-scoped. The v1 sender offers one ordinary file at a time. A receiver does not need workspace support to accept a note, link or pin copy. A staged file is released after its last native reader is done. Collection membership never implies that a recipient has its objects.
 
 System surfaces used here are [Quick Look](https://developer.apple.com/documentation/quicklook/qlpreviewcontroller), the [iOS share sheet](https://developer.apple.com/documentation/uikit/uiactivityviewcontroller) and [Safari Services](https://developer.apple.com/documentation/safariservices/sfsafariviewcontroller).
 
