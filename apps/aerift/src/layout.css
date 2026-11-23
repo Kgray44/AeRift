@@ -1,0 +1,25 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: CanvasText;
+  background: Canvas;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  box-sizing: border-box;
+  width: min(100%, 64rem);
+  padding: clamp(1.25rem, 5vw, 4rem);
+  margin-inline: auto;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 1rem;
+  border-bottom: 1px solid GrayText;
+  margin-bottom: 2rem;
+}
