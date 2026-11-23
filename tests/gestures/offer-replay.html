@@ -1,9 +1,9 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>AeRift photographic offer replay</title>
+<main></main>
 <script type="module">
-import { bindSendGesture } from "/dist/gestures/packages/gestures/src/send-binding.js";
-import { HandLandmarkTracker } from "/dist/gestures/packages/gestures/src/landmarks.js";
+import { HandLandmarkTracker, mountSendGesture } from "/dist/gestures/packages/gestures/src/index.js";
 
 async function loadPhoto(name) {
   const image = new Image();
@@ -20,14 +20,41 @@ const context = canvas.getContext("2d");
 context.scale(0.75, 0.75);
 
 const sendCalls = [];
-const outcomes = [];
 const selected = { deviceId: "test-peer", selectionId: "test-file" };
-const binding = bindSendGesture("photo-replay", () => ({
-  intent: selected, busy: false, async send(intent) {
-    sendCalls.push(intent);
-    return true;
+let liveSelection = null;
+const mountPoint = document.querySelector("main");
+let cameraIntent;
+let feedback;
+let stopCalls = 0;
+const controls = mountSendGesture(mountPoint, {
+  readControls: () => ({
+    intent: liveSelection, busy: false, async send(intent) {
+      sendCalls.push(intent);
+      return true;
+    },
+  }),
+  showPreview: false,
+  createCamera({ intent, onFeedback }) {
+    cameraIntent = intent;
+    feedback = onFeedback;
+    return {
+      async start() {
+        intent.begin(0);
+        onFeedback(intent.setCamera("ready"));
+      },
+      stop() {
+        stopCalls++;
+        onFeedback(intent.setCamera("disabled"));
+      },
+      updateContext(target) { onFeedback(intent.updateContext(target)); },
+    };
   },
-}), (outcome) => outcomes.push(outcome));
+});
+const button = mountPoint.querySelector("button");
+const requiresSelection = button.disabled && cameraIntent === undefined;
+liveSelection = selected;
+controls.update();
+button.click();
 const tracker = new HandLandmarkTracker();
 const worker = new Worker("/gesture-assets/hand-worker.js");
 
@@ -46,8 +73,6 @@ const poses = [];
 const phases = [];
 try {
   await exchange({ type: "INIT" }, "READY");
-  binding.intent.begin(0);
-  binding.intent.setCamera("ready");
   let capture = 0;
   // Fixed playback timestamps decouple posture recognition from host scheduling.
   for (const photo of [open, fist, open, fist, open]) {
@@ -64,16 +89,25 @@ try {
         captureMs: result.capture, width: result.width, height: result.height, hands: result.hands,
       });
       poses.push(observation.posture);
-      const feedback = binding.intent.observe(observation, capture);
-      if (phases.at(-1) !== feedback.phase) phases.push(feedback.phase);
+      const state = cameraIntent.observe(observation, capture);
+      feedback(state);
+      if (phases.at(-1) !== state.phase) phases.push(state.phase);
     }
   }
 } finally {
   worker.terminate();
 }
 const expectedPoses = ["open", "fist", "open", "fist", "open"].flatMap((pose) => Array(5).fill(pose));
+const status = mountPoint.querySelector("[role=status]").textContent;
+const stoppedAfterOffer = stopCalls === 1;
+button.click();
+liveSelection = { ...selected, deviceId: "other-peer" };
+controls.update();
+const stoppedAfterTargetChange = stopCalls === 2;
+controls.dispose();
 const pass = JSON.stringify(poses) === JSON.stringify(expectedPoses) &&
   phases.includes("held") && phases.at(-1) === "released" &&
-  JSON.stringify(sendCalls) === JSON.stringify([selected]) && outcomes.join(",") === "sent";
-window.replayResult = { pass, phases, poses, sendCalls, outcomes };
+  JSON.stringify(sendCalls) === JSON.stringify([selected]) && status === "Transfer offered." &&
+  requiresSelection && stoppedAfterOffer && stoppedAfterTargetChange && !mountPoint.hasChildNodes();
+window.replayResult = { pass, phases, poses, sendCalls, status, requiresSelection, stoppedAfterOffer, stoppedAfterTargetChange };
 </script>
