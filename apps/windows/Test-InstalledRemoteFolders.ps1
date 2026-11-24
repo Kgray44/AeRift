@@ -105,15 +105,57 @@ function Dialog-Child($Dialog, [string]$Id) {
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Id)
     $Dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
+function Write-OwnedDialogShape($Dialog) {
+    # Never dump names/values, paths, or screenshots. Report only bounded
+    # provider structure and recognizable static labels as booleans.
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    $queue = [Collections.Generic.Queue[object]]::new()
+    $queue.Enqueue(@{ element = $Dialog; parent = -1; depth = 0 })
+    $index = 0
+    while ($queue.Count -gt 0 -and $index -lt 90) {
+        $row = $queue.Dequeue()
+        $element = $row.element
+        try {
+            $properties = $element.Current
+            if ($properties.ProcessId -ne $app.Id) { continue }
+            $id = $properties.AutomationId
+            if ($id -cnotmatch '^(?:[0-9]{1,6}|[A-Za-z][A-Za-z0-9_-]{0,47})$') { $id = '[other]' }
+            $kind = $properties.ControlType.ProgrammaticName
+            $class = $properties.ClassName
+            if ($class -cnotmatch '^[#A-Za-z0-9_-]{1,48}$') { $class = '[other]' }
+            $label = $properties.Name -cin @('Folder:', 'Folder name:', 'File name:', 'Select Folder', 'Cancel')
+            $value = $null
+            $hasValue = $element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value)
+            $invoke = $null
+            $hasInvoke = $element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)
+            Write-Host ("fixture UIA #{0} parent={1} depth={2} kind={3} id={4} class={5} staticLabel={6} enabled={7} valuePattern={8} invokePattern={9}" -f
+                $index, $row.parent, $row.depth, $kind, $id, $class, $label, $properties.IsEnabled, $hasValue, $hasInvoke)
+            if ($row.depth -lt 8) {
+                $child = $walker.GetFirstChild($element)
+                $siblings = 0
+                while ($child -and $siblings -lt 14 -and $queue.Count -lt 90) {
+                    $queue.Enqueue(@{ element = $child; parent = $index; depth = ($row.depth + 1) })
+                    $child = $walker.GetNextSibling($child)
+                    $siblings++
+                }
+            }
+        } catch { Write-Host 'Fixture UIA returned a stale or inaccessible owned element.' }
+        $index++
+    }
+}
 function Choose-NativeDestination([bool]$Cancel) {
     $dialog = Wait-For { Owned-Dialog } 'Native folder picker not found in owned AeRift process.'
     if (!$Cancel) {
-        $field = Dialog-Child $dialog '1148'
-        if (!$field) { throw 'Owned native folder input unavailable; no simulated keys or path injection.' }
-        $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($destination)
+        try {
+            $field = Wait-For { Dialog-Child $dialog '1148' } 'Owned native folder input unavailable; no simulated keys or path injection.'
+            $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($destination)
+        } catch {
+            Write-OwnedDialogShape $dialog
+            throw
+        }
     }
     $button = Dialog-Child $dialog $(if ($Cancel) { '2' } else { '1' })
-    if (!$button) { throw 'Owned native picker confirmation unavailable.' }
+    if (!$button) { Write-OwnedDialogShape $dialog; throw 'Owned native picker confirmation unavailable.' }
     $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Wait-For { !(Owned-Dialog) } 'Owned native picker did not close.' | Out-Null
 }
