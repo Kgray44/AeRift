@@ -1,5 +1,5 @@
-import { Button, ConnectionStatus, SpatialIcon } from "@aerift/ui";
-import { useState } from "react";
+import { Button, ConnectionStatus, GlassSurface, SpatialIcon } from "@aerift/ui";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import type { AppPort, AppSnapshot } from "@aerift/app-contract";
 import { partitionDevices } from "@aerift/app-contract/friends";
 import { nativeAppPort } from "./nativeAppPort";
@@ -9,11 +9,28 @@ const devicePlatform = {
   macos: ["Mac", "desktop"], linux: ["Linux", "desktop"],
 } as const;
 
-export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppSnapshot | undefined; port?: AppPort }) {
+export function DeviceTrust({ snapshot, port = nativeAppPort, actions }: { snapshot: AppSnapshot | undefined; port?: AppPort; actions?: ReactNode }) {
   const [selected, setSelected] = useState<string>();
   const [revoking, setRevoking] = useState(false);
   const [feedback, setFeedback] = useState<{ message: string; error: boolean }>();
   const { personal, nearby: devices } = partitionDevices(snapshot?.devices ?? [], snapshot?.friends, snapshot?.personalDeviceIds);
+
+  const nearbyHeading = useRef<HTMLHeadingElement>(null);
+  const focusAfterRemoval = useRef(false);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const triggers = useRef(new Map<string, HTMLButtonElement>());
+  const restore = useRef<string>(undefined);
+  const visibleSelection = devices.some(device => device.id === selected && device.paired) ? selected : undefined;
+  useLayoutEffect(() => {
+    if (visibleSelection) cancel.current?.focus({ preventScroll: true });
+    else if (focusAfterRemoval.current) {
+      nearbyHeading.current?.focus({ preventScroll: true });
+      focusAfterRemoval.current = false;
+    } else if (restore.current) {
+      triggers.current.get(restore.current)?.focus({ preventScroll: true });
+      restore.current = undefined;
+    }
+  }, [visibleSelection]);
 
   async function revoke(deviceId: string) {
     setRevoking(true);
@@ -21,6 +38,7 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
     try {
       const result = await port.pair({ action: "revoke", deviceId });
       if (result.ok) {
+        focusAfterRemoval.current = true;
         setSelected(undefined);
         setFeedback({ message: "Device trust removed.", error: false });
       } else {
@@ -33,15 +51,21 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
 
   return (
     <section className="aerift-device-trust" aria-label="Nearby and trusted devices">
-      {snapshot?.personalDeviceIds && <section aria-label="My Devices">
-        <h3>My Devices</h3>
+      {snapshot?.personalDeviceIds && <GlassSurface className="aerift-device-zone" material="content" role="region" aria-label="My Devices">
+        <div className="aerift-device-zone-head">
+          <div><h3>My Devices</h3><p>Devices authorized as yours. This is separate from nearby pairing.</p></div>
+        </div>
         {personal.length ? <ul className="aerift-devices">{personal.map(device => <li key={device.id}>
           <div className="aerift-device-id"><SpatialIcon name={devicePlatform[device.platform][1]} size={22} />
             <div><strong>{device.name}</strong><small>{devicePlatform[device.platform][0]}</small></div></div>
           <ConnectionStatus state={device.online ? "connected" : "offline"} label={device.online ? "Online" : "Offline"} />
         </li>)}</ul> : <p>No authorized personal devices.</p>}
-      </section>}
-      <h3>Nearby Devices</h3>
+      </GlassSurface>}
+      <GlassSurface className="aerift-device-zone" material="content" role="region" aria-label="Nearby Devices">
+      <div className="aerift-device-zone-head">
+        <div><h3 ref={nearbyHeading} tabIndex={-1}>Nearby Devices</h3><p>Pair with a device you recognize on this network. Pairing alone does not grant remote access.</p></div>
+        {actions && <div className="ae-actions aerift-device-actions">{actions}</div>}
+      </div>
       {devices.length ? (
         <ul className="aerift-devices">
           {devices.map((device) => (
@@ -53,13 +77,27 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
                 <div><strong>{device.name}</strong><small>{devicePlatform[device.platform][0]} · {device.paired ? "Paired" : "Unpaired"}</small></div>
               </div>
               <ConnectionStatus state={device.online ? "connected" : "offline"} label={device.online ? "Online" : "Offline"} />
-              {device.paired && (selected === device.id ? (
-                <>
+              {device.paired && visibleSelection !== device.id && <Button variant="quiet" disabled={revoking}
+                ref={node => { if (node) triggers.current.set(device.id, node); else triggers.current.delete(device.id); }}
+                aria-label={`Unpair ${device.name}`} onClick={() => setSelected(device.id)}>Unpair</Button>}
+              {device.paired && visibleSelection === device.id && <div className="aerift-device-confirm" data-ae-route-enter="neutral"
+                role="group" aria-label={`Unpair ${device.name}?`} onKeyDown={event => {
+                  if (event.key === "Escape" && !revoking) {
+                    event.stopPropagation();
+                    restore.current = device.id;
+                    setSelected(undefined);
+                  }
+                }}>
+                <p>Unpair <strong>{device.name}</strong>? Future nearby transfers require pairing again.</p>
+                <div className="ae-actions">
+                  <Button variant="quiet" ref={cancel} disabled={revoking} onClick={() => {
+                    restore.current = device.id;
+                    setSelected(undefined);
+                  }}>Keep paired</Button>
                   <Button variant="danger" onClick={() => void revoke(device.id)}
                     loading={revoking} loadingLabel="Removing trust">Confirm unpair</Button>
-                  <Button variant="quiet" disabled={revoking} onClick={() => setSelected(undefined)}>Keep paired</Button>
-                </>
-              ) : <Button variant="quiet" disabled={revoking} onClick={() => setSelected(device.id)}>Unpair</Button>)}
+                </div>
+              </div>}
             </li>
           ))}
         </ul>
@@ -68,6 +106,7 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
         <p>{snapshot ? "Searching the local network…" : "Disconnected"}</p>
       </div>}
       {feedback && <p role={feedback.error ? "alert" : "status"}>{feedback.message}</p>}
+      </GlassSurface>
     </section>
   );
 }

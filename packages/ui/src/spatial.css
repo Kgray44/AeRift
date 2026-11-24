@@ -424,3 +424,15 @@
   .ae-spatial-scene :is(.ae-spatial-peer, .ae-spatial-glyph, .ae-spatial-field span) { animation: none !important; }
 }
 .ae-theme[data-motion="reduce"] .ae-spatial-scene :is(.ae-spatial-peer, .ae-spatial-glyph, .ae-spatial-field span) { animation: none !important; }
+
+.ae-activity-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+.ae-activity-header :is(h2, h3), .ae-activity-consent-heading h3 { margin: 0; }
+.ae-activity-header .aerift-activity-filter { display: flex; align-items: center; gap: .55rem; }
+.ae-activity-header select { min-block-size: 44px; }
+.ae-activity-consent-heading p { margin: .25rem 0 .5rem; color: var(--ae-muted); }
+
+
+.ae-manual-transfer-heading { flex: 1 0 100%; min-inline-size: 0; }
+.ae-manual-transfer-heading h3 { margin: 0; font-size: .96rem; }
+.ae-manual-transfer-heading p { margin: .18rem 0 .25rem; font-size: .82rem; color: var(--ae-muted); }
+.ae-transfer-dock .ae-button { min-block-size: 44px; }

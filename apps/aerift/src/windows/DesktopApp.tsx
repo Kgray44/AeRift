@@ -254,15 +254,12 @@ export function DesktopApp() {
         </div>
         {dropError && <p role="alert">{dropError}</p>}
         {route === "home" && <DesktopHome connection={connection} gestures={settings.gestures} onNavigate={navigate} />}
-        {route === "devices" && <>
-          <DeviceTrust snapshot={snapshot} />
-          <div className="ae-actions">
+        {route === "devices" && <DeviceTrust snapshot={snapshot} actions={<>
             <Button disabled={!snapshot} onClick={() => setPairRequest(request => request + 1)}>
               <SpatialIcon name="pair" size={17} />{pendingPairs ? `Review pairing (${pendingPairs})` : "Pair a device"}
             </Button>
             {connection.state === "disconnected" && <Button onClick={retryConnection}>Retry connection</Button>}
-          </div>
-        </>}
+        </>} />}
         {route === "friends" && friendsView && friends &&
           <>
             <FriendsWorkspace snapshot={friends} port={setupPort} setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />} />

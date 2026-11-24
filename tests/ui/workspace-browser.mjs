@@ -74,6 +74,41 @@ try {
     const after = await dock.locator(".af-dock-fluid").boundingBox();
     assert.notEqual(before.x, after.x);
     assert.equal(await dock.getByRole("button", { name: "Rift", exact: true }).getAttribute("aria-current"), "page");
+    const manual = page.getByRole("region", { name: "Manual transfer" });
+    await manual.getByRole("heading", { name: "Send manually" }).waitFor();
+    // The fixture opens Rift with an existing incoming offer.
+    await button(manual, "Choose another file").click();
+    await manual.getByText("Harbor survey.pdf", { exact: true }).waitFor();
+    assert.equal(await button(manual, "Send file").count(), 0, "sending needs a recipient");
+    await page.locator("label.ae-spatial-peer").filter({ hasText: "Studio PC" }).click();
+    await button(manual, "Send file").waitFor();
+    assert.ok(await manual.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+    // A pending offer intentionally adds a screen-reader-only activity status.
+    await dock.getByRole("button", { name: /^Activity(?:\s*Transfers active)?$/ }).click();
+    await page.waitForFunction(() => document.activeElement?.matches("h2") &&
+      document.activeElement.textContent === "Activity");
+    const status = page.getByRole("region", { name: "Transfer status" });
+    const history = page.getByRole("region", { name: "Transfer history" });
+    await status.getByRole("heading", { name: "Incoming offers" }).waitFor();
+    const filter = history.getByRole("combobox", { name: /^Show/ });
+    await filter.selectOption("finished");
+    await history.getByText("Harbor survey.pdf", { exact: true }).waitFor();
+    await button(status, "Accept").waitFor();
+    assert.ok(await history.evaluate(el =>
+      !!(document.querySelector(".ae-rift-board").compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    await button(dock, "Devices").click();
+    const nearby = page.getByRole("region", { name: "Nearby Devices", exact: true });
+    assert.equal(await nearby.getAttribute("data-material"), "content");
+    const unpair = button(nearby, "Unpair Studio PC");
+    await unpair.click();
+    const prompt = nearby.getByRole("group", { name: "Unpair Studio PC?" });
+    const keep = button(prompt, "Keep paired");
+    assert.equal(await focused(keep), true, "focus defaults to the non-destructive choice");
+    await keep.press("Escape");
+    assert.equal(await focused(unpair), true, "dismissing restores focus to the exact device");
+    assert.equal(await prompt.count(), 0);
+    assert.ok(await nearby.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+    await snapped(page, platform + "-devices");
     await page.emulateMedia({ reducedMotion: "reduce" });
     await dock.getByRole("button", { name: "Home", exact: true }).click();
     assert.equal(await dock.locator(".af-dock-fluid").evaluate(node => getComputedStyle(node).transitionDuration), "0s");
