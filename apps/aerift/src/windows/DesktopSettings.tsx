@@ -1,3 +1,4 @@
+import { BrowserPickupSettings } from "./BrowserPickupSettings";
 import { Button, SettingsPanel, type AppearanceSettings, type GestureCameraStatus } from "@aerift/ui";
 import { WORKSPACE_MODULES, type ModuleId } from "@aerift/app-contract/experience";
 import { useEffect, useState } from "react";
@@ -189,6 +190,7 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
         {explorerError && <p role="alert">AeRift could not update the File Explorer menu.</p>}
       </>}
     </section>
+    <BrowserPickupSettings />
     <section aria-labelledby="clipboard-heading">
       <h3 id="clipboard-heading">Clipboard privacy</h3>
       <label className="aerift-check"><input type="checkbox" checked={value.clipboard}

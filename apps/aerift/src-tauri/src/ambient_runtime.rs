@@ -382,21 +382,32 @@ impl AmbientRuntime {
         }
     }
 
-    pub(crate) fn start_lifecycle_watch(&self) {
+    pub(crate) fn start_lifecycle_watch(&self, app: AppHandle) {
         let runtime = self.clone();
         tauri::async_runtime::spawn(async move {
             let mut clock = tokio::time::interval(Duration::from_millis(250));
             let mut was_paused_by_session = false;
             loop {
                 clock.tick().await;
+                let browser = app.state::<crate::browser_review::BrowserReviewRuntime>();
+                let now = Instant::now();
+                let browser_active = browser.needs_session_sample(now);
                 let Ok(mut config) = runtime.0.config.lock() else {
+                    browser.revoke_session();
                     break;
                 };
-                if !config.enabled {
+                if !config.enabled && !browser_active {
                     was_paused_by_session = false;
                     continue;
                 }
                 let locked = !ambient_context::interactive_session();
+                if locked && browser_active {
+                    browser.revoke_session();
+                }
+                if !config.enabled {
+                    was_paused_by_session = false;
+                    continue;
+                }
                 if locked && !was_paused_by_session {
                     runtime.0.generation.fetch_add(1, Ordering::AcqRel);
                     config.slot = None;

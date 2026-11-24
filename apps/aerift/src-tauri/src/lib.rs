@@ -17,6 +17,8 @@ mod android;
 #[cfg(target_os = "android")]
 mod android_received;
 #[cfg(windows)]
+mod browser_review;
+#[cfg(windows)]
 mod desktop;
 #[cfg(windows)]
 mod desktop_explorer;
@@ -127,6 +129,7 @@ pub fn run() {
         )
         .manage(runtime::AppRuntime::default())
         .manage(ambient_runtime::AmbientRuntime::default())
+        .manage(browser_review::BrowserReviewRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             windows::watch_app,
@@ -154,6 +157,9 @@ pub fn run() {
             desktop::set_desktop_startup,
             desktop::open_workspace_url,
             desktop::desktop_transfer_preview,
+            browser_review::browser_review_status,
+            browser_review::retain_browser_review,
+            browser_review::clear_browser_review,
             desktop::notify_desktop_incoming,
             desktop_explorer::desktop_explorer_enabled,
             desktop_explorer::set_desktop_explorer,
@@ -163,7 +169,7 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             app.state::<ambient_runtime::AmbientRuntime>()
-                .start_lifecycle_watch();
+                .start_lifecycle_watch(app.handle().clone());
             let args = std::env::args_os().skip(1).collect::<Vec<_>>();
             desktop_explorer::stage_launch_file(
                 app.handle(),
@@ -183,6 +189,9 @@ pub fn run() {
             #[cfg(any(windows, target_os = "ios", target_os = "android"))]
             if matches!(_event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
+                #[cfg(windows)]
+                _app.state::<browser_review::BrowserReviewRuntime>()
+                    .revoke_session();
                 _app.state::<runtime::AppRuntime>().shutdown();
             }
         });
