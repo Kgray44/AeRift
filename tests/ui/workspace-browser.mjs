@@ -83,7 +83,10 @@ try {
     await page.locator("label.ae-spatial-peer").filter({ hasText: "Studio PC" }).click();
     await button(manual, "Send file").waitFor();
     assert.ok(await manual.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
-    await button(dock, "Activity").click();
+    // A pending offer intentionally adds a screen-reader-only activity status.
+    await dock.getByRole("button", { name: /^Activity(?:\s*Transfers active)?$/ }).click();
+    await page.waitForFunction(() => document.activeElement?.matches("h2") &&
+      document.activeElement.textContent === "Activity");
     const status = page.getByRole("region", { name: "Transfer status" });
     const history = page.getByRole("region", { name: "Transfer history" });
     await status.getByRole("heading", { name: "Incoming offers" }).waitFor();
