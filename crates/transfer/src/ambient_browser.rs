@@ -194,9 +194,10 @@ pub struct BrowserPickup(Option<PickupSlot>);
 
 enum PickupSlot {
     Armed(Uuid, Instant),
-    Review(Uuid, Instant, FrozenCapture),
+    Review(Instant, FrozenCapture, BrowserReview),
 }
 
+#[derive(Clone)]
 pub struct BrowserReview {
     pub id: Uuid,
     pub kind: RiftObjectKind,
@@ -218,7 +219,7 @@ impl BrowserPickup {
 
     pub fn expire(&mut self, now: Instant) {
         if self.0.as_ref().is_some_and(|slot| match slot {
-            PickupSlot::Armed(_, deadline) | PickupSlot::Review(_, deadline, _) => now >= *deadline,
+            PickupSlot::Armed(_, deadline) | PickupSlot::Review(deadline, _, _) => now >= *deadline,
         }) {
             self.cancel();
         }
@@ -259,25 +260,241 @@ impl BrowserPickup {
         if literal.len() > MAX_SELECTION_BYTES {
             return Err(IntakeError::Capture);
         }
-        let id = Uuid::new_v4();
-        let kind = capture.kind;
+        let review = BrowserReview {
+            id: Uuid::new_v4(),
+            kind: capture.kind,
+            literal,
+        };
         self.0 = Some(PickupSlot::Review(
-            id,
             now + Duration::from_secs(30),
             capture,
+            review.clone(),
         ));
-        Ok(BrowserReview { id, kind, literal })
+        Ok(review)
     }
 
     /// Deliberate local action only. App receives ownership, not send authority.
     pub fn confirm(&mut self, id: Uuid, now: Instant) -> Result<FrozenCapture, IntakeError> {
         self.expire(now);
-        if !matches!(&self.0, Some(PickupSlot::Review(expected, _, _)) if id == *expected) {
+        if !matches!(&self.0, Some(PickupSlot::Review(_, _, review)) if id == review.id) {
             return Err(IntakeError::Origin);
         }
         match self.0.take() {
-            Some(PickupSlot::Review(_, _, capture)) => Ok(capture),
+            Some(PickupSlot::Review(_, capture, _)) => Ok(capture),
             _ => Err(IntakeError::Origin),
         }
+    }
+}
+
+/// Native app view model. It carries no browser channel credential or pickup
+/// ticket, and a review is inert text rather than HTML, a URL action or a send.
+pub enum ProposalStatus<'a> {
+    Unavailable,
+    Ready,
+    Waiting,
+    Review(&'a BrowserReview),
+}
+
+/// App-owned local authority, distinct from the browser-origin stdio parser.
+///
+/// There is deliberately no production attach operation until the signed
+/// companion and approved extension are authenticated out of band. In
+/// particular, successfully parsing "chrome-extension://..." from argv is not
+/// a way to create an attached channel. This type registers no IPC or listener.
+#[derive(Default)]
+pub struct BrowserProposalBroker {
+    channel: Option<AttachedProposalChannel>,
+    pickup: BrowserPickup,
+}
+
+struct AttachedProposalChannel {
+    id: Uuid,
+    origin: ExtensionOrigin,
+}
+
+impl BrowserProposalBroker {
+    pub fn status(&mut self, now: Instant) -> ProposalStatus<'_> {
+        self.pickup.expire(now);
+        if self.channel.is_none() {
+            return ProposalStatus::Unavailable;
+        }
+        match &self.pickup.0 {
+            Some(PickupSlot::Armed(..)) => ProposalStatus::Waiting,
+            Some(PickupSlot::Review(_, _, review)) => ProposalStatus::Review(review),
+            None => ProposalStatus::Ready,
+        }
+    }
+
+    /// Native action only. The arm must be passed to the attached native
+    /// channel, never returned through a general webview or renderer API.
+    pub fn arm(&mut self, now: Instant) -> Result<Uuid, IntakeError> {
+        if !matches!(self.status(now), ProposalStatus::Ready) {
+            return Err(IntakeError::Origin);
+        }
+        Ok(self.pickup.arm(now))
+    }
+
+    /// Native channel only. Capture is bounded before storing an exact frozen
+    /// review. Failed assertions from another channel cannot consume the arm.
+    pub fn propose(
+        &mut self,
+        channel: Uuid,
+        ticket: Uuid,
+        now: Instant,
+        frame: &[u8],
+    ) -> Result<(), IntakeError> {
+        self.pickup.expire(now);
+        let attached = self
+            .channel
+            .as_ref()
+            .filter(|attached| attached.id == channel)
+            .ok_or(IntakeError::Origin)?;
+        self.pickup
+            .submit(ticket, now, frame, &attached.origin)
+            .map(drop)
+    }
+
+    pub fn disconnect(&mut self, channel: Uuid) {
+        if self
+            .channel
+            .as_ref()
+            .is_some_and(|actual| actual.id == channel)
+        {
+            self.channel = None;
+            self.cancel();
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        self.pickup.cancel();
+    }
+
+    /// Called after the native UI displays the exact preview and the user
+    /// deliberately confirms it. Returns object ownership, not transfer rights.
+    pub fn confirm(&mut self, id: Uuid, now: Instant) -> Result<FrozenCapture, IntakeError> {
+        if !matches!(self.status(now), ProposalStatus::Review(review) if review.id == id) {
+            return Err(IntakeError::Origin);
+        }
+        self.pickup.confirm(id, now)
+    }
+
+    #[cfg(test)]
+    fn fixture_attach(&mut self, reported: &str) -> Result<Uuid, IntakeError> {
+        let origin = ExtensionOrigin::authorize(app_broker_tests::ALLOWED, reported)?;
+        self.cancel();
+        let id = Uuid::new_v4();
+        self.channel = Some(AttachedProposalChannel { id, origin });
+        Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod app_broker_tests {
+    use super::*;
+
+    pub(super) const ALLOWED: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
+    fn selection(value: &str) -> Vec<u8> {
+        let body =
+            serde_json::json!({ "version": 1, "kind": "selection", "value": value }).to_string();
+        [
+            (body.len() as u32).to_ne_bytes().as_slice(),
+            body.as_bytes(),
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn ordinary_app_without_attested_installation_cannot_arm() {
+        let mut broker = BrowserProposalBroker::default();
+        let now = Instant::now();
+        assert!(matches!(broker.status(now), ProposalStatus::Unavailable));
+        assert_eq!(broker.arm(now), Err(IntakeError::Origin));
+        assert_eq!(
+            broker.fixture_attach("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"),
+            Err(IntakeError::Origin)
+        );
+        assert!(matches!(broker.status(now), ProposalStatus::Unavailable));
+    }
+
+    #[test]
+    fn exact_authenticated_channel_and_review_are_one_shot() {
+        let mut broker = BrowserProposalBroker::default();
+        let now = Instant::now();
+        let channel = broker.fixture_attach(ALLOWED).unwrap();
+        assert!(matches!(broker.status(now), ProposalStatus::Ready));
+        let arm = broker.arm(now).unwrap();
+        assert!(broker.arm(now).is_err());
+        let other = Uuid::new_v4();
+        assert_eq!(
+            broker.propose(other, arm, now, &selection("unpaired route")),
+            Err(IntakeError::Origin)
+        );
+        assert!(matches!(broker.status(now), ProposalStatus::Waiting));
+        broker
+            .propose(channel, arm, now, &selection("<b>exact text</b>"))
+            .unwrap();
+        assert_eq!(
+            broker.propose(channel, arm, now, &selection("replacement")),
+            Err(IntakeError::Origin)
+        );
+        let ProposalStatus::Review(review) = broker.status(now) else {
+            panic!("review must exist")
+        };
+        assert_eq!(review.literal, "<b>exact text</b>");
+        let id = review.id;
+        let literal = review.literal.clone();
+        assert!(broker.confirm(Uuid::new_v4(), now).is_err());
+        let object = broker.confirm(id, now).unwrap();
+        let mut exact = String::new();
+        object.entries()[0]
+            .open_verified()
+            .unwrap()
+            .read_to_string(&mut exact)
+            .unwrap();
+        assert_eq!(exact, literal);
+        assert!(broker.confirm(id, now).is_err());
+    }
+
+    #[test]
+    fn session_loss_expiry_cancel_and_malformed_proposal_clear_authority() {
+        let mut broker = BrowserProposalBroker::default();
+        let now = Instant::now();
+        let channel = broker.fixture_attach(ALLOWED).unwrap();
+        let arm = broker.arm(now).unwrap();
+        assert_eq!(
+            broker.propose(channel, arm, now, b"bad"),
+            Err(IntakeError::Frame)
+        );
+        assert!(matches!(broker.status(now), ProposalStatus::Ready));
+        let arm = broker.arm(now).unwrap();
+        broker
+            .propose(channel, arm, now, &selection("review"))
+            .unwrap();
+        let ProposalStatus::Review(review) = broker.status(now) else {
+            panic!("review must exist")
+        };
+        let id = review.id;
+        assert!(broker.confirm(id, now + Duration::from_secs(30)).is_err());
+        assert!(matches!(
+            broker.status(now + Duration::from_secs(30)),
+            ProposalStatus::Ready
+        ));
+        let arm = broker.arm(now).unwrap();
+        broker.cancel();
+        assert_eq!(
+            broker.propose(channel, arm, now, &selection("cancelled")),
+            Err(IntakeError::Origin)
+        );
+        let arm = broker.arm(now).unwrap();
+        broker
+            .propose(channel, arm, now, &selection("disconnect"))
+            .unwrap();
+        let ProposalStatus::Review(review) = broker.status(now) else {
+            panic!("review must exist")
+        };
+        let id = review.id;
+        broker.disconnect(channel);
+        assert!(broker.confirm(id, now).is_err());
+        assert!(matches!(broker.status(now), ProposalStatus::Unavailable));
     }
 }
