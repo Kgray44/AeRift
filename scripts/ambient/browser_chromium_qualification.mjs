@@ -52,7 +52,7 @@ try {
       assert.equal(value.split(original).length, 2);
       value = value.replace(original, `const HOST = "${host}";`);
       // Diagnostics in the fixture copy only: no inputs or content are logged.
-      value = value.replace('let status = "Unavailable";', 'let status = "Unavailable"; let phase = "tab";')
+      value = value.replace('let status = "Unavailable";', 'let status = "Unavailable"; let phase = "tab"; globalThis.fixtureError = undefined;')
         .replace('const focused =', 'phase = "focus"; const focused =')
         .replace('const [frame] =', 'phase = "snapshot"; const [frame] =')
         .replace('const snapshot =', 'phase = "plan"; const snapshot =')
@@ -106,7 +106,7 @@ try {
   await page.bringToFront();
   await page.evaluate(() => {
     const range = document.createRange();
-    range.selectNodeContents(document.querySelector("#selection"));
+    range.selectNodeContents(document.querySelector("#selection").firstChild);
     window.getSelection().removeAllRanges();
     window.getSelection().addRange(range);
   });
