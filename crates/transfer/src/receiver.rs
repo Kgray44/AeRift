@@ -7,6 +7,7 @@ use std::{
 
 #[cfg(unix)]
 use crate::journal::{DurableCheckpoint, Journal};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
@@ -91,14 +92,7 @@ impl ResumeStage {
 
     fn append(&mut self, offset: u64, data: &[u8]) -> Result<u64, TransferError> {
         match self {
-            Self::Memory(value) => value
-                .append(
-                    offset,
-                    data.len(),
-                    Sha256::digest(data).into(),
-                    &mut std::io::Cursor::new(data),
-                )
-                .map_err(checkpoint_failure),
+            Self::Memory(value) => value.append_block(offset, data).map_err(checkpoint_failure),
             #[cfg(unix)]
             Self::Durable(value) => value.append(offset, data),
         }
@@ -725,11 +719,14 @@ impl Receiver {
 
 fn checkpoint_failure(error: checkpoint::Error) -> TransferError {
     match error {
+        #[cfg(test)]
+        checkpoint::Error::BlockDigest => ErrorCode::IntegrityFailed,
         checkpoint::Error::InvalidRange => ErrorCode::InvalidRequest,
-        checkpoint::Error::PrefixMismatch
-        | checkpoint::Error::BlockDigest
-        | checkpoint::Error::FileDigest => ErrorCode::IntegrityFailed,
+        checkpoint::Error::PrefixMismatch | checkpoint::Error::FileDigest => {
+            ErrorCode::IntegrityFailed
+        }
         checkpoint::Error::Incomplete => ErrorCode::Conflict,
+        #[cfg(test)]
         checkpoint::Error::Interrupted => ErrorCode::NetworkError,
         checkpoint::Error::Storage => ErrorCode::StorageFailed,
     }

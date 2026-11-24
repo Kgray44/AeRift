@@ -71,20 +71,30 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
   const pw = .062 + size * .31, ph = .18 + size * .67;
   const amp = .34 + s.depth * .030;
   const zoom = (s.magnify * .01) * (orb ? .94 : .045);
+  const outerPower = 1.13 + roll * 1.4;
+  const darkScale = .43 * s.edge * .01;
+  const interiorStart = Math.max(dep + 5, 4.6);
+  const interiorWhite = clamp(tint);
+  const interiorWarmR = warm * 9, interiorWarmG = warm * 2, interiorWarmB = warm * 12;
   for (let py = scrY; py < endY; py++) {
     const iy = py + .5 - centerY, ay = Math.abs(iy) - halfH + r, dy = Math.max(0, ay), v = iy / halfH;
+    const signY = Math.sign(iy), vv = v * v;
     for (let px = scrX; px < endX; px++) {
       const ix = px + .5 - centerX, ax = Math.abs(ix) - halfW + r, dx = Math.max(0, ax);
       const hyp = dx || dy ? Math.sqrt(dx * dx + dy * dy) : 0;
       const d = (r - hyp - Math.min(Math.max(ax, ay), 0)) * density;
       if (d <= -.5) continue;
       const j = (py * w + px) * 4, u = ix / halfW;
-      const nx = hyp ? Math.sign(ix) * dx / hyp : ax > ay ? Math.sign(ix) : 0;
-      const ny = hyp ? Math.sign(iy) * dy / hyp : ax <= ay ? Math.sign(iy) : 0;
-      const outer = clamp(1 - d / dep), rim = outer * outer;
+      // On a flat interior the normal cannot affect the sample or lighting:
+      // refraction, rim/edge shading, and the reflective falloff are all zero.
+      // Stage/orb reflections can span their interior and stay on the full path.
+      const staticInterior = !orb && d >= interiorStart;
+      const nx = staticInterior ? 0 : hyp ? Math.sign(ix) * dx / hyp : ax > ay ? Math.sign(ix) : 0;
+      const ny = staticInterior ? 0 : hyp ? signY * dy / hyp : ax <= ay ? signY : 0;
+      const outer = staticInterior ? 0 : clamp(1 - d / dep), rim = outer * outer;
       const facing = nx * lx + ny * ly, keyside = Math.max(0, facing), backside = Math.max(0, -facing);
-      const warp = outer > 0 ? bend * Math.pow(outer, 1.13 + roll * 1.4) : 0;
-      const mag = zoom * Math.max(0, 1 - u * u - v * v);
+      const warp = outer > 0 ? bend * Math.pow(outer, outerPower) : 0;
+      const mag = zoom * Math.max(0, 1 - u * u - vv);
       const X = clamp(px + nx * warp - ix * mag, 0, w - 1.001);
       const Y = clamp(py + ny * warp - iy * mag, 0, h - 1.001);
       const p0 = X | 0, p1 = Y | 0, fx = X - p0, fy = Y - p1;
@@ -108,7 +118,13 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
         G += ((source[up + 1] + source[down + 1] + source[left + 1] + source[right + 1]) * .25 - G) * blurMix;
         B += ((source[up + 2] + source[down + 2] + source[left + 2] + source[right + 2]) * .25 - B) * blurMix;
       }
-        let white=tint,red=0,blue=0,dark=.43*s.edge*.01*backside*rim;
+        if (staticInterior) {
+          out[j] += R + (249 - R) * interiorWhite + interiorWarmR - out[j];
+          out[j+1] += G + (253 - G) * interiorWhite + interiorWarmG - out[j+1];
+          out[j+2] += B + (255 - B) * interiorWhite - interiorWarmB - out[j+2];
+          continue;
+        }
+        let white=tint,red=0,blue=0,dark=darkScale*backside*rim;
         if(d<4.6&&edging>0){
           // Facing side only, with a smooth taper inward. The same directional
           // normal responds to light heading; it is not a white painted stroke.
@@ -135,7 +151,7 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
           const hot=neck*(front*(orb?.97:1.12)+back*(orb?.70:.72))*glow*amp;
           const tip=narrow*(.07+.24*keyside*keyside*keyside)*(.45+.55*amp);
           white+=eref*(tip+hot);
-          dark=(.43*s.edge*.01)*backside*rim*(1-clamp(hot));
+          dark=darkScale*backside*rim*(1-clamp(hot));
           red=film*eref*glow*neck*(back*.77-front*.19)*.32;
           blue=film*eref*glow*neck*(front*.97-back*.16)*.44;
           if(orb&&glow>0){

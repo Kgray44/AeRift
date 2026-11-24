@@ -341,11 +341,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     });
   }
 
-  function selectDevice(id: string | undefined) {
+  const selectDevice = useCallback((id: string | undefined) => {
     if (!active.current || active.current.operations.has(composerKey)) return;
     active.current.selectedId = id;
     setSelectedId(id);
-  }
+  }, []);
 
   function chooseFile() {
     void selectWith(() => port.selectFile());

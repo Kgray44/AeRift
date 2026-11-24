@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { cases, phases, sceneFor } from "./glass-optics-fixtures.mjs";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
@@ -108,5 +110,25 @@ test("the production regular card and control both use the requested center tint
     shadeLens(now, detail, w, h, box, 1, .7);
     shadeLens(capped, detail, w, h, box, 1, .7, { ...glassAppearanceRecipes.dark, softness: 4 });
     assert.notDeepEqual(pixel(now, 64, 45), pixel(capped, 64, 45), kind);
+  }
+});
+
+// Immutable, whole-raster vectors from e8cab6ef. Use textured data, clipped
+// fractional boxes, overlapping material, Ambient orbs and moving highlights.
+test("optics preserve byte-exact CPU rasters against the pre-optimization recipe", () => {
+  const expected = {
+    workspace: "d628ca7a7773a1466e23b7901b359e5efad4fffc5686616457ef7d1042e57e34",
+    mobile: "76934c036e204a0c425974c3bb65f92c06f88ff738ec67fa6140fafb042bc1a1",
+    ambient: "cf4436987fcaee52a11be8d5b40fd21845da2a0ee0e16adf81f2d77318494f97",
+    alternate: "75bd0f21c5e30b05b43c2b9ab18e1e127dce13f5fe90627d8f81aa914ec91d5d",
+  };
+  for (const [name, w, h, scale, boxes, override] of cases) {
+    const hash = createHash("sha256"), source = sceneFor(w, h), frame = source.slice();
+    for (const phase of phases) {
+      frame.set(source);
+      for (const box of boxes) shadeLens(frame, source, w, h, box, scale, phase, { ...recipe, ...override });
+      hash.update(frame);
+    }
+    assert.equal(hash.digest("hex"), expected[name], name);
   }
 });
