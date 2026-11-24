@@ -24,6 +24,7 @@ grep -Eq '^[[:space:]]*compileSdk[[:space:]]*=[[:space:]]*36[[:space:]]*$' "$pro
 grep -Eq '^[[:space:]]*targetSdk[[:space:]]*=[[:space:]]*36[[:space:]]*$' "$project/app/build.gradle.kts"
 
 python3 "$android_dir/stage-host.py" "$project" "$android_dir/overlay"
+python3 "$repo/scripts/branding/app-icons.py" android "$project/app/src/main/res"
 
 # The native MediaPipe provider consumes the same bytes as the existing gesture
 # runtime. Use an absolute cap, a pinned SHA-256 and atomic cache replacement.

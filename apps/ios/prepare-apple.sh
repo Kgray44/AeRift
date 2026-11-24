@@ -15,6 +15,13 @@ if [[ "${#targets[@]}" != 1 || ! -f "${targets[0]}/Info.plist" ]]; then
   echo 'Expected a single generated AeRift iOS target.' >&2
   exit 1
 fi
+catalog="$(find "$project" -name build -prune -o -type d -name AppIcon.appiconset -print)"
+if [[ -z "$catalog" || "$catalog" == *$'\n'* || ! -d "$catalog" ]]; then
+  echo 'Expected one generated iOS AppIcon asset catalog.' >&2
+  exit 1
+fi
+python3 "$ios_dir/../../scripts/branding/app-icons.py" ios "$catalog"
+
 manifest="${targets[0]}/PrivacyInfo.xcprivacy"
 if ! cmp -s "$ios_dir/PrivacyInfo.xcprivacy" "$manifest"; then
   cp "$ios_dir/PrivacyInfo.xcprivacy" "$manifest"

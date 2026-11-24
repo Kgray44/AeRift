@@ -29,6 +29,9 @@ with open(sys.argv[1], "rb") as bundle_info:
     info = plistlib.load(bundle_info)
 
 assert info["CFBundleIdentifier"] == "com.kgamazing44.aerift"
+primary = info.get("CFBundleIcons", {}).get("CFBundlePrimaryIcon", {})
+assert primary.get("CFBundleIconName") == "AppIcon", primary
+assert primary.get("CFBundleIconFiles"), primary
 assert info["NSCameraUsageDescription"]
 assert info["NSLocalNetworkUsageDescription"]
 assert info["NSBonjourServices"] == ["_aerift._tcp"]

@@ -63,6 +63,9 @@ New-Item -ItemType Directory -Path $evidence -Force | Out-Null
 
 $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installDirectory" -Wait -PassThru -WindowStyle Hidden
 if ($install.ExitCode -ne 0) { throw "NSIS exited with code $($install.ExitCode)." }
+& (Join-Path $PSScriptRoot 'Verify-InstalledIcon.ps1') -Executable @($installer.FullName, (Join-Path $installDirectory 'aerift.exe')) `
+    -SourceIco (Join-Path $PSScriptRoot '..\aerift\src-tauri\icons\icon.ico')
+
 
 # Scope the local debugging endpoint to this disposable CI launch.
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)

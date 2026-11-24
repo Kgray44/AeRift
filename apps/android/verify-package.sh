@@ -14,6 +14,16 @@ grep -Fx "targetSdkVersion:'36'" <<<"$badging"
 if [[ -n "$expected_version_code" ]]; then
   grep -F "versionCode='$expected_version_code'" <<<"$badging"
 fi
+# The selected application launch icon must come from the approved overlay,
+# not merely coexist next to the generator's template resources.
+resources="$("$tools/aapt2" dump resources "$apk")"
+grep -Eq '[[:space:]]mipmap/aerift_launcher([[:space:]]|$)' <<<"$resources"
+grep -Eq '[[:space:]]mipmap/aerift_launcher_foreground([[:space:]]|$)' <<<"$resources"
+manifest="$("$tools/aapt2" dump xmltree --file AndroidManifest.xml "$apk")"
+icon_id="$(awk '/ mipmap\/aerift_launcher([[:space:]]|$)/ { print $2; exit }' <<<"$resources")"
+test -n "$icon_id"
+grep -E "android:icon[^=]*=@${icon_id}" <<<"$manifest"
+grep -E "android:roundIcon[^=]*=@${icon_id}" <<<"$manifest"
 # Keep Android's system picker model: no broad device-wide storage permission.
 permissions="$("$tools/aapt2" dump permissions "$apk")"
 if grep -Eq 'android[.]permission[.](MANAGE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|READ_MEDIA_IMAGES|READ_MEDIA_VIDEO)' <<<"$permissions"; then
