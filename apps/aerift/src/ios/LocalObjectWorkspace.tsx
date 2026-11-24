@@ -1,12 +1,11 @@
 import type { TransferWorkspaceRegions } from "@aerift/ui";
 import { Button } from "@aerift/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { command } from "../nativeAppPort";
-import type { FileSelection } from "@aerift/app-contract";
+import type { MobileOperations, MobilePlatformCopy } from "./mobile-platform";
 import type { ObservedMediaPort } from "./mobile-media-observer";
 import type { ImportedMedia } from "./mobile-media";
 import {
-  addBrowserLinks, maxTextLength, normalWebUrl, portableCollection, portableText, removeMobileObject, type BrowserLink, type MobileObject,
+  addBrowserLinks, maxTextLength, normalWebUrl, portableCollection, portableText, removeMobileObject, type MobileObject,
 } from "./local-objects";
 
 export const localModules = ["notes", "browser", "clipboard", "collections"] as const;
@@ -20,7 +19,7 @@ function newObject(name: string) {
   return { id, name, ownership: "local", schemaVersion: 1 } as const;
 }
 
-export function LocalObjectWorkspace({ module, objects, save, regions, openRift, media, clipboardSharing, markClipboardSelection }: {
+export function LocalObjectWorkspace({ module, objects, save, regions, openRift, media, clipboardSharing, markClipboardSelection, operations, copy }: {
   module: LocalModule;
   objects: readonly MobileObject[];
   save: (next: readonly MobileObject[]) => boolean;
@@ -29,6 +28,8 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   media: ObservedMediaPort;
   clipboardSharing: boolean;
   markClipboardSelection: (id: string) => void;
+  operations: MobileOperations;
+  copy: MobilePlatformCopy;
 }) {
   const workspaceOpen = useRef(false);
   useLayoutEffect(() => {
@@ -85,11 +86,11 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   useEffect(() => {
     if (!clips) return;
     let current = true;
-    void command<boolean>("ios_clipboard_image_available").then(result => {
+    void operations.clipboardImageAvailable().then(result => {
       if (current && result.ok) setImagePasteSupported(result.value);
     });
     return () => { current = false; };
-  }, [clips]);
+  }, [clips, operations]);
 
   function includesClipboard(object: MobileObject) {
     return object.kind === "text" || (object.kind === "collection" &&
@@ -100,7 +101,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     if (!clipboardSharing || !imagePasteSupported) return;
     let pasted = false;
     const selected = await regions.select(async () => {
-      const result = await command<FileSelection | null>("stage_ios_clipboard_image");
+      const result = await operations.stageClipboardImage();
       if (result.ok && result.value) {
         markClipboardSelection(result.value.selectionId);
         pasted = true;
@@ -160,7 +161,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       if (!selected) setJustAdded(object.id);
       if (collections) edit(object);
       else reset();
-      setFeedback("Saved on this iPhone.");
+      setFeedback(`Saved on ${copy.device}.`);
     }
   }
 
@@ -170,7 +171,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     if (!url) { setFeedback("Enter a valid web address."); return; }
     setFeedback("");
     setBrowsing(true);
-    const result = await command<BrowserLink[]>("open_ios_browser", { url });
+    const result = await operations.openBrowser(url);
     setBrowsing(false);
     if (!result.ok) {
       setFeedback("The browser couldn't open this address.");
@@ -191,7 +192,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       return;
     }
     const result = await regions.select(async () => {
-      const result = await command<FileSelection | null>("stage_ios_text", payload);
+      const result = await operations.stageText(payload);
       if (clipboardCopy && result.ok && result.value) markClipboardSelection(result.value.selectionId);
       return result.ok && !result.value ? { ok: false, error: { code: "storage_failed" } } : result;
     });
@@ -203,9 +204,9 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     setFeedback("");
     try {
       const result = await media.present(item.assetId, "preview");
-      if (!result.ok) setFeedback("Quick Look couldn’t preview this attachment.");
+      if (!result.ok) setFeedback(`${copy.previewer} couldn’t preview this attachment.`);
     } catch {
-      setFeedback("Quick Look couldn’t preview this attachment.");
+      setFeedback(`${copy.previewer} couldn’t preview this attachment.`);
     } finally {
       setPreviewing(false);
     }
@@ -233,12 +234,12 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
 
   return <section className="ios-section ios-object-editor" aria-label={module}>
     {notes && <p>Save plain text or Markdown and attach imported files, photos, or videos.</p>}
-    {browser && <p>In the in-app browser, choose Share → Collect in AeRift, then Done. You can also enter an address here.</p>}
+    {browser && <p>{copy.browserTip}</p>}
     {clips && <>
       <p>Use the system Paste menu for text. AeRift keeps text only when you pin it.</p>
       {imagePasteSupported === true &&
         <Button disabled={!regions.canSelect || !clipboardSharing} onClick={() => void pasteImage()}>Paste image for Rift</Button>}
-      {imagePasteSupported === false && <p>Image paste requires iOS 16 or later.</p>}
+      {imagePasteSupported === false && <p>{copy.clipboardImageUnavailable}</p>}
       {!clipboardSharing && <p>Enable clipboard sharing in Control Center to send a copy.</p>}
     </>}
     {collections && <p>Group saved notes, links and pinned text. A transfer copy contains the saved items in one text file.</p>}
@@ -357,7 +358,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
               if (save(removeMobileObject(objects, object.id))) {
                 if (editing === object.id) reset();
                 setConfirmRemoval(undefined);
-                setFeedback("Removed from this iPhone.");
+                setFeedback(`Removed from ${copy.device}.`);
               }
             }}>Remove {object.name}</Button>
             <Button variant="quiet" onClick={() => setConfirmRemoval(undefined)}>Keep</Button>

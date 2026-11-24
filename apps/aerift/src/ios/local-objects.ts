@@ -4,6 +4,8 @@ export type MobileObject = Extract<DigitalObject, { kind: "note" | "text" | "url
 
 export const objectStorageKey = "aerift.ios.objects.v1";
 export const noteAttachmentStorageKey = "aerift.ios.note-attachments.v1";
+const defaultStorageKeys = { objects: objectStorageKey, noteAttachments: noteAttachmentStorageKey };
+
 export const maxObjectCount = 100;
 export const maxStoreLength = 512 * 1024;
 export const maxTextLength = 24_000;
@@ -31,9 +33,9 @@ export function decodeMobileObjects(raw: string): MobileObject[] | undefined {
   }
 }
 
-export function readMobileObjects(storage: Pick<Storage, "getItem">): MobileObject[] | undefined {
-  const objects = decodeMobileObjects(storage.getItem(objectStorageKey) ?? "[]");
-  const raw = storage.getItem(noteAttachmentStorageKey);
+export function readMobileObjects(storage: Pick<Storage, "getItem">, keys = defaultStorageKeys): MobileObject[] | undefined {
+  const objects = decodeMobileObjects(storage.getItem(keys.objects) ?? "[]");
+  const raw = storage.getItem(keys.noteAttachments);
   if (!objects || raw === null || raw.length > maxStoreLength) return objects;
 
   let index: unknown;
@@ -68,23 +70,23 @@ function noteTextRecord(object: MobileObject): MobileObject {
 }
 
 export function persistMobileObjects(storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
-  previous: readonly MobileObject[], next: readonly MobileObject[]) {
+  previous: readonly MobileObject[], next: readonly MobileObject[], keys = defaultStorageKeys) {
   // Older builds strictly decode this key. Keep the note text readable after a downgrade.
   const legacy = next.map(noteTextRecord);
   const previousIndex = serializeAttachmentIndex(previous);
   const nextIndex = serializeAttachmentIndex(next);
   if (previousIndex === nextIndex) {
-    storage.setItem(objectStorageKey, JSON.stringify(legacy));
+    storage.setItem(keys.objects, JSON.stringify(legacy));
     return;
   }
 
-  const storedIndex = storage.getItem(noteAttachmentStorageKey);
-  storage.setItem(noteAttachmentStorageKey, nextIndex);
+  const storedIndex = storage.getItem(keys.noteAttachments);
+  storage.setItem(keys.noteAttachments, nextIndex);
   try {
-    storage.setItem(objectStorageKey, JSON.stringify(legacy));
+    storage.setItem(keys.objects, JSON.stringify(legacy));
   } catch (error) {
-    if (storedIndex === null) storage.removeItem(noteAttachmentStorageKey);
-    else storage.setItem(noteAttachmentStorageKey, storedIndex);
+    if (storedIndex === null) storage.removeItem(keys.noteAttachments);
+    else storage.setItem(keys.noteAttachments, storedIndex);
     throw error;
   }
 }

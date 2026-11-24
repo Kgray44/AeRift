@@ -6,6 +6,7 @@ import {
   SpatialIcon, ThemeProvider, TransferWorkspace, type GestureCameraStatus, type WorkspaceConnection,
 } from "@aerift/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FriendsWorkspace } from "../FriendsWorkspace";
 import { DeviceTrust } from "../DeviceTrust";
 import { command, nativeAppPort } from "../nativeAppPort";
 import { DesktopHome } from "./DesktopHome";
@@ -14,8 +15,13 @@ import { DesktopWorkspace } from "./DesktopWorkspace";
 import { GestureCamera } from "./GestureCamera";
 import { useDesktopContentEnter } from "./desktopContentMotion";
 import { desktopSettings, watchFileSelection, type ReceiveFolder } from "./nativeAppPort";
-import { readDesktopPreferences, settingsKey, type DesktopPreferences } from "./preferences";
+import { ambientExcludedApps, readDesktopPreferences, settingsKey, type DesktopPreferences } from "./preferences";
 import "./desktop.css";
+
+export type AmbientCaptureView =
+  | { state: "idle" | "working" | "paused" }
+  | { state: "unavailable"; reason: string }
+  | { state: "frozen"; id: string; canSendFile: boolean; entries: { kind: string; title: string; size: number }[] };
 
 export function DesktopApp() {
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
@@ -30,6 +36,10 @@ export function DesktopApp() {
   const [ambientAvailable, setAmbientAvailable] = useState(false);
   const [shortcutError, setShortcutError] = useState(false);
   const [ambientError, setAmbientError] = useState(false);
+  const [ambientCaptureError, setAmbientCaptureError] = useState(false);
+  const [ambientCapture, setAmbientCapture] = useState<AmbientCaptureView>();
+  const [ambientSendError, setAmbientSendError] = useState(false);
+  const [ambientSending, setAmbientSending] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
   const [cameraRetry, setCameraRetry] = useState(0);
   const [pairRequest, setPairRequest] = useState(0);
@@ -38,6 +48,7 @@ export function DesktopApp() {
   const surfaceRef = useRef<HTMLElement>(null);
   const navigation = getNavigation("desktop", settings.experience, {
     ambient: ambientAvailable ? "available" : "unsupported", camera: "unknown",
+    friends: snapshot?.friends?.version === 1 && nativeAppPort.friends ? "available" : "unsupported",
   });
   const route = navigation.primary.some(item => item.id === settings.route) ? settings.route : "home";
   useDesktopContentEnter(route, surfaceRef, "orbit");
@@ -95,6 +106,40 @@ export function DesktopApp() {
     });
     return () => { disposed = true; };
   }, [ambientAvailable, navigation.ambient, settings.ambientShortcut]);
+
+  const captureEnabled = navigation.ambient && settings.ambientContextEnabled;
+  useEffect(() => {
+    if (!ambientAvailable) return;
+    const updates = new Channel<AmbientCaptureView>(setAmbientCapture);
+    void command<void>("watch_ambient_capture", { updates });
+    return () => { updates.onmessage = () => {}; };
+  }, [ambientAvailable]);
+
+  useEffect(() => {
+    if (!ambientAvailable) return;
+    let disposed = false;
+    const excludedApps = ambientExcludedApps(settings.ambientExclusions);
+    const valid = excludedApps.length <= 64 && excludedApps.every(app => /^[a-z0-9._-]{1,124}\.exe$/.test(app));
+    // A malformed exclusion is fail-closed, not dropped from the configured list.
+    void command<void>("set_ambient_capture", { enabled: captureEnabled && valid, excludedApps: valid ? excludedApps : [] }).then(result => {
+      if (!disposed) setAmbientCaptureError(!result.ok || !valid);
+    });
+    return () => { disposed = true; };
+  }, [ambientAvailable, captureEnabled, settings.ambientExclusions]);
+
+  const nearbyCaptureTargets = snapshot?.devices.filter(device => device.paired && device.online) ?? [];
+  async function offerAmbientCapture(captureId: string, deviceId: string) {
+    if (ambientSending || !captureEnabled || !nearbyCaptureTargets.some(device => device.id === deviceId)) return;
+    setAmbientSendError(false);
+    setAmbientSending(true);
+    try {
+      const result = await command("send_ambient_file", { captureId, deviceId });
+      if (result.ok) navigate("activity");
+      else setAmbientSendError(true);
+    } finally {
+      setAmbientSending(false);
+    }
+  }
 
   const connected = snapshot?.devices.filter(device => device.online && device.paired).length;
   const pendingOffers = snapshot?.transfers.filter(transfer => transfer.direction === "incoming" && transfer.state === "pending").length ?? 0;
@@ -196,13 +241,17 @@ export function DesktopApp() {
             {connection.state === "disconnected" && <Button onClick={retryConnection}>Retry connection</Button>}
           </div>
         </>}
+        {route === "friends" && snapshot?.friends?.version === 1 && nativeAppPort.friends &&
+          <FriendsWorkspace snapshot={snapshot.friends} port={nativeAppPort.friends} />}
         {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
           if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);
           setSettings(next);
         }}
           folder={folder} folderError={folderError} openingFolderPicker={openingFolderPicker}
           chooseFolder={() => void selectDestination()} ambientAvailable={ambientAvailable} ambientError={ambientError}
-          shortcutError={shortcutError} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
+          shortcutError={shortcutError} ambientCapture={captureEnabled ? ambientCapture : undefined}
+          ambientCaptureError={ambientCaptureError} ambientSendError={ambientSendError}
+          ambientSending={ambientSending} ambientTargets={nearbyCaptureTargets} offerAmbientCapture={offerAmbientCapture} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
         {keepWorkspaceMounted &&
           <div hidden={route !== "workspace"}>
             <DesktopWorkspace preferences={settings.experience} clipboardAllowed={settings.clipboard} />

@@ -1,7 +1,7 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Body, Incoming},
@@ -16,11 +16,39 @@ use tokio_util::sync::CancellationToken;
 
 use crate::receiver::Upload;
 use crate::{
-    ErrorCode, Offer, PeerId, RECEIVER_READY_ROUTE, Receiver, ReceiverReady, TransferError,
-    TransferKey, parse_id, read_control,
+    ErrorCode, Offer, PeerId, RECEIVER_READY_ROUTE, RESUMABLE_CHUNK_SIZE, RESUMABLE_ROUTE,
+    Receiver, ReceiverReady, Status, TransferError, TransferKey, parse_id, read_control,
 };
 
 type Reply = Response<Full<Bytes>>;
+
+/// Optional transport-lane policy. Must run only after peer TLS authentication.
+/// Treat an admitted metadata offer as prior explicit consent, never generic trust.
+pub trait TransferScope: Send + Sync {
+    fn admit(&self, key: TransferKey, offer: &Offer) -> Result<(), TransferError>;
+    fn check(&self, key: TransferKey) -> Result<(), TransferError>;
+    fn publish(
+        &self,
+        key: TransferKey,
+        action: impl FnOnce() -> Result<Status, TransferError>,
+    ) -> Result<Status, TransferError>;
+}
+struct NoScope;
+impl TransferScope for NoScope {
+    fn admit(&self, _: TransferKey, _: &Offer) -> Result<(), TransferError> {
+        Ok(())
+    }
+    fn check(&self, _: TransferKey) -> Result<(), TransferError> {
+        Ok(())
+    }
+    fn publish(
+        &self,
+        _: TransferKey,
+        action: impl FnOnce() -> Result<Status, TransferError>,
+    ) -> Result<Status, TransferError> {
+        action()
+    }
+}
 
 /// Serve one HTTP/1.1 connection. The caller owns the preceding TLS handshake and
 /// supplies its verified peer. The trust callback is evaluated on every request.
@@ -63,6 +91,27 @@ pub async fn serve_request(
     receiver: Arc<Receiver>,
     trust: CancellationToken,
 ) -> Reply {
+    dispatch(request, peer, receiver, trust, None::<&NoScope>).await
+}
+
+/// Separate optional guarded scope; ordinary Nearby/Remote remain unchanged.
+pub async fn serve_scoped_request(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+    scope: &impl TransferScope,
+) -> Reply {
+    dispatch(request, peer, receiver, trust, Some(scope)).await
+}
+
+async fn dispatch(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+    scope: Option<&impl TransferScope>,
+) -> Reply {
     if trust.is_cancelled() {
         return error(ErrorCode::PeerUntrusted.into());
     }
@@ -70,10 +119,20 @@ pub async fn serve_request(
     if request.uri().query().is_some() || request.version() != hyper::Version::HTTP_11 {
         return error(ErrorCode::InvalidRequest.into());
     }
+    if path == RESUMABLE_ROUTE
+        || path
+            .strip_prefix(RESUMABLE_ROUTE)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+    {
+        return resumable(request, peer, receiver, trust).await;
+    }
     if !path.starts_with("/v1/") {
         return error(ErrorCode::UnsupportedVersion.into());
     }
     if path == RECEIVER_READY_ROUTE {
+        if scope.is_some() {
+            return error(ErrorCode::PeerUntrusted.into());
+        }
         if request.method() != Method::GET || request.body().size_hint().exact() != Some(0) {
             return error(ErrorCode::InvalidRequest.into());
         }
@@ -90,7 +149,7 @@ pub async fn serve_request(
         return reply;
     }
     if path == "/v1/transfers" && request.method() == Method::POST {
-        return offer(request, peer, &receiver, &trust).await;
+        return offer(request, peer, &receiver, &trust, scope).await;
     }
     let Some(path) = path.strip_prefix("/v1/transfers/") else {
         return error(ErrorCode::PeerUnavailable.into());
@@ -103,16 +162,21 @@ pub async fn serve_request(
         return error(ErrorCode::InvalidRequest.into());
     };
     let key = TransferKey { peer, id };
+    if let Some(scope) = scope {
+        if let Err(failure) = scope.check(key) {
+            return error(failure);
+        }
+    }
     let result = match (request.method(), content) {
-        (&Method::GET, false) => receiver.status(key),
-        (&Method::DELETE, false) => receiver.cancel(key),
+        (&Method::GET, false) => receiver.status_legacy(key),
+        (&Method::DELETE, false) => receiver.cancel_legacy(key),
         (&Method::PUT, true) => {
             let Some(size) = content_length(&request) else {
                 return error(ErrorCode::InvalidRequest.into());
             };
             match receiver.start(key, size) {
                 Ok(upload) => {
-                    let result = receive(&upload, request.into_body()).await;
+                    let result = receive(&upload, request.into_body(), key, scope).await;
                     if let Err(error) = result {
                         upload.fail(error);
                     }
@@ -134,6 +198,7 @@ async fn offer(
     peer: PeerId,
     receiver: &Receiver,
     trust: &CancellationToken,
+    scope: Option<&impl TransferScope>,
 ) -> Reply {
     let body = match tokio::time::timeout(
         Duration::from_secs(10),
@@ -153,15 +218,157 @@ async fn offer(
     let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
         return error(ErrorCode::InvalidRequest.into());
     };
+    let key = TransferKey { peer, id: offer.id };
+    if let Some(scope) = scope {
+        if let Err(failure) = offer.validate().and_then(|()| scope.admit(key, &offer)) {
+            return error(failure);
+        }
+    }
     match receiver.offer(peer, offer, trust) {
-        Ok((created, status)) => json(
-            if created {
-                StatusCode::CREATED
+        Ok((created, status)) => {
+            let status = if created && scope.is_some() {
+                match scope
+                    .expect("checked")
+                    .check(key)
+                    .and_then(|()| receiver.respond(key, true))
+                {
+                    Ok(status) => status,
+                    Err(failure) => {
+                        let _ = receiver.cancel(key);
+                        return error(failure);
+                    }
+                }
             } else {
-                StatusCode::OK
-            },
-            &status,
-        ),
+                status
+            };
+            json(
+                if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                },
+                &status,
+            )
+        }
+        Err(failure) => error(failure),
+    }
+}
+
+async fn resumable(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+) -> Reply {
+    if !receiver.resumable_enabled() {
+        return error(ErrorCode::UnsupportedVersion.into());
+    }
+    if request.uri().path() == RESUMABLE_ROUTE {
+        if request.method() != Method::POST {
+            return error(ErrorCode::InvalidRequest.into());
+        }
+        let body =
+            match tokio::time::timeout(Duration::from_secs(10), read_control(request.into_body()))
+                .await
+            {
+                Ok(Ok(body)) => body,
+                _ => return error(ErrorCode::InvalidRequest.into()),
+            };
+        let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
+            return error(ErrorCode::InvalidRequest.into());
+        };
+        return match tokio::task::spawn_blocking(move || {
+            receiver.offer_resumable(peer, offer, &trust)
+        })
+        .await
+        .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        {
+            Ok((created, status)) => json(
+                if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                },
+                &status,
+            ),
+            Err(failure) => error(failure),
+        };
+    }
+    let Some(rest) = request
+        .uri()
+        .path()
+        .strip_prefix(RESUMABLE_ROUTE)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+    else {
+        return error(ErrorCode::InvalidRequest.into());
+    };
+    let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
+    let Some(id) = parse_id(id) else {
+        return error(ErrorCode::InvalidRequest.into());
+    };
+    let key = TransferKey { peer, id };
+    let empty = request.body().size_hint().exact() == Some(0);
+    let result = match (request.method(), action) {
+        (&Method::GET, "") if empty => {
+            tokio::task::spawn_blocking(move || receiver.status_resumable(key))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
+        (&Method::DELETE, "") if empty => {
+            tokio::task::spawn_blocking(move || receiver.cancel_resumable(key))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
+        (&Method::POST, "commit") if empty => {
+            tokio::task::spawn_blocking(move || receiver.commit_resumable(key))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
+        (&Method::PUT, action) if action.starts_with("chunks/") => {
+            let raw = &action["chunks/".len()..];
+            let Ok(offset) = raw.parse::<u64>() else {
+                return error(ErrorCode::InvalidRequest.into());
+            };
+            if offset.to_string() != raw {
+                return error(ErrorCode::InvalidRequest.into());
+            }
+            let Some(size) = content_length(&request)
+                .filter(|size| *size > 0 && *size <= RESUMABLE_CHUNK_SIZE as u64)
+            else {
+                return error(ErrorCode::InvalidRequest.into());
+            };
+            // Reject missing/unaccepted or wrong-mode transfers before allocating
+            // a block body. The blocking operation checks authority again.
+            let permit = receiver.clone();
+            if let Err(failure) =
+                tokio::task::spawn_blocking(move || permit.can_append_resumable(key, offset, size))
+                    .await
+                    .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+            {
+                return error(failure);
+            }
+            let body = tokio::select! {
+                biased;
+                _ = trust.cancelled() => return error(ErrorCode::PeerUntrusted.into()),
+                body = tokio::time::timeout(Duration::from_secs(30), Limited::new(request.into_body(), RESUMABLE_CHUNK_SIZE).collect()) => {
+                    match body {
+                        Ok(Ok(body)) => {
+                            let bytes = body.to_bytes();
+                            if bytes.len() as u64 != size { return error(ErrorCode::NetworkError.into()); }
+                            bytes
+                        },
+                        _ => return error(ErrorCode::NetworkError.into()),
+                    }
+                }
+            };
+            tokio::task::spawn_blocking(move || receiver.append_resumable(key, offset, &body))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
+        _ => Err(ErrorCode::InvalidRequest.into()),
+    };
+    match result {
+        Ok(status) => json(StatusCode::OK, &status),
         Err(failure) => error(failure),
     }
 }
@@ -182,7 +389,12 @@ fn content_length(request: &Request<Incoming>) -> Option<u64> {
         .ok()
 }
 
-async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, TransferError> {
+async fn receive(
+    upload: &Upload,
+    mut body: Incoming,
+    key: TransferKey,
+    scope: Option<&impl TransferScope>,
+) -> Result<Status, TransferError> {
     let temporary = upload.tempfile()?;
     let handle = temporary.reopen().map_err(|_| ErrorCode::StorageFailed)?;
     let mut file = tokio::fs::File::from_std(handle);
@@ -197,6 +409,9 @@ async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, T
                 next.map_err(|_| ErrorCode::PeerUnavailable)?,
         };
         let Some(frame) = frame else { break };
+        if let Some(scope) = scope {
+            scope.check(key)?;
+        }
         let data = frame
             .map_err(|_| ErrorCode::IntegrityFailed)?
             .into_data()
@@ -219,7 +434,10 @@ async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, T
         .await
         .map_err(|_| ErrorCode::StorageFailed)?;
     drop(file);
-    upload.publish(temporary)
+    match scope {
+        Some(scope) => scope.publish(key, || upload.publish(temporary)),
+        None => upload.publish(temporary),
+    }
 }
 
 fn error(failure: TransferError) -> Reply {

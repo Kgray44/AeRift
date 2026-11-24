@@ -1,0 +1,11 @@
+.ae-private-remote-dev {
+  width: min(60rem, 100%);
+  margin: 0 auto;
+  padding: 1rem 1.75rem 3rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ae-private-remote-dev section { margin: 1rem 0; padding: .8rem 1.25rem; border: 1px solid currentColor; border-radius: .8rem; }
+.ae-private-remote-dev input:not([type="checkbox"]), .ae-private-remote-dev textarea { display: block; width: min(38rem, 100%); margin-top: .25rem; }
+.ae-private-remote-dev code { color: inherit; }
+.ae-private-remote-dev button { margin: .25rem .45rem .25rem 0; padding: .4rem .65rem; }

@@ -2,6 +2,8 @@
 
 Android is an implementation target. The repository at `c09853d` contains native hosts for Windows and iOS and has no checked-in Android Gradle host, application entry, or Rust runtime adapter. This design keeps the mobile experience shared and assigns provider access, permissions, and lifecycle to Android.
 
+The [Android build and private tester guide](../apps/android/README.md) documents the implementation build, signing, and qualification gates.
+
 ## Platform boundary
 
 Use the Tauri Android host with a Kotlin plugin. Give the app shell an explicit mobile platform selection and supply Android implementations of `AppPort` and the mobile workspace adapters. Extract shared UI only where both hosts use the same behavior. Keep the Home, Workspace, Rift, Devices and Activity destinations, Control Center, digital-object schema, and acknowledged transfer states in the existing contracts. Keep iOS and Windows entry points available throughout the work. [Mobile plugin development](https://v2.tauri.app/develop/plugins/develop-mobile/) · [Mobile qualification matrix](validation/mobile-workspace.md) · [v1 contract](../contracts/v1/protocol.md)
@@ -21,7 +23,7 @@ The Android plugin should return opaque asset handles, display names, byte count
 
 ## Integration sequence
 
-1. Generate the Android host in the existing Tauri app, pin the SDK and NDK versions in CI, and install an unsigned test APK on a phone emulator. Render shared destinations from a deterministic fixture before enabling native commands. Use Android back navigation and system-bar, display-cutout and IME insets in the host. Validate the same controls under contrast, system theme and motion preferences. [Window insets](https://developer.android.com/develop/ui/compose/system/insets)
+1. Generate the Android host in the existing Tauri app, pin the SDK and NDK versions in CI, and install a debug-signed test APK on a phone emulator. Render shared destinations from a deterministic fixture before enabling native commands. Use Android back navigation and system-bar, display-cutout and IME insets in the host. Validate the same controls under contrast, system theme and motion preferences. [Window insets](https://developer.android.com/develop/ui/compose/system/insets)
 2. Wire the Android platform guards and runtime adapter into the shared Rust host. Implement discovery start and stop, native identity and storage, and the existing watch, pair and transfer calls. Start with foreground manual Files transfers. Establish pairing and verify file hashes both ways with Windows before exposing gesture or background capabilities.
 3. Connect the system pickers and export, then add durable imports, notes, browser, clipboard and collections behind capability-driven availability. Check cancellation, denied and revoked grants, provider failure, selection size caps, restart, removal and cleanup.
 4. Qualify automatic gesture recognition and receiver readiness on a physical device. Map each recognition phase to the shared Rift presentation. Arrival and completion require verified receipts. Unsupported features stay disabled with a reason in Control Center.

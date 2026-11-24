@@ -1,3 +1,4 @@
+import type { MobilePlatformCopy } from "./mobile-platform";
 import { useEffect, useRef, useState } from "react";
 import { getObjectPresentation } from "@aerift/app-contract/digital-objects";
 import { Button, formatFileSize, type TransferWorkspaceRegions } from "@aerift/ui";
@@ -7,8 +8,9 @@ import type { ObservedMediaPort } from "./mobile-media-observer";
 
 const mediaNames = { file: "File", photo: "Photo", video: "Video" };
 
-export function MobileMediaTray({ source, port, regions }: {
+export function MobileMediaTray({ source, port, regions, copy }: {
   source: MediaSource;
+  copy: MobilePlatformCopy;
   port: ObservedMediaPort;
   regions: TransferWorkspaceRegions;
 }) {
@@ -88,11 +90,11 @@ export function MobileMediaTray({ source, port, regions }: {
 
   return <section className="ios-section ios-imports" aria-label={source === "files" ? "Imported files" : "Imported photos and videos"} aria-busy={busy}>
     <h3>Imported copies</h3>
-    <p>Keep up to 24 copies on this iPhone. Your originals stay in place.</p>
+    <p>Keep up to 24 copies on {copy.device}. Your originals stay in place.</p>
     {initialFailure ?
       <Button variant="quiet" onClick={() => setReload(attempts => attempts + 1)}>Retry loading imports</Button> :
       <Button disabled={busy || regions.selecting || !imports || imports.length >= 24} onClick={() =>
-        void run(importItems, "AeRift couldn’t import these items. Check that they’re available and that there’s space on this iPhone.")}>
+        void run(importItems, `AeRift couldn’t import these items. Check that they’re available and that there’s space on ${copy.device}.`)}>
         {source === "files" ? "Import files" : "Import photos or videos"}
       </Button>}
     {imports && imports.length >= 24 && <p>The library holds 24 items. Remove an imported copy to make space.</p>}
@@ -103,7 +105,7 @@ export function MobileMediaTray({ source, port, regions }: {
         <div className="ae-actions">
           <Button disabled={busy || !regions.canSelect} onClick={() => select(item)}>Select for Rift</Button>
           <Button variant="quiet" disabled={busy} onClick={() =>
-            void run(() => port.present(item.assetId, "preview"), "Quick Look couldn’t preview this item.")}>Preview</Button>
+            void run(() => port.present(item.assetId, "preview"), `${copy.previewer} couldn’t preview this item.`)}>Preview</Button>
           <Button variant="quiet" disabled={busy} onClick={() =>
             void run(() => port.present(item.assetId, "export"), "AeRift couldn’t open sharing for this item.")}>Export copy</Button>
           <Button variant="quiet" disabled={busy} aria-label={`Remove ${item.name}`} onClick={() => remove(item)}>Remove</Button>

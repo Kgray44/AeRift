@@ -52,6 +52,10 @@ Activity is a real navigation destination, not an apparent tab that merely scrol
 
 Device management, pairing/trust, camera permissions and activation, shortcut configuration, receive destination and appearance belong in coherent contextual surfaces. Use recognizable icons with accessible names and tooltips as appropriate. Settings should be reachable without displacing the primary workspace unnecessarily. Respect platform-specific navigation, camera availability, permissions and window controls. Camera activation must be explicit and observable; provide a clear off control and expose camera ownership conflicts honestly.
 
+### 2.6 Friends
+
+Friends is a first-class navigation destination distinct from Nearby and My Devices. It moves objects to a person or one of their individually authorized devices without mixing the person's devices into the regular paired-device inventory. Desktop uses a split list and person workspace; mobile uses accessible list-to-detail navigation with the existing Motion Engine. No public discovery, public profile, or searchable directory. Keep the Rift's choreography truthful: one receiver earns an authoritative claim, other offers are withdrawn, and no visual state substitutes for verified delivery. [Authorization and release gates](friends.md) govern the native implementation.
+
 ## 3. Material and visual hierarchy
 
 Preserve the investment in GLASS optics and the owner-selected Glass Laboratory recipe. Do not replace genuine transparency/refraction/reflections with opaque faux-3D panels. Apply material by semantic role instead of indiscriminately wrapping content.

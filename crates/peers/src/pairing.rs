@@ -101,6 +101,7 @@ struct PairState {
 
 struct Invitation {
     token: [u8; 32],
+    expected: Option<PeerId>,
     deadline: Instant,
     expires_at: SystemTime,
     failures: u8,
@@ -163,6 +164,16 @@ impl Pairing {
     }
 
     pub fn create_invitation(&self) -> Result<InvitationCode, TransferError> {
+        self.create_invitation_for(None)
+    }
+
+    pub(crate) fn create_invitation_for(
+        &self,
+        expected: Option<PeerId>,
+    ) -> Result<InvitationCode, TransferError> {
+        if expected == Some(self.me.id) {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
         let mut token = [0; 32];
         SystemRandom::new()
             .fill(&mut token)
@@ -174,6 +185,7 @@ impl Pairing {
         self.invalidate(&mut state, ErrorCode::PairingRejected);
         state.invitation = Some(Invitation {
             token,
+            expected,
             deadline,
             expires_at,
             failures: 0,
@@ -256,6 +268,11 @@ impl Pairing {
             self.expire(&mut state);
             let invitation = state.invitation.as_mut().ok_or(ErrorCode::PairingExpired)?;
             if invitation.failures >= MAX_BAD_ATTEMPTS {
+                return Err(ErrorCode::PairingRejected.into());
+            }
+            // Authenticate the expected target before evaluating its capability.
+            // Random peers cannot burn the attempt allowance of a targeted invite.
+            if invitation.expected.is_some_and(|expected| expected != peer) {
                 return Err(ErrorCode::PairingRejected.into());
             }
             if peer == self.me.id
