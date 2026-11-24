@@ -1,0 +1,2 @@
+-keep class com.kgamazing44.aerift.plugin.AeriftAndroidPlugin { *; }
+-keep @app.tauri.annotation.InvokeArg class com.kgamazing44.aerift.plugin.** { *; }

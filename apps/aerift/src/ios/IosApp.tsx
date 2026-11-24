@@ -8,25 +8,25 @@ import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
-import { IosGestureCamera, iosCameraPermission, type IosCameraPermission } from "./IosGestureCamera";
+import { MobileGestureCamera, mobileCameraPermission, type MobileCameraPermission } from "./IosGestureCamera";
 import { MobileNavigation } from "./MobileNavigation";
 import { observeMobileMedia } from "./mobile-media-observer";
-import { nativeMobileMedia, type MobileMediaPort } from "./mobile-media";
+import type { MobileMediaPort } from "./mobile-media";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, persistMobileObjects, readMobileObjects, removeMobileObject, type MobileObject } from "./local-objects";
-import { decodeMobileHistory, historyStorageKey, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
+import { decodeMobileHistory, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
 import { mobileDestinations, mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
 import { mobileMotionDirection, observeMobileMotionSuppression, type MobileMotionDirection } from "./mobile-motion";
+import { createMobileOperations, mobilePlatformCopy, mobileStorageKeys, type MobilePlatform } from "./mobile-platform";
 import "./ios.css";
 
-type BonjourState = "disabled" | "starting" | "ready" | "suspended" | "unavailable";
-type IosSnapshot = AppSnapshot & { localNetwork?: BonjourState };
+type LocalDiscoveryState = "disabled" | "starting" | "ready" | "suspended" | "unavailable";
+type MobileSnapshot = AppSnapshot & { localNetwork?: LocalDiscoveryState };
 
 const appearanceDefaults: AppearanceSettings = {
   theme: "glass", scheme: "system", contrast: "system", transparency: "system", motion: "system",
 };
-const appearanceKey = "aerift.ios.appearance.v1";
-const workspaceKey = "aerift.ios.workspace.v1";
+type MobileStorageKeys = ReturnType<typeof mobileStorageKeys>;
 
 function readSettings(key: string) {
   try {
@@ -45,8 +45,8 @@ function writeSettings(key: string, value: unknown) {
   }
 }
 
-function readAppearance(): AppearanceSettings {
-  const settings = readSettings(appearanceKey);
+function readAppearance(keys: MobileStorageKeys): AppearanceSettings {
+  const settings = readSettings(keys.appearance);
   return {
     ...appearanceDefaults,
     scheme: settings.scheme === "light" || settings.scheme === "dark" ? settings.scheme : "system",
@@ -56,8 +56,8 @@ function readAppearance(): AppearanceSettings {
   };
 }
 
-function readWorkspace() {
-  const settings = readSettings(workspaceKey);
+function readWorkspace(keys: MobileStorageKeys) {
+  const settings = readSettings(keys.workspace);
   return {
     files: settings.files !== false, photos: settings.photos !== false,
     notes: settings.notes !== false, browser: settings.browser !== false,
@@ -65,45 +65,56 @@ function readWorkspace() {
     clipboardShare: settings.clipboardShare === true,
     rememberActivity: settings.rememberActivity === true,
     gestures: typeof settings.gestures === "boolean" ? settings.gestures :
-      readSettings("aerift.ios.gestures.enabled") === true,
+      readSettings(keys.gestures) === true,
   };
 }
 
-function readObjects() {
+function readObjects(keys: MobileStorageKeys) {
   try {
-    return readMobileObjects(localStorage);
+    return readMobileObjects(localStorage, keys);
   } catch {
     return undefined;
   }
 }
 
-function readHistory() {
+function readHistory(keys: MobileStorageKeys) {
   try {
-    return decodeMobileHistory(localStorage.getItem(historyStorageKey) ?? "[]");
+    return decodeMobileHistory(localStorage.getItem(keys.history) ?? "[]");
   } catch {
     return [];
   }
 }
 
-const pickNative = (source: PickerSource) => command<FileSelection | null>("select_app_file", { source });
-
-export function IosApp({ port = nativeAppPort, pick = pickNative, media = nativeMobileMedia }: {
+type MobileAppOverrides = {
   port?: AppPort;
   media?: MobileMediaPort;
   pick?: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
-} = {}) {
-  const library = useMemo(() => observeMobileMedia(media), [media]);
+};
+
+export function IosApp(overrides: MobileAppOverrides = {}) {
+  return <MobileApp platform="ios" {...overrides} />;
+}
+
+export function AndroidApp(overrides: MobileAppOverrides = {}) {
+  return <MobileApp platform="android" {...overrides} />;
+}
+
+function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOverrides & { platform: MobilePlatform }) {
+  const operations = useMemo(() => createMobileOperations(platform, command), [platform]);
+  const keys = useMemo(() => mobileStorageKeys(platform), [platform]);
+  const copy = mobilePlatformCopy[platform];
+  const library = useMemo(() => observeMobileMedia(media ?? operations.media), [media, operations]);
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
   const [watchAttempt, setWatchAttempt] = useState(0);
-  const snapshot: IosSnapshot | undefined = connection.state === "ready" ? connection.snapshot : undefined;
-  const [appearance, setAppearance] = useState(readAppearance);
-  const [preferences, setPreferences] = useState(readWorkspace);
+  const snapshot: MobileSnapshot | undefined = connection.state === "ready" ? connection.snapshot : undefined;
+  const [appearance, setAppearance] = useState(() => readAppearance(keys));
+  const [preferences, setPreferences] = useState(() => readWorkspace(keys));
   const canShareClipboard = preferences.clipboard && preferences.clipboardShare;
   const clipboardAllowed = useRef(canShareClipboard);
   const clipboardSelections = useRef(new Set<string>());
-  const [objects, setObjects] = useState(readObjects);
+  const [objects, setObjects] = useState(() => readObjects(keys));
   const [objectError, setObjectError] = useState("");
-  const [history, setHistory] = useState(readHistory);
+  const [history, setHistory] = useState(() => readHistory(keys));
   const [historyError, setHistoryError] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const clearedReceipts = useRef(new Set<string>());
@@ -116,7 +127,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
   const [cameraRetry, setCameraRetry] = useState(0);
-  const [cameraPermission, setCameraPermission] = useState<IosCameraPermission>();
+  const [cameraPermission, setCameraPermission] = useState<MobileCameraPermission>();
   const [requestingCamera, setRequestingCamera] = useState(false);
   const cameraPermissionRequest = useRef(0);
   const cameraPermissionPending = useRef(false);
@@ -150,13 +161,13 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     if (!preferences.rememberActivity || !liveTransfers) return;
     const next = recordTransfers(history, liveTransfers.filter(item => !clearedReceipts.current.has(item.id)));
     if (next === history) return;
-    const saved = writeSettings(historyStorageKey, next);
+    const saved = writeSettings(keys.history, next);
     setHistoryError(!saved);
     if (saved) setHistory(next);
-  }, [history, liveTransfers, preferences.rememberActivity]);
+  }, [history, keys.history, liveTransfers, preferences.rememberActivity]);
 
   function clearSavedActivity() {
-    if (!writeSettings(historyStorageKey, [])) {
+    if (!writeSettings(keys.history, [])) {
       setHistoryError(true);
       return;
     }
@@ -220,7 +231,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
   async function discover() {
     setDiscovering(true);
     setDiscoveryError(false);
-    const result = await command<void>("retry_ios_discovery");
+    const result = await operations.retryDiscovery();
     setDiscoveryError(!result.ok);
     setDiscovering(false);
   }
@@ -231,7 +242,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     const refresh = async () => {
       if (cameraPermissionPending.current) return;
       const request = ++cameraPermissionRequest.current;
-      const status = await iosCameraPermission();
+      const status = await mobileCameraPermission(platform);
       if (active && request === cameraPermissionRequest.current) setCameraPermission(status);
     };
     void refresh();
@@ -240,7 +251,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
       active = false;
       window.removeEventListener("focus", refresh);
     };
-  }, [settingsOpen]);
+  }, [platform, settingsOpen]);
 
   async function requestCameraAccess() {
     if (cameraPermissionPending.current) return;
@@ -248,7 +259,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     cameraPermissionRequest.current++;
     setRequestingCamera(true);
     try {
-      const status = await iosCameraPermission(true);
+      const status = await mobileCameraPermission(platform, true);
       setCameraPermission(status);
       if (status === "authorized") setCameraRetry(value => value + 1);
     } finally {
@@ -261,7 +272,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     const next = { ...preferences, [key]: checked };
     clipboardAllowed.current = next.clipboard && next.clipboardShare;
     setPreferences(next);
-    setSettingsError(!writeSettings(workspaceKey, next));
+    setSettingsError(!writeSettings(keys.workspace, next));
   }
 
   function saveObjects(next: readonly MobileObject[]) {
@@ -273,7 +284,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
       return false;
     }
     try {
-      persistMobileObjects(localStorage, objects, next);
+      persistMobileObjects(localStorage, objects, next, keys);
       setObjects([...next]);
       return true;
     } catch {
@@ -282,16 +293,16 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     }
   }
 
-  return <div className="aerift-ios" data-keyboard={keyboardOpen ? "open" : undefined} data-ios-route-motion={route.motion}>
+  return <div className="aerift-ios" data-mobile-platform={platform} data-keyboard={keyboardOpen ? "open" : undefined} data-ios-route-motion={route.motion}>
     <ThemeProvider {...appearance}>
       <AppShell hideToolbar>
         <TransferWorkspace
           port={port}
-          platform="ios"
+          platform={platform}
           discovery={discovery}
           discoveryNotice={(discoveryUnavailable || discoveryDisabled) &&
             <div className="aerift-shell-notice aerift-ios-network">
-              <p role="status">Allow Local Network access in iOS Settings to find AeRift devices nearby.</p>
+              <p role="status">{copy.discoveryMessage}</p>
               <Button variant="quiet" loading={discovering} loadingLabel="Retrying discovery…"
                 onClick={() => void discover()}>Retry discovery</Button>
             </div>}
@@ -305,10 +316,10 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
           </>}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
           activityFooter={<>
-            <p>Open the AeRift Received folder under On My iPhone in Files.</p>
+            <p>{copy.receivedTip}</p>
             {historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
           </>}
-          gesture={controls => <IosGestureCamera controls={controls} enabled={preferences.gestures}
+          gesture={controls => <MobileGestureCamera platform={platform} controls={controls} enabled={preferences.gestures}
             actionsBlocked={settingsOpen} retryKey={cameraRetry} onStatus={setCameraStatus} />}
           mobile={{
             archivedTransfers: history,
@@ -356,7 +367,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
               </>}
               {destination === "workspace" && <>
                 <MobileWorkspace regions={regions} modules={preferences} reducedMotion={appearance.motion === "reduce"}
-                  pick={pick} media={library} received={summary.received} openRift={() => navigate("rift")}
+                  pick={pick ?? operations.pick} media={library} operations={operations} copy={copy} received={summary.received} openRift={() => navigate("rift")}
                   objects={objects} save={saveObjects} clipboardSharing={canShareClipboard}
                   markClipboardSelection={id => { clipboardSelections.current.add(id); }} />
                 {objectError && <p role="alert">{objectError}</p>}
@@ -379,7 +390,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
           <SettingsPanel value={appearance} themes={[{ id: "glass", label: "GLASS" }]}
             onChange={value => {
               setAppearance(value);
-              setSettingsError(!writeSettings(appearanceKey, value));
+              setSettingsError(!writeSettings(keys.appearance, value));
             }} />
           </section>
           <fieldset className="ae-settings">
@@ -412,11 +423,11 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
                   if (enabled) void requestCameraAccess();
                 }} />
             </label>
-            <p>The front camera listens in Rift with a selected file and recipient or an incoming offer while AeRift is open in portrait. Recognition stays on this iPhone.</p>
+            <p>The front camera listens in Rift with a selected file and recipient or an incoming offer while AeRift is open in portrait. Recognition stays on {copy.device}.</p>
             {preferences.gestures && <p role="status"><strong>{cameraStatus?.label ?? "Camera standby"}</strong> {cameraStatus?.detail}</p>}
             {preferences.gestures && <div>
-              {cameraPermission === "denied" && <p>Allow camera access for AeRift in iOS Settings, then return to Rift.</p>}
-              {cameraPermission === "restricted" && <p>Camera access is restricted on this iPhone.</p>}
+              {cameraPermission === "denied" && <p>{copy.cameraDenied}</p>}
+              {cameraPermission === "restricted" && <p>Camera access is restricted on {copy.device}.</p>}
               {cameraPermission === "unavailable" && <p>AeRift couldn’t check camera access. Try again while the app is open.</p>}
               {cameraPermission !== "restricted" && <Button loading={requestingCamera} loadingLabel="Checking camera access…"
                 onClick={() => void requestCameraAccess()}>
@@ -429,7 +440,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
             <label><input type="checkbox" checked={preferences.rememberActivity}
               onChange={event => updatePreferences("rememberActivity", event.currentTarget.checked)} />
               Keep final transfer outcomes after restart</label>
-            <p>AeRift can keep the last 60 outcomes on this iPhone, including file names.</p>
+            <p>AeRift can keep the last 60 outcomes on {copy.device}, including file names.</p>
             {history.length > 0 && (confirmClearHistory ? <div className="ae-actions">
               <Button variant="danger" onClick={clearSavedActivity}>Clear saved outcomes</Button>
               <Button variant="quiet" onClick={() => setConfirmClearHistory(false)}>Keep outcomes</Button>
@@ -439,8 +450,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
             {historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
           </fieldset>
           <section aria-label="Privacy and storage">
-            <p>Local Network access lets AeRift find nearby devices. Keep AeRift open until your transfer finishes.</p>
-            <p>Find accepted transfers under AeRift → Received in the Files app.</p>
+            <p>Local network access lets AeRift find nearby devices. Keep AeRift open until your transfer finishes.</p>
+            <p>Received files: {copy.receivedFolder}.</p>
             <Button variant="quiet" onClick={() => { closeSettings(); navigate("devices"); }}>Manage trusted devices</Button>
           </section>
           {settingsError && <p role="alert">AeRift could not save this preference for your next session.</p>}

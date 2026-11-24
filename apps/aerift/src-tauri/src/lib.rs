@@ -1,3 +1,7 @@
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+mod android_received;
 #[cfg(windows)]
 mod desktop;
 #[cfg(windows)]
@@ -6,9 +10,9 @@ mod desktop_explorer;
 mod ios;
 #[cfg(windows)]
 mod protected_store;
-#[cfg(any(windows, target_os = "ios"))]
+#[cfg(any(windows, target_os = "ios", target_os = "android"))]
 mod runtime;
-#[cfg(any(windows, target_os = "ios"))]
+#[cfg(any(windows, target_os = "ios", target_os = "android"))]
 mod selection;
 #[cfg(windows)]
 mod windows;
@@ -44,6 +48,35 @@ pub fn run() {
             ios::pair_app_peer,
             ios::transfer_app_file,
             ios::retry_ios_discovery,
+        ]);
+
+    #[cfg(target_os = "android")]
+    let builder = builder
+        .plugin(tauri_plugin_aerift_android::init())
+        .manage(runtime::AppRuntime::default())
+        .manage(selection::SelectionRegistry::default())
+        .invoke_handler(tauri::generate_handler![
+            android::watch_app,
+            android::unwatch_app,
+            android::select_app_file,
+            android::clear_app_file,
+            android::set_receiver_ready,
+            android::check_receiver,
+            android::pair_app_peer,
+            android::transfer_app_file,
+            android::retry_android_discovery,
+            android::import_android_media,
+            android::list_android_media,
+            android::remove_android_media,
+            android::select_android_media,
+            android::present_android_media,
+            android::stage_android_text,
+            android::android_clipboard_image_available,
+            android::stage_android_clipboard_image,
+            android::present_android_selection,
+            android::list_android_received,
+            android::present_android_received,
+            android::open_android_browser,
         ]);
 
     #[cfg(windows)]
@@ -103,7 +136,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to launch AeRift")
         .run(|_app, _event| {
-            #[cfg(any(windows, target_os = "ios"))]
+            #[cfg(any(windows, target_os = "ios", target_os = "android"))]
             if matches!(_event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
                 _app.state::<runtime::AppRuntime>().shutdown();

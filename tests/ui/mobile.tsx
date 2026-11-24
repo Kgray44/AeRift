@@ -3,7 +3,7 @@ import type { AppPort, AppSnapshot, Transfer } from "@aerift/app-contract";
 import { installMotionFixture, respondToMotionReceipt } from "./motion-fixture";
 import "../../apps/aerift/public/appearance-bootstrap.css";
 import type { ImportedMedia, MobileMediaPort } from "../../apps/aerift/src/ios/mobile-media";
-import { IosApp } from "../../apps/aerift/src/ios/IosApp";
+import { AndroidApp, IosApp } from "../../apps/aerift/src/ios/IosApp";
 import "@aerift/ui/styles.css";
 import "../../apps/aerift/src/layout.css";
 
@@ -95,8 +95,10 @@ const media: MobileMediaPort = {
   async present() { return { ok: true, value: undefined }; },
 };
 
+const App = new URLSearchParams(location.search).get("platform") === "android" ? AndroidApp : IosApp;
+
 createRoot(document.getElementById("root")!).render(
-  <IosApp port={port} media={media} pick={async source => {
+  <App port={port} media={media} pick={async source => {
     selection = { ...(source === "photos" ? photo : file), selectionId: "fixture" };
     return { ok: true, value: selection };
   }} />,

@@ -1,0 +1,18 @@
+[package]
+name = "tauri-plugin-aerift-android"
+version = "0.1.0"
+edition = "2021"
+links = "tauri-plugin-aerift-android"
+publish = false
+
+[target.'cfg(target_os = "android")'.dependencies]
+aerift-peers = { path = "../../../../../../crates/peers" }
+aerift-transfer = { path = "../../../../../../crates/transfer" }
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = "2"
+uuid = "1"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

@@ -17,8 +17,10 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tauri",
  "tauri-build",
+ "tauri-plugin-aerift-android",
  "tauri-plugin-aerift-ios",
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
@@ -28,6 +30,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-util",
+ "url",
  "uuid",
  "windows-sys 0.61.2",
 ]
@@ -4186,6 +4189,20 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-aerift-android"
+version = "0.1.0"
+dependencies = [
+ "aerift-peers",
+ "aerift-transfer",
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "uuid",
 ]
 
 [[package]]

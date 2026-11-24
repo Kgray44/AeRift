@@ -1,0 +1,75 @@
+name: Android CI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/aerift/**'
+      - 'apps/android/**'
+      - 'crates/**'
+      - 'packages/**'
+      - 'Cargo.*'
+      - 'package*.json'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ANDROID_NDK_VERSION: '29.0.14206865'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare pinned Android and Rust toolchains
+        shell: bash
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;$ANDROID_NDK_VERSION" "system-images;android-36;google_apis;x86_64"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target x86_64-linux-android
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Validate shared UI and Android build scripts
+        run: |
+          npm ci
+          for script in apps/android/*.sh; do bash -n "$script"; done
+          python3 apps/android/test-stage-host.py
+          source_root=apps/aerift/src-tauri/src/platform/android/android/src
+          work="$(mktemp -d "$RUNNER_TEMP/aerift-camera-clock.XXXXXX")"
+          javac -d "$work" \
+            "$source_root/main/java/com/kgamazing44/aerift/plugin/CameraCaptureClock.java" \
+            "$source_root/test/java/com/kgamazing44/aerift/plugin/CameraCaptureClockCheck.java"
+          java -cp "$work" com.kgamazing44.aerift.plugin.CameraCaptureClockCheck
+          npm run test:ui
+          npm run test:gestures
+          npm test
+      - name: Build and validate a debug APK for emulator use only
+        run: |
+          cargo fetch --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --target x86_64-linux-android
+          bash apps/android/build-android.sh debug
+          git diff --exit-code -- Cargo.lock package-lock.json apps/aerift/src-tauri/Cargo.lock
+          mapfile -t apks < <(find apps/aerift/src-tauri/gen/android/app/build/outputs/apk -name '*-debug.apk' -type f)
+          test "${#apks[@]}" -eq 1
+          bash apps/android/verify-package.sh "${apks[0]}"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "${apks[0]}"
+          printf 'APK_PATH=%s\n' "${apks[0]}" >> "$GITHUB_ENV"
+      - name: Install and test synthetic Files selection in the SDK emulator
+        run: bash apps/android/emulator-smoke.sh "$APK_PATH"

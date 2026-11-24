@@ -24,7 +24,9 @@ use aerift_transfer::{
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 #[cfg(target_os = "ios")]
-use tauri_plugin_aerift_ios::{BonjourState, BonjourUpdate};
+use tauri_plugin_aerift_ios::{BonjourState as DiscoveryState, BonjourUpdate};
+#[cfg(target_os = "android")]
+use tauri_plugin_aerift_android::{DiscoveryState, DiscoveryUpdate};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 #[cfg(windows)]
 use tokio::net::TcpListener;
@@ -40,6 +42,10 @@ use crate::windows_storage::{
     lock_profile, storage_failed, ReceiveFolder, WindowsIdentity, WindowsTrust,
 };
 
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+use android::{disk_free, storage_failed};
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "ios")]
@@ -106,8 +112,8 @@ pub(crate) struct AppSnapshot {
     devices: Vec<PeerView>,
     transfers: Vec<TransferView>,
     pending_pairing: Vec<PairingView>,
-    #[cfg(target_os = "ios")]
-    local_network: BonjourState,
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    local_network: DiscoveryState,
 }
 
 #[derive(Deserialize)]
@@ -176,8 +182,8 @@ struct Outgoing {
 struct LiveState {
     peers: Vec<DiscoveredPeer>,
     outgoing: Vec<Outgoing>,
-    #[cfg(target_os = "ios")]
-    local_network: Option<BonjourState>,
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    local_network: Option<DiscoveryState>,
 }
 
 pub(crate) struct AppRuntime {
@@ -197,17 +203,19 @@ impl Default for AppRuntime {
 }
 
 pub(crate) struct Session {
-    #[cfg(any(all(test, windows), target_os = "ios"))]
+    #[cfg(any(all(test, windows), target_os = "ios", target_os = "android"))]
     port: u16,
     #[cfg(all(test, windows))]
     root: PathBuf,
     destination: PathBuf,
     #[cfg(windows)]
     _profile_lock: File,
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     discovery_start: tokio::sync::Mutex<()>,
     #[cfg(target_os = "ios")]
     discovery_events: std::sync::OnceLock<Channel<BonjourUpdate>>,
+    #[cfg(target_os = "android")]
+    discovery_events: std::sync::OnceLock<Channel<DiscoveryUpdate>>,
     peer: Arc<PeerNode>,
     receiver: Arc<Receiver>,
     state: Mutex<LiveState>,
@@ -232,6 +240,17 @@ impl AppRuntime {
     ) -> Result<Arc<Session>, TransferError> {
         self.session
             .get_or_try_init(|| Session::open_ios(app, self.stop.child_token()))
+            .await
+            .map(Arc::clone)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) async fn android_session(
+        &self,
+        app: &tauri::AppHandle,
+    ) -> Result<Arc<Session>, TransferError> {
+        self.session
+            .get_or_try_init(|| Session::open_android(app, self.stop.child_token()))
             .await
             .map(Arc::clone)
     }
@@ -451,8 +470,8 @@ impl Session {
             devices: devices.into_values().collect(),
             transfers,
             pending_pairing,
-            #[cfg(target_os = "ios")]
-            local_network: state.local_network.unwrap_or(BonjourState::Disabled),
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            local_network: state.local_network.unwrap_or(DiscoveryState::Disabled),
         }
     }
 
@@ -549,10 +568,14 @@ impl Session {
     pub(crate) fn set_receiver_ready(&self, ready: bool) -> Result<u64, TransferError> {
         // Serialize against the native suspension callback so an in-flight
         // webview command cannot reopen a cleared background lease.
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         let state = lock(&self.state);
         #[cfg(target_os = "ios")]
-        if ready && matches!(state.local_network, Some(BonjourState::Suspended)) {
+        if ready && matches!(state.local_network, Some(DiscoveryState::Suspended)) {
+            return Err(ErrorCode::PeerUnavailable.into());
+        }
+        #[cfg(target_os = "android")]
+        if ready && !matches!(state.local_network, Some(DiscoveryState::Ready)) {
             return Err(ErrorCode::PeerUnavailable.into());
         }
         let deadline = ready
@@ -611,6 +634,12 @@ impl Session {
         let cancel = self.stop.child_token();
         {
             let mut state = lock(&self.state);
+            // Hashing/file preparation yields across a native lifecycle change.
+            // Check under the same lock the suspension callback uses to cancel.
+            #[cfg(target_os = "android")]
+            if !matches!(state.local_network, Some(DiscoveryState::Ready)) {
+                return Err(ErrorCode::PeerUnavailable.into());
+            }
             if state.outgoing.len() == MAX_RECEIPTS {
                 let oldest = state
                     .outgoing
@@ -676,6 +705,16 @@ impl Session {
     }
 
     fn respond(&self, id: &str, accept: bool) -> Result<TransferView, TransferError> {
+        #[cfg(target_os = "android")]
+        let _foreground = if accept {
+            let state = lock(&self.state);
+            if !matches!(state.local_network, Some(DiscoveryState::Ready)) {
+                return Err(ErrorCode::PeerUnavailable.into());
+            }
+            Some(state)
+        } else {
+            None
+        };
         self.respond_with_capacity(id, accept, disk_free)
     }
 
@@ -811,7 +850,7 @@ fn open_source(path: &Path, selection: FileSelection) -> Result<(File, FileView)
         .open(path)
         .map_err(storage_failed)?;
     // The native picker owns this private copy for the lifetime of the send.
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     let handle = File::open(path).map_err(storage_failed)?;
     let metadata = handle.metadata().map_err(storage_failed)?;
     if !metadata.is_file() || metadata.len() > (1 << 53) - 1 {
