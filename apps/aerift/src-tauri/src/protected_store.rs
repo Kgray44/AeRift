@@ -107,6 +107,46 @@ impl ProtectedFile {
     }
 }
 
+// OS-backed record authentication for the native app-owned Inbox. This is
+// distinct from the transport peer grant and never used to authorize anything.
+pub(crate) struct InboxReceiptProtection;
+
+impl aerift_transfer::ambient_inbox::InboxReceiptSeal for InboxReceiptProtection {
+    fn seal(&self, bytes: &[u8]) -> io::Result<Vec<u8>> {
+        let mut record = b"aerift/ambient-inbox-receipt/v1\0".to_vec();
+        record.extend_from_slice(bytes);
+        transform(&record, true)
+    }
+
+    fn unseal(&self, bytes: &[u8]) -> io::Result<Vec<u8>> {
+        transform(bytes, false)?
+            .strip_prefix(b"aerift/ambient-inbox-receipt/v1\0")
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| io::ErrorKind::InvalidData.into())
+    }
+}
+
+#[cfg(test)]
+mod inbox_receipt_tests {
+    use super::*;
+    use aerift_transfer::ambient_inbox::InboxReceiptSeal;
+
+    #[test]
+    fn native_current_user_receipt_seal_detects_disk_tampering() {
+        let first_process_equivalent = InboxReceiptProtection;
+        let payload = b"{ synthetic fixture }";
+        let sealed = first_process_equivalent.seal(payload).unwrap();
+        let restored = InboxReceiptProtection;
+        assert_eq!(restored.unseal(&sealed).unwrap(), payload);
+        assert!(restored.unseal(payload).is_err());
+        assert!(restored.unseal(&transform(payload, true).unwrap()).is_err());
+        let mut tampered = sealed;
+        let last = tampered.last_mut().unwrap();
+        *last ^= 1;
+        assert!(restored.unseal(&tampered).is_err());
+    }
+}
+
 struct LocalBlob(CRYPT_INTEGER_BLOB);
 
 impl Drop for LocalBlob {

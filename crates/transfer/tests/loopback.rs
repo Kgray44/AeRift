@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use aerift_transfer::ambient_inbox::{FrozenDelivery, Inbox};
 use aerift_transfer::{
     Connector, ErrorCode, PeerId, ReceiveLimits, Receiver, Sender, State, TransferError,
 };
@@ -80,6 +81,7 @@ fn provision(root: &Path) {
         fs::write(root.join(format!("{name}.der")), cert.der()).unwrap();
         fs::write(root.join(format!("{name}.key")), key.serialize_der()).unwrap();
         fs::create_dir(root.join(format!("{name}-received"))).unwrap();
+        fs::create_dir(root.join(format!("{name}-inbox"))).unwrap();
     }
 }
 
@@ -164,11 +166,20 @@ async fn fixture_process() {
     fs::rename(raw, root.join(format!("{name}.addr"))).unwrap();
 
     let approvals = Arc::clone(&receiver);
+    let inbox_path = root.join(format!("{name}-inbox"));
+    let inbox = Arc::new(Inbox::open(&inbox_path).unwrap());
     let approver = tokio::spawn(async move {
         loop {
             for transfer in approvals.snapshot() {
                 if transfer.status.state == State::Pending {
-                    approvals.respond(transfer.key, true).unwrap();
+                    if transfer.offer.name == "payload.bin" {
+                        approvals
+                            .respond_to_inbox(transfer.key, inbox.clone(), FrozenDelivery::Inbox)
+                            .unwrap();
+                        assert!(inbox.recovery_candidates("").unwrap().entries.is_empty());
+                    } else {
+                        approvals.respond(transfer.key, true).unwrap();
+                    }
                 }
             }
             let completed = approvals
@@ -252,7 +263,26 @@ async fn fixture_process() {
     .await
     .unwrap();
     listener.abort();
-    for transfer in receiver.snapshot() {
+    let transfers = receiver.snapshot();
+    drop(receiver);
+    let reopened = Inbox::open(&inbox_path).unwrap();
+    let recovered = reopened.recovery_candidates("PAYload").unwrap();
+    assert_eq!(recovered.entries.len(), 1);
+    assert_eq!(recovered.entries[0].peer, peer);
+    assert!(!recovered.truncated);
+    assert!(
+        reopened
+            .recovery_candidates("nothing")
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    for transfer in transfers {
+        if transfer.offer.name == "payload.bin" {
+            let proof = reopened.verified_receipt(transfer.key).unwrap();
+            assert_eq!(proof.peer(), peer);
+            assert_eq!(proof.offer(), &transfer.offer);
+        }
         assert_eq!(transfer.offer.size_bytes, transfer.status.bytes_transferred);
         assert_eq!(transfer.key.peer, peer);
     }
@@ -301,11 +331,14 @@ fn two_independent_processes_transfer_binary_in_both_directions() {
     for (source, destination) in [("a", "b"), ("b", "a")] {
         let expected = fs::read(root.join(format!("{source}.bin"))).unwrap();
         let dir = root.join(format!("{destination}-received"));
-        let actual = fs::read(dir.join("payload.bin")).unwrap();
+        let inbox_dir = root.join(format!("{destination}-inbox"));
+        let mut stored = fs::read_dir(inbox_dir).unwrap();
+        let actual = fs::read(stored.next().unwrap().unwrap().path().join("payload")).unwrap();
+        assert!(stored.next().is_none());
         let digest = Sha256::digest(actual);
         assert_eq!(Sha256::digest(expected), digest);
         assert_eq!(fs::metadata(dir.join("empty.bin")).unwrap().len(), 0);
-        assert_eq!(fs::read_dir(dir).unwrap().count(), 2);
+        assert_eq!(fs::read_dir(dir).unwrap().count(), 1);
         println!("{source} -> {destination}: SHA-256 {digest:x}");
     }
 }

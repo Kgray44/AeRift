@@ -3,7 +3,7 @@ import { WORKSPACE_MODULES, type ModuleId } from "@aerift/app-contract/experienc
 import { useEffect, useState } from "react";
 import { cameraShortcutLabels, type CameraShortcut } from "./GestureCamera";
 import { command } from "../nativeAppPort";
-import type { DesktopPreferences } from "./preferences";
+import { ambientPreviewCorner, ambientPreviewCorners, type DesktopPreferences } from "./preferences";
 import type { AmbientCaptureView } from "./DesktopApp";
 import type { Device } from "@aerift/app-contract";
 import type { ReceiveFolder } from "./nativeAppPort";
@@ -204,6 +204,12 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
         <input type="checkbox" checked={value.ambientNotifications} disabled={!experience.ambientEnabled}
           onChange={event => onChange({ ...value, ambientNotifications: event.currentTarget.checked })} />
         Notify me of incoming offers when AeRift is in the notification area
+      </label>}
+      {ambientAvailable && <label>Transfer overlay position
+        <select value={value.ambientPreviewCorner} disabled={!experience.ambientEnabled}
+          onChange={event => onChange({ ...value, ambientPreviewCorner: ambientPreviewCorner(event.currentTarget.value) })}>
+          {ambientPreviewCorners.map(corner => <option value={corner} key={corner}>{corner.replace("-", " ")}</option>)}
+        </select>
       </label>}
       {ambientAvailable && <label>Windows shortcut to open the Rift
         <select value={value.ambientShortcut} disabled={!experience.ambientEnabled} onChange={event => {

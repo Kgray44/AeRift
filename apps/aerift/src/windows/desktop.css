@@ -175,3 +175,91 @@
 @keyframes ae-desktop-disclosure-in {
   from { opacity: .72; translate: 0 -.2rem; }
 }
+
+/* The system surface is transparent and inputless; GlassOptics samples only
+   AeRift's own generated optical field, never other apps or desktop pixels. */
+html[data-aerift-ambient-preview],
+html[data-aerift-ambient-preview] :is(body, #root, .ae-theme) {
+  background: transparent !important;
+  min-height: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ae-surface.ae-ambient-overlay {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.35rem 1fr;
+  gap: .8rem;
+  align-items: center;
+  margin: 1.1rem .85rem;
+  padding: .85rem;
+  contain: layout paint;
+  color: var(--ae-text);
+  backdrop-filter: blur(var(--ae-glass-blur, 7px));
+  animation: ae-overlay-enter var(--ae-motion-content) var(--ae-motion-out) both;
+  --ae-overlay-y: .45rem;
+  --ae-overlay-start-scale: .96;
+}
+.ae-ambient-label { display: grid; gap: .35rem; z-index: 1; font: var(--ae-size-body) var(--ae-font); }
+.ae-ambient-label progress { max-inline-size: 100%; accent-color: var(--ae-static-violet); }
+.ae-ambient-orbit {
+  position: relative;
+  display: grid;
+  place-items: center;
+  inline-size: 3.15rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  z-index: 1;
+  box-shadow: inset 0 0 .7rem var(--ae-static-violet);
+  animation: ae-ambient-breathe 2.4s ease-in-out infinite alternate;
+}
+.ae-ambient-orbit i {
+  position: absolute;
+  inset: .35rem;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  border-inline-start-color: transparent;
+  border-block-end-color: var(--ae-static-violet);
+  animation: ae-ambient-travel 2.8s linear infinite;
+}
+.ae-ambient-orbit i:nth-child(2) { inset: .7rem; opacity: .55; animation-direction: reverse; }
+.ae-ambient-orbit i:nth-child(3) { inset: .12rem; opacity: .28; animation-duration: 4.8s; }
+.ae-ambient-overlay[data-ambient-phase="completed"] {
+  animation: ae-ambient-settle 1.1s var(--ae-motion-out) both;
+}
+@keyframes ae-ambient-travel { to { rotate: 1turn; } }
+@keyframes ae-ambient-breathe { from { scale: .92; } to { scale: 1.04; } }
+@keyframes ae-ambient-settle { 0% { opacity: .85; } 35%, 66% { opacity: 1; } 100% { opacity: 0; } }
+.ae-theme[data-motion="reduce"] .ae-ambient-overlay,
+.ae-theme[data-motion="reduce"] .ae-ambient-overlay * { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ae-theme .ae-ambient-overlay, .ae-theme .ae-ambient-overlay * { animation: none; }
+}
+
+/* Milestones change the Rift without recreating its ring or resetting rotation. */
+.ae-ambient-overlay[data-ambient-phase="context"] .ae-ambient-orbit,
+.ae-ambient-overlay[data-ambient-phase="destination-ready"] .ae-ambient-orbit {
+  box-shadow: inset 0 0 .8rem var(--ae-static-violet), 0 0 .95rem var(--ae-static-violet);
+}
+.ae-ambient-overlay[data-ambient-phase="picked-up"] .ae-ambient-orbit {
+  animation: ae-ambient-converge var(--ae-motion-object) var(--ae-motion-out) both;
+}
+.ae-ambient-overlay[data-ambient-phase="released"] .ae-ambient-orbit {
+  animation: ae-ambient-release var(--ae-motion-flight) var(--ae-motion-out) both;
+}
+.ae-ambient-overlay:is([data-ambient-phase="arriving"], [data-ambient-phase="completed"]) .ae-ambient-orbit {
+  animation: ae-ambient-arrive var(--ae-motion-flight) var(--ae-motion-out) both;
+}
+.ae-ambient-overlay:is([data-ambient-phase="interrupted"], [data-ambient-phase="failed"],
+[data-ambient-phase="cancelled"], [data-ambient-phase="expired"], [data-ambient-phase="rejected"],
+[data-ambient-phase="disconnected"]) .ae-ambient-orbit {
+  animation: ae-ambient-interrupt var(--ae-motion-overlay) var(--ae-motion-out) both;
+}
+@keyframes ae-ambient-converge { from { scale: 1.24; opacity: .5; } 70% { scale: .86; } to { scale: 1; opacity: 1; } }
+@keyframes ae-ambient-release { from { scale: 1; } to { scale: .48; opacity: .4; } }
+@keyframes ae-ambient-arrive { from { scale: .48; opacity: .4; } 70% { scale: 1.12; } to { scale: 1; opacity: 1; } }
+@keyframes ae-ambient-interrupt { from { scale: 1.07; } to { scale: .86; opacity: .55; } }
+.ae-theme[data-motion="reduce"] .ae-ambient-overlay .ae-ambient-orbit { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ae-theme .ae-ambient-overlay .ae-ambient-orbit { animation: none; }
+}

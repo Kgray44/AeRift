@@ -18,7 +18,7 @@ const lensSelector = [
   ".ae-nav-brand", ".ae-nav-destinations", ".ae-nav-tools",
   ".ae-spatial-local .ae-spatial-glyph",
   ".ae-spatial-peer[data-selected='true'] .ae-spatial-glyph",
-  ".ae-workspace-nav", ".ae-panel", ".ae-file-slot",
+  ".ae-workspace-nav", ".ae-ambient-overlay", ".ae-panel", ".ae-file-slot",
   ".ae-surface:is([data-material='content'], [data-material='raised'])",
   ".ae-button:is([data-variant='secondary'], [data-variant='primary']):not(:disabled, [aria-disabled='true'])",
   "[data-ae-lens-role='control']:not(:disabled, [aria-disabled='true'])",

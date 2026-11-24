@@ -1,3 +1,4 @@
+import { DesktopInbox } from "./DesktopInbox";
 import { Channel } from "@tauri-apps/api/core";
 import type { FileSelection } from "@aerift/app-contract";
 import { DESTINATIONS, getNavigation, type DestinationId } from "@aerift/app-contract/experience";
@@ -153,8 +154,9 @@ export function DesktopApp() {
       connected: connected ?? null,
       transfers: activeTransfers,
       gesture: cameraActive ? "active" : settings.gestures ? "enabled" : "off",
+      previewCorner: settings.ambientPreviewCorner,
     });
-  }, [navigation.ambient, connected, activeTransfers, cameraActive, settings.gestures]);
+  }, [navigation.ambient, connected, activeTransfers, cameraActive, settings.gestures, settings.ambientPreviewCorner]);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -265,7 +267,8 @@ export function DesktopApp() {
           allowDrop
           watchSelection={watchSelection}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
-          activityFooter={folder?.active && <p>Incoming files are saved to {folder.active}.</p>}
+          allowInbox
+          activityFooter={route === "activity" && <>{folder?.active && <p>The regular receive folder is {folder.active}.</p>}<DesktopInbox /></>}
           gesture={controls => <GestureCamera controls={controls} shortcut={settings.cameraShortcut}
             enabled={settings.gestures} actionsBlocked={route !== "rift"} source={settings.cameraId || undefined}
             retryKey={cameraRetry} onStatus={setCameraStatus} />}

@@ -101,6 +101,7 @@ export type Transfer = {
 export type TransferRequest =
   | { action: "offer"; deviceId: DeviceId; selectionId: SelectionId }
   | { action: "respond"; transferId: TransferId; accept: boolean }
+  | { action: "respond_to_inbox"; transferId: TransferId; accept: true }
   | { action: "cancel"; transferId: TransferId };
 
 export type GestureCommand =

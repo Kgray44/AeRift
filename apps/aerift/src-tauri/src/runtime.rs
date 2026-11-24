@@ -18,6 +18,8 @@ use std::{
 use aerift_peers::{Device, DiscoveredPeer, NearbyChallenge, NearbyPending, PeerNode};
 #[cfg(windows)]
 use aerift_peers::{Discovery, Identity, Platform};
+#[cfg(windows)]
+use aerift_transfer::ambient_inbox::{FrozenDelivery, Inbox};
 use aerift_transfer::{
     ErrorCode, IncomingTransfer, PeerId, ReceiveLimits, Receiver, State, Status, TransferError,
 };
@@ -133,6 +135,67 @@ pub(crate) struct TransferView {
     status: Status,
 }
 
+/// The preview may see visual phases only, not file/device/authorization fields.
+#[cfg(windows)]
+#[derive(Clone, PartialEq, Serialize)]
+pub(crate) struct AmbientTransferProjection {
+    version: u8,
+    interaction: Uuid,
+    sequence: u16,
+    phase: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified: Option<bool>,
+}
+#[cfg(windows)]
+impl AmbientTransferProjection {
+    fn from_transfer(transfer: &TransferView) -> Option<Self> {
+        let incoming = matches!(transfer.direction, Direction::Incoming);
+        let state = transfer.status.state;
+        let phase = match state {
+            State::Pending if incoming => "awaiting-acceptance",
+            State::Pending => "offering",
+            State::Accepted => "awaiting-acceptance",
+            State::Transferring if incoming => "receiving",
+            State::Transferring => "transferring",
+            State::Completed => "completed",
+            State::Cancelled => "cancelled",
+            State::Rejected => "rejected",
+            State::Failed => "failed",
+        };
+        // The transport's Completed is set only after the verified publish or
+        // authenticated completion acknowledgement. Do not infer it from progress.
+        let verified = state == State::Completed;
+        let bytes = transfer.status.bytes_transferred;
+        let size = transfer.file.size_bytes;
+        if bytes > size || (verified && (bytes != size || transfer.status.error.is_some())) {
+            return None;
+        }
+        let progress = (state == State::Transferring).then(|| {
+            if size == 0 {
+                1.0
+            } else {
+                bytes as f64 / size as f64
+            }
+        });
+        let sequence = match phase {
+            "offering" => 1000,
+            "awaiting-acceptance" => 2000,
+            "transferring" | "receiving" => 3000 + (progress.unwrap_or(0.0) * 999.0) as u16,
+            _ => 4000,
+        };
+        Some(Self {
+            version: 1,
+            interaction: transfer.interaction_id,
+            sequence,
+            phase,
+            progress,
+            verified: verified.then_some(true),
+        })
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppSnapshot {
@@ -208,6 +271,11 @@ pub(crate) enum TransferRequest {
         transfer_id: String,
         accept: bool,
     },
+    #[cfg(windows)]
+    RespondToInbox {
+        transfer_id: String,
+        accept: bool,
+    },
     Cancel {
         transfer_id: String,
     },
@@ -239,6 +307,8 @@ pub(crate) struct AppRuntime {
     session: OnceCell<Arc<Session>>,
     stop: CancellationToken,
     subscriptions: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    #[cfg(windows)]
+    ambient_watch: Mutex<Option<CancellationToken>>,
 }
 
 impl Default for AppRuntime {
@@ -247,6 +317,8 @@ impl Default for AppRuntime {
             session: OnceCell::new(),
             stop: CancellationToken::new(),
             subscriptions: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(windows)]
+            ambient_watch: Mutex::default(),
         }
     }
 }
@@ -259,6 +331,8 @@ pub(crate) struct Session {
     destination: PathBuf,
     #[cfg(windows)]
     _profile_lock: File,
+    #[cfg(windows)]
+    inbox: Option<Arc<Inbox>>,
     #[cfg(any(target_os = "ios", target_os = "android"))]
     discovery_start: tokio::sync::Mutex<()>,
     #[cfg(target_os = "ios")]
@@ -349,15 +423,79 @@ impl AppRuntime {
     }
 
     #[cfg(windows)]
-    pub(crate) fn desktop_transfer_preview(
+    pub(crate) fn desktop_transfer_projection(
         &self,
-        transfer_id: Option<&str>,
-    ) -> Option<TransferView> {
-        let transfers = self.session.get()?.snapshot().transfers;
-        transfers.into_iter().find(|transfer| match transfer_id {
-            Some(id) => transfer.id == id,
-            None => !transfer.status.state.is_terminal(),
-        })
+        interaction: Option<Uuid>,
+    ) -> Option<AmbientTransferProjection> {
+        self.session.get()?.ambient_projection(interaction)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn watch_ambient_projection(
+        &self,
+        window: tauri::WebviewWindow,
+        updates: Channel<Option<AmbientTransferProjection>>,
+    ) {
+        use tauri::WindowEvent;
+        let Some(session) = self.session.get().cloned() else {
+            let _ = updates.send(None);
+            return;
+        };
+        let stop = session.stop.child_token();
+        if let Some(previous) = lock(&self.ambient_watch).replace(stop.clone()) {
+            previous.cancel();
+        }
+        let on_destroy = stop.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                on_destroy.cancel();
+            }
+        });
+        let mut changed = session.changes.subscribe();
+        let mut incoming = session.receiver.subscribe();
+        tauri::async_runtime::spawn(async move {
+            let mut previous = session.ambient_projection(None);
+            if updates.send(previous.clone()).is_err() || previous.is_none() {
+                if !stop.is_cancelled() {
+                    let _ = window.destroy();
+                }
+                return;
+            }
+            let interaction = previous.as_ref().map(|frame| frame.interaction);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = stop.cancelled() => break,
+                    result = changed.changed() => if result.is_err() { break },
+                    result = incoming.changed() => if result.is_err() { break },
+                }
+                // Coalesce transport chunks without polling or delaying the transfer.
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                if stop.is_cancelled() {
+                    break;
+                }
+                let current = session.ambient_projection(interaction);
+                if current == previous {
+                    continue;
+                }
+                if updates.send(current.clone()).is_err() {
+                    break;
+                }
+                let terminal = current.as_ref().is_none_or(|f| f.sequence == 4000);
+                if terminal {
+                    // This tail is visual only. Nothing waits for the observer.
+                    tokio::select! {
+                        _ = stop.cancelled() => {},
+                        _ = tokio::time::sleep(Duration::from_millis(1150)) => {},
+                    }
+                    break;
+                }
+                previous = current;
+            }
+            if !stop.is_cancelled() {
+                let _ = window.destroy();
+            }
+        });
     }
 
     #[cfg(windows)]
@@ -380,7 +518,7 @@ impl Session {
         lan_discovery: bool,
     ) -> Result<Arc<Self>, TransferError> {
         let prepare_root = root.clone();
-        let (profile_lock, destination, peer, receiver) =
+        let (profile_lock, destination, peer, receiver, inbox) =
             tauri::async_runtime::spawn_blocking(move || {
                 let profile_lock = lock_profile(&prepare_root)?;
                 let destination = match ReceiveFolder::new(&prepare_root).load()? {
@@ -404,7 +542,18 @@ impl Session {
                     trust,
                     Arc::clone(&receiver),
                 )?);
-                Ok::<_, TransferError>((profile_lock, destination, peer, receiver))
+                let inbox_root = prepare_root.join("AmbientInbox");
+                let inbox = fs::create_dir_all(&inbox_root)
+                    .map_err(storage_failed)
+                    .and_then(|_| {
+                        Inbox::open_sealed(
+                            &inbox_root,
+                            Arc::new(crate::protected_store::InboxReceiptProtection),
+                        )
+                    })
+                    .ok()
+                    .map(Arc::new);
+                Ok::<_, TransferError>((profile_lock, destination, peer, receiver, inbox))
             })
             .await
             .map_err(|_| ErrorCode::InternalError)??;
@@ -426,6 +575,7 @@ impl Session {
             root,
             destination,
             _profile_lock: profile_lock,
+            inbox,
             peer,
             receiver,
             receive_approvals: Mutex::new(()),
@@ -461,6 +611,21 @@ impl Session {
             active.changed();
         });
         Ok(session)
+    }
+
+    #[cfg(windows)]
+    fn ambient_projection(&self, interaction: Option<Uuid>) -> Option<AmbientTransferProjection> {
+        let transfers = self.snapshot().transfers;
+        let mut matching = transfers.iter().filter(|transfer| match interaction {
+            Some(id) => transfer.interaction_id == id,
+            None => !transfer.status.state.is_terminal(),
+        });
+        let transfer = matching.next()?;
+        // IDs are peer-scoped on the wire. Never resolve an ambiguous epoch.
+        if matching.next().is_some() {
+            return None;
+        }
+        AmbientTransferProjection::from_transfer(transfer)
     }
 
     fn changed(&self) {
@@ -758,6 +923,16 @@ impl Session {
                 transfer_id,
                 accept,
             } => self.respond(&transfer_id, accept),
+            #[cfg(windows)]
+            TransferRequest::RespondToInbox {
+                transfer_id,
+                accept,
+            } => {
+                if !accept {
+                    return Err(ErrorCode::InvalidRequest.into());
+                }
+                self.respond_to_inbox(&transfer_id)
+            }
             TransferRequest::Cancel { transfer_id } => self.cancel(&transfer_id),
         }
     }
@@ -986,6 +1161,42 @@ impl Session {
         accept: bool,
         available: impl FnOnce(&Path) -> Result<u64, TransferError>,
     ) -> Result<TransferView, TransferError> {
+        self.respond_at(
+            id,
+            accept,
+            self.receiver.staging_directory(),
+            available,
+            |receiver, key| receiver.respond(key, accept),
+        )
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn inbox(&self) -> Result<Arc<Inbox>, TransferError> {
+        self.inbox
+            .clone()
+            .ok_or_else(|| ErrorCode::StorageFailed.into())
+    }
+
+    #[cfg(windows)]
+    fn respond_to_inbox(&self, id: &str) -> Result<TransferView, TransferError> {
+        let inbox = self.inbox()?;
+        self.respond_at(
+            id,
+            true,
+            inbox.storage_directory(),
+            disk_free,
+            |receiver, key| receiver.respond_to_inbox(key, inbox.clone(), FrozenDelivery::Inbox),
+        )
+    }
+
+    fn respond_at(
+        &self,
+        id: &str,
+        accept: bool,
+        staging: &Path,
+        available: impl FnOnce(&Path) -> Result<u64, TransferError>,
+        approve: impl FnOnce(&Receiver, aerift_transfer::TransferKey) -> Result<Status, TransferError>,
+    ) -> Result<TransferView, TransferError> {
         // Hold the same lock through the capacity check and the receiver reservation.
         let _approval = lock(&self.receive_approvals);
         let transfers = self.receiver.snapshot();
@@ -1004,14 +1215,14 @@ impl Session {
                         .saturating_sub(entry.status.bytes_transferred)
                 })
                 .fold(0u64, u64::saturating_add);
-            let budget = available(self.receiver.staging_directory())?
+            let budget = available(staging)?
                 .checked_sub(RECEIVE_HEADROOM_BYTES)
                 .and_then(|free| free.checked_sub(remaining));
             if !budget.is_some_and(|bytes| entry.offer.size_bytes <= bytes) {
                 return Err(ErrorCode::StorageFailed.into());
             }
         }
-        let status = self.receiver.respond(entry.key, accept)?;
+        let status = approve(&self.receiver, entry.key)?;
         Ok(TransferView {
             status,
             ..incoming_view(entry)

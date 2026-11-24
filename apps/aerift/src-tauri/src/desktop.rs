@@ -1,6 +1,10 @@
+#[path = "ambient_overlay_placement.rs"]
+mod overlay_placement;
+use overlay_placement::{Bounds, Corner};
+
 use crate::{
     ambient_runtime::{self, AmbientRuntime},
-    runtime::{AppRuntime, TransferView},
+    runtime::{AmbientTransferProjection, AppRuntime},
 };
 use aerift_transfer::{ErrorCode, TransferError};
 use std::{
@@ -39,6 +43,7 @@ struct Ambient {
     enabled: AtomicBool,
     route: Mutex<Option<Channel<&'static str>>>,
     shortcut: Mutex<Option<Shortcut>>,
+    preview_corner: Mutex<Corner>,
 }
 
 pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
@@ -122,6 +127,7 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
         enabled: AtomicBool::new(false),
         route: Mutex::new(None),
         shortcut: Mutex::new(None),
+        preview_corner: Mutex::default(),
     });
     Ok(())
 }
@@ -286,10 +292,16 @@ pub(crate) fn update_desktop_ambient(
     connected: Option<usize>,
     transfers: usize,
     gesture: String,
+    preview_corner: Option<String>,
 ) {
     let Some(ambient) = app.try_state::<Ambient>() else {
         return;
     };
+    if let Some(corner) = preview_corner.as_deref().and_then(Corner::parse) {
+        if let Ok(mut current) = ambient.preview_corner.lock() {
+            *current = corner;
+        }
+    }
     let camera = match gesture.as_str() {
         "active" => "Camera active",
         "enabled" => "Gestures enabled",
@@ -303,54 +315,141 @@ pub(crate) fn update_desktop_ambient(
     let _ = ambient.tray.set_tooltip(Some(format!("AeRift · {status}")));
 }
 
+const PREVIEW_LABEL: &str = "desktop-transfer-preview";
+
+fn place_transfer_preview(preview: &tauri::WebviewWindow) -> Option<()> {
+    if !preview.state::<AmbientRuntime>().allows_overlay() {
+        return None;
+    }
+    use windows_sys::Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{GetForegroundWindow, GetShellWindow, GetWindowRect},
+    };
+
+    // Read only the foreground window bounds. Never sample desktop pixels,
+    // attach to a process, change window activation, or inspect window titles.
+    let active = unsafe { GetForegroundWindow() };
+    if active.is_null() {
+        return None;
+    }
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(active, &mut rect) } == 0 {
+        return None;
+    }
+    let mut center = (
+        (f64::from(rect.left) + f64::from(rect.right)) / 2.0,
+        (f64::from(rect.top) + f64::from(rect.bottom)) / 2.0,
+    );
+    let shell = unsafe { GetShellWindow() };
+    if active == shell {
+        let pointer = preview.cursor_position().ok()?;
+        center = (pointer.x, pointer.y);
+    }
+    let monitor = preview.monitor_from_point(center.0, center.1).ok()??;
+    let bounds = monitor.position();
+    let display = monitor.size();
+    let work = monitor.work_area();
+    let active = if active != shell {
+        Some(Bounds {
+            x: rect.left,
+            y: rect.top,
+            w: u32::try_from(rect.right.checked_sub(rect.left)?).ok()?,
+            h: u32::try_from(rect.bottom.checked_sub(rect.top)?).ok()?,
+        })
+    } else {
+        None
+    };
+    let ambient = preview.try_state::<Ambient>()?;
+    if !ambient.enabled.load(Ordering::Acquire) {
+        return None;
+    }
+    let corner = *ambient.preview_corner.lock().ok()?;
+    let (x, y, width, height) = overlay_placement::place(
+        active,
+        Bounds {
+            x: bounds.x,
+            y: bounds.y,
+            w: display.width,
+            h: display.height,
+        },
+        Bounds {
+            x: work.position.x,
+            y: work.position.y,
+            w: work.size.width,
+            h: work.size.height,
+        },
+        monitor.scale_factor(),
+        corner,
+    )?;
+    let position = PhysicalPosition::new(x, y);
+    let size = tauri::PhysicalSize::new(width, height);
+    if preview.outer_position().ok()? != position {
+        preview.set_position(position).ok()?;
+    }
+    if preview.inner_size().ok()? != size {
+        preview.set_size(size).ok()?;
+    }
+    Some(())
+}
+
 fn show_transfer_preview(app: &AppHandle) -> tauri::Result<()> {
-    const LABEL: &str = "desktop-transfer-preview";
-    const WIDTH: f64 = 360.0;
-    const HEIGHT: f64 = 224.0;
-    if app.get_webview_window(LABEL).is_some() {
+    // User-initiated tray command. No observer or transparent window when idle.
+    if app.get_webview_window(PREVIEW_LABEL).is_some()
+        || app
+            .state::<AppRuntime>()
+            .desktop_transfer_projection(None)
+            .is_none()
+    {
         return Ok(());
     }
-
     let preview = WebviewWindowBuilder::new(
         app,
-        LABEL,
+        PREVIEW_LABEL,
         WebviewUrl::App("index.html?surface=desktop-preview".into()),
     )
-    .title("AeRift transfer preview")
-    .inner_size(WIDTH, HEIGHT)
+    .title("AeRift Ambient transfer")
+    .inner_size(overlay_placement::WIDTH, overlay_placement::HEIGHT)
     .visible(false)
     .focused(false)
     .focusable(false)
+    .transparent(true)
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
     .resizable(false)
     .build()?;
-    let monitor = app
-        .get_webview_window("main")
-        .and_then(|main| main.current_monitor().ok().flatten());
-    let monitor = match monitor {
-        Some(current) => Some(current),
-        None => preview.primary_monitor().unwrap_or(None),
-    };
-    if let Some(monitor) = monitor {
-        let work = monitor.work_area();
-        let scale = monitor.scale_factor();
-        let margin = (16.0 * scale).round() as i32;
-        let x = work.position.x + work.size.width as i32 - (WIDTH * scale).round() as i32 - margin;
-        let y =
-            work.position.y + work.size.height as i32 - (HEIGHT * scale).round() as i32 - margin;
-        let _ = preview.set_position(PhysicalPosition::new(
-            x.max(work.position.x),
-            y.max(work.position.y),
-        ));
+    if let Err(error) = preview.set_ignore_cursor_events(true) {
+        let _ = preview.destroy();
+        return Err(error);
+    }
+    if place_transfer_preview(&preview).is_none() {
+        let _ = preview.destroy();
+        return Ok(());
     }
     if let Err(error) = preview.show() {
         let _ = preview.destroy();
         return Err(error);
     }
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(7)).await;
+        // Bounded opt-in preview, refreshed only while actively shown. Keep all
+        // Win32 geometry access on the UI thread and suppress on uncertainty.
+        for _ in 0..120 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let window = preview.clone();
+            if preview
+                .run_on_main_thread(move || {
+                    if place_transfer_preview(&window).is_none() {
+                        let _ = window.destroy();
+                    }
+                })
+                .is_err()
+            {
+                break;
+            }
+            if preview.is_visible().ok() != Some(true) {
+                break;
+            }
+        }
         let _ = preview.destroy();
     });
     Ok(())
@@ -358,10 +457,13 @@ fn show_transfer_preview(app: &AppHandle) -> tauri::Result<()> {
 
 #[tauri::command]
 pub(crate) fn desktop_transfer_preview(
+    webview: tauri::WebviewWindow,
     runtime: tauri::State<'_, AppRuntime>,
-    transfer_id: Option<String>,
-) -> Option<TransferView> {
-    runtime.desktop_transfer_preview(transfer_id.as_deref())
+    updates: Channel<Option<AmbientTransferProjection>>,
+) {
+    if webview.label() == PREVIEW_LABEL {
+        runtime.watch_ambient_projection(webview, updates);
+    }
 }
 
 #[tauri::command]

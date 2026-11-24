@@ -119,6 +119,61 @@ pub(crate) async fn transfer_app_file(
 }
 
 #[tauri::command]
+pub(crate) async fn list_ambient_inbox(
+    window: tauri::WebviewWindow,
+    query: String,
+) -> Result<aerift_transfer::ambient_inbox::InboxPage, TransferError> {
+    let inbox = session(&window).await?.inbox()?;
+    tauri::async_runtime::spawn_blocking(move || inbox.recovery_candidates(&query))
+        .await
+        .map_err(|_| ErrorCode::InternalError)?
+}
+
+#[tauri::command]
+pub(crate) async fn verify_ambient_inbox_entry(
+    window: tauri::WebviewWindow,
+    peer: PeerId,
+    id: Uuid,
+) -> Result<(), TransferError> {
+    let inbox = session(&window).await?.inbox()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        inbox
+            .verified_receipt(aerift_transfer::TransferKey { peer, id })
+            .map(|_| ())
+    })
+    .await
+    .map_err(|_| ErrorCode::InternalError)?
+}
+
+#[tauri::command]
+pub(crate) async fn save_ambient_inbox_entry(
+    window: tauri::WebviewWindow,
+    peer: PeerId,
+    id: Uuid,
+) -> Result<bool, TransferError> {
+    if window.label() != "main" {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    let inbox = session(&window).await?.inbox()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Save verified Inbox copy")
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let path = path.into_path().map_err(|_| ErrorCode::InvalidRequest)?;
+        inbox.save_verified_copy(aerift_transfer::TransferKey { peer, id }, &path)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|_| ErrorCode::InternalError)?
+}
+
+#[tauri::command]
 pub(crate) async fn get_receive_folder(
     window: tauri::WebviewWindow,
 ) -> Result<FolderView, TransferError> {
