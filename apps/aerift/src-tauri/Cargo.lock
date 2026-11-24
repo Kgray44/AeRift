@@ -29,6 +29,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "windows",
  "windows-sys 0.61.2",
 ]
 
@@ -70,6 +71,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

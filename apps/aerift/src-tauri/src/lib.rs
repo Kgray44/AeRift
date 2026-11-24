@@ -1,4 +1,8 @@
 #[cfg(windows)]
+mod ambient_context;
+#[cfg(windows)]
+mod ambient_runtime;
+#[cfg(windows)]
 mod desktop;
 #[cfg(windows)]
 mod desktop_explorer;
@@ -55,13 +59,16 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _, event| desktop::handle_shortcut(app, event.state()))
+                .with_handler(|app, key, event| desktop::handle_shortcut(app, key, event.state()))
                 .build(),
         )
         .manage(runtime::AppRuntime::default())
+        .manage(ambient_runtime::AmbientRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             windows::watch_app,
+            ambient_runtime::watch_ambient_capture,
+            ambient_runtime::set_ambient_capture,
             windows::unwatch_app,
             windows::watch_file_selection,
             windows::select_app_file,
@@ -87,6 +94,9 @@ pub fn run() {
         .on_webview_event(windows::handle_webview_event)
         .on_window_event(desktop::handle_window)
         .setup(|app| {
+            use tauri::Manager;
+            app.state::<ambient_runtime::AmbientRuntime>()
+                .start_lifecycle_watch();
             let args = std::env::args_os().skip(1).collect::<Vec<_>>();
             desktop_explorer::stage_launch_file(
                 app.handle(),

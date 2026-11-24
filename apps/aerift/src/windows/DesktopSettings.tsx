@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { cameraShortcutLabels, type CameraShortcut } from "./GestureCamera";
 import { command } from "../nativeAppPort";
 import type { DesktopPreferences } from "./preferences";
+import type { AmbientCaptureView } from "./DesktopApp";
 import type { ReceiveFolder } from "./nativeAppPort";
 
 export function DesktopSettings({ value, onChange, folder, folderError, openingFolderPicker, chooseFolder,
-  ambientAvailable, ambientError, shortcutError, cameraStatus, retryCamera }: {
+  ambientAvailable, ambientError, shortcutError, ambientCapture, ambientCaptureError, cameraStatus, retryCamera }: {
   value: DesktopPreferences;
   onChange(value: DesktopPreferences): void;
   folder?: ReceiveFolder;
@@ -17,6 +18,8 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
   ambientAvailable: boolean;
   ambientError: boolean;
   shortcutError: boolean;
+  ambientCapture?: AmbientCaptureView;
+  ambientCaptureError?: boolean;
   cameraStatus?: GestureCameraStatus;
   retryCamera(): void;
 }) {
@@ -203,6 +206,26 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
           <option value="ctrl-alt-r">Ctrl + Alt + R</option>
         </select>
       </label>}
+      {ambientAvailable && <div className="aerift-ambient-capture-controls">
+        <label className="aerift-check"><input type="checkbox" checked={value.ambientContextEnabled}
+          disabled={!experience.ambientEnabled} onChange={event => onChange({ ...value, ambientContextEnabled: event.currentTarget.checked })} />
+          Enable the Ambient Explorer capture shortcut</label>
+        <p>Press Ctrl + Alt + Shift + A in Explorer to capture a selection without switching windows. Nothing is sent.</p>
+        <label>Excluded Windows apps (executable names)
+          <textarea maxLength={8192} disabled={!experience.ambientEnabled || !value.ambientContextEnabled}
+            placeholder="explorer.exe" value={value.ambientExclusions}
+            onChange={event => onChange({ ...value, ambientExclusions: event.currentTarget.value })} />
+        </label>
+        {ambientCaptureError && <p role="alert">Ambient capture is unavailable. Check executable names and the shortcut.</p>}
+        {ambientCapture && <div aria-live="polite">
+          {ambientCapture.state === "working" && <p>Freezing the selected objects…</p>}
+          {ambientCapture.state === "paused" && <p>Ambient capture paused.</p>}
+          {ambientCapture.state === "unavailable" && <p>No safe selection was captured. Check your Explorer selection.</p>}
+          {ambientCapture.state === "frozen" && <><p>Frozen selection, not sent.</p>
+            <ul>{ambientCapture.entries.slice(0, 30).map((entry, index) => <li key={index}>{entry.title}</li>)}</ul>
+            {ambientCapture.entries.length > 30 && <p>{ambientCapture.entries.length - 30} more entries.</p>}</>}
+        </div>}
+      </div>}
       {shortcutError && <p role="alert">AeRift could not register the Windows shortcut. Choose another shortcut.</p>}
       {ambientError && <p role="alert">AeRift could not change its notification area visibility.</p>}
       {startupEnabled !== undefined && <label className="aerift-check">

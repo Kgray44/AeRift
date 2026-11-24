@@ -14,8 +14,13 @@ import { DesktopWorkspace } from "./DesktopWorkspace";
 import { GestureCamera } from "./GestureCamera";
 import { useDesktopContentEnter } from "./desktopContentMotion";
 import { desktopSettings, watchFileSelection, type ReceiveFolder } from "./nativeAppPort";
-import { readDesktopPreferences, settingsKey, type DesktopPreferences } from "./preferences";
+import { ambientExcludedApps, readDesktopPreferences, settingsKey, type DesktopPreferences } from "./preferences";
 import "./desktop.css";
+
+export type AmbientCaptureView =
+  | { state: "idle" | "working" | "paused" }
+  | { state: "unavailable"; reason: string }
+  | { state: "frozen"; entries: { kind: string; title: string; size: number }[] };
 
 export function DesktopApp() {
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
@@ -30,6 +35,8 @@ export function DesktopApp() {
   const [ambientAvailable, setAmbientAvailable] = useState(false);
   const [shortcutError, setShortcutError] = useState(false);
   const [ambientError, setAmbientError] = useState(false);
+  const [ambientCaptureError, setAmbientCaptureError] = useState(false);
+  const [ambientCapture, setAmbientCapture] = useState<AmbientCaptureView>();
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
   const [cameraRetry, setCameraRetry] = useState(0);
   const [pairRequest, setPairRequest] = useState(0);
@@ -95,6 +102,26 @@ export function DesktopApp() {
     });
     return () => { disposed = true; };
   }, [ambientAvailable, navigation.ambient, settings.ambientShortcut]);
+
+  const captureEnabled = navigation.ambient && settings.ambientContextEnabled;
+  useEffect(() => {
+    if (!ambientAvailable) return;
+    const updates = new Channel<AmbientCaptureView>(setAmbientCapture);
+    void command<void>("watch_ambient_capture", { updates });
+    return () => { updates.onmessage = () => {}; };
+  }, [ambientAvailable]);
+
+  useEffect(() => {
+    if (!ambientAvailable) return;
+    let disposed = false;
+    const excludedApps = ambientExcludedApps(settings.ambientExclusions);
+    const valid = excludedApps.length <= 64 && excludedApps.every(app => /^[a-z0-9._-]{1,124}\.exe$/.test(app));
+    // A malformed exclusion is fail-closed, not dropped from the configured list.
+    void command<void>("set_ambient_capture", { enabled: captureEnabled && valid, excludedApps: valid ? excludedApps : [] }).then(result => {
+      if (!disposed) setAmbientCaptureError(!result.ok || !valid);
+    });
+    return () => { disposed = true; };
+  }, [ambientAvailable, captureEnabled, settings.ambientExclusions]);
 
   const connected = snapshot?.devices.filter(device => device.online && device.paired).length;
   const pendingOffers = snapshot?.transfers.filter(transfer => transfer.direction === "incoming" && transfer.state === "pending").length ?? 0;
@@ -202,7 +229,8 @@ export function DesktopApp() {
         }}
           folder={folder} folderError={folderError} openingFolderPicker={openingFolderPicker}
           chooseFolder={() => void selectDestination()} ambientAvailable={ambientAvailable} ambientError={ambientError}
-          shortcutError={shortcutError} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
+          shortcutError={shortcutError} ambientCapture={captureEnabled ? ambientCapture : undefined}
+          ambientCaptureError={ambientCaptureError} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
         {keepWorkspaceMounted &&
           <div hidden={route !== "workspace"}>
             <DesktopWorkspace preferences={settings.experience} clipboardAllowed={settings.clipboard} />
