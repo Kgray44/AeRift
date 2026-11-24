@@ -578,14 +578,12 @@
    optical accent and elevated native-backed overlays. The sampled renderer
    makes the highlights; style provides only the legibility floor. */
 .ae-theme[data-ae-theme="glass"] {
-  --ae-lens-read: rgb(15 25 43 / .19);
   --ae-dock-read: rgb(13 22 39 / .68);
   --ae-float-top: rgb(232 246 255 / .14);
   --ae-float-return: rgb(150 177 255 / .11);
   --ae-structure: rgb(29 43 66 / .18);
 }
 .ae-theme[data-ae-theme="glass"][data-appearance="light"] {
-  --ae-lens-read: rgb(248 250 255 / .22);
   --ae-dock-read: rgb(249 250 255 / .75);
   --ae-float-top: rgb(255 255 255 / .89);
   --ae-float-return: rgb(131 156 213 / .19);
@@ -596,16 +594,26 @@
   /* Heading and controls remain regular DOM above the sampled field. */
   min-inline-size: 0;
 }
+/* The optical raster supplies the fill and rim. Keep a cast shadow and
+   normal DOM text only, instead of a second fill that masks the material. */
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] :is(.ae-panel, .ae-transfer-dock, [data-ae-lens-role="control"])[data-ae-lens="sampled"] {
-  background: var(--ae-lens-read);
-  box-shadow: 0 4px 13px color-mix(in srgb, var(--ae-optical-shade) 43%, transparent);
+  .ae-shell[data-ae-optics="ready"] :is(.ae-panel, .ae-surface, .ae-button, .ae-file-slot)[data-ae-lens="sampled"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: 0 var(--ae-lab-shadow-y) var(--ae-lab-shadow-blur) rgb(3 13 29 / var(--ae-lab-card-shadow));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
-.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] .ae-orbit-orb[data-ae-lens="sampled"] {
-  border-color: var(--ae-edge);
-  background: var(--ae-lens-read);
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--ae-optical-shade) 50%, transparent);
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"]
+  :is(.ae-panel, .ae-surface[data-material="content"], .ae-surface[data-material="raised"])[data-ae-lens="sampled"] {
+  border-radius: var(--ae-lab-radius);
+}
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ae-button[data-ae-lens="sampled"] {
+  color: var(--ae-text);
+  box-shadow: 0 var(--ae-lab-shadow-y) var(--ae-lab-shadow-blur) rgb(3 13 29 / var(--ae-lab-control-shadow));
+}
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ae-button[data-ae-lens="sampled"][data-variant="primary"] {
+  border-color: var(--ae-accent);
 }
 .ae-theme[data-ae-theme="glass"] .ae-orbit-trigger[aria-expanded="true"] .ae-orbit-current {
   color: var(--ae-text);
@@ -621,20 +629,6 @@
 .ae-theme[data-ae-theme="glass"] .ios-dock {
   border-color: var(--ae-control-edge);
   box-shadow: 0 6px 21px color-mix(in srgb, var(--ae-optical-shade) 62%, transparent);
-}
-.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] .ios-dock[data-ae-lens="sampled"] {
-  /* The canvas samples the artwork, while this thin native layer separates
-     dock labels from actual scrolled DOM that the canvas cannot sample. */
-  background-color: var(--ae-dock-read);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 6px 19px color-mix(in srgb, var(--ae-optical-shade) 63%, transparent);
-}
-.ae-theme[data-ae-theme="glass"] .ios-dock .ae-nav-indicator[data-ae-lens="sampled"] {
-  background: var(--ae-lens-read);
-  border-color: var(--ae-control-edge);
-  box-shadow: none;
 }
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
   :is(.ae-surface[data-material="overlay"], .ae-orbit[data-radial="false"] .ae-orbit-fan) {

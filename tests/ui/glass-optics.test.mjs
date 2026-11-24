@@ -32,18 +32,19 @@ test("an interrupted atmospheric transition preserves intermediate illumination"
   assert(atmosphere.blendAtmosphere(blended, idle, .08).energy < blended.energy);
 });
 
-test("Light and Dark retain distinct optical softness, exposure and reflection calibration", () => {
-  assert.notEqual(glassAppearanceRecipes.light.softness, glassAppearanceRecipes.dark.softness);
-  assert.notEqual(glassAppearanceRecipes.light.exposure, glassAppearanceRecipes.dark.exposure);
-  assert.notDeepEqual(glassAppearanceRecipes.light.reflectionColor, glassAppearanceRecipes.dark.reflectionColor);
-  assert.equal(glassAppearanceRecipes.dark.softness, recipe.softness);
+test("Light and Dark pass the same exact material through to the live renderer", () => {
+  for (const key of ["opacity", "warmth", "softness", "exposure", "depth", "radius", "roundness", "distortion", "dispersion",
+    "magnify", "shadow", "reflection", "gloss", "patches", "patchSize", "iridescence", "edging", "edge", "light", "sweep", "drift", "speed"]) {
+    assert.equal(glassAppearanceRecipes.light[key], recipe[key], key);
+    assert.equal(glassAppearanceRecipes.dark[key], recipe[key], key);
+  }
 });
 test("records the owner's approved calibration rather than the lab defaults", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(recipe)), {
-    opacity: 2, warmth: 0, softness: 2, exposure: 108, depth: 9, radius: 26, roundness: 69,
-    distortion: 40, dispersion: 100, magnify: 80, shadow: 61, reflection: 76, gloss: 100,
-    patches: 60, patchSize: 58, iridescence: 30, edging: 77, edge: 44, light: 315, sweep: 53,
-    drift: 48, speed: 116, scroll: 44, scene: "ribbons", surface: "all", showLens: true,
+    opacity: 11, warmth: 0, softness: 5, exposure: 100, depth: 10, radius: 26, roundness: 81,
+    distortion: 40, dispersion: 61, magnify: 73, shadow: 83, reflection: 51, gloss: 100,
+    patches: 56, patchSize: 100, iridescence: 47, edging: 71, edge: 26, light: 315, sweep: 70,
+    drift: 72, speed: 76, scroll: 44, scene: "ribbons", surface: "all", showLens: true,
   });
 });
 test("limits visible work for compact and high-density desktop viewports", () => {
@@ -53,7 +54,7 @@ test("limits visible work for compact and high-density desktop viewports", () =>
     assert(w * s <= 800.001 && w * h * s * s <= 390000.001);
   }
 });
-test("panel lens leaves the center and outside unchanged while its rim moves", () => {
+test("panel lens transmits the background through the exact tint, leaves outside unchanged and moves its rim", () => {
   const w = 120, h = 100, scene = new Uint8ClampedArray(w * h * 4);
   for (let p = 0; p < scene.length; p += 4) {
     scene[p] = ((p / 4) % w) * 2;
@@ -66,7 +67,7 @@ test("panel lens leaves the center and outside unchanged while its rim moves", (
   shadeLens(first, scene, w, h, shape, 1, 0);
   shadeLens(later, scene, w, h, shape, 1, 1);
   const pixel = (buffer, x, y) => buffer.slice((y * w + x) * 4, (y * w + x + 1) * 4);
-  assert.deepEqual(pixel(first, 58, 45), pixel(scene, 58, 45));
+  assert.notDeepEqual(pixel(first, 58, 45), pixel(scene, 58, 45));
   assert.deepEqual(pixel(first, 8, 10), pixel(scene, 8, 10));
   assert.notDeepEqual(first, scene);
   assert.notDeepEqual(first, later);
@@ -88,6 +89,24 @@ test("small controls transmit their center yet retain a directional rim on an ev
   const result = scene.slice();
   shadeLens(result, scene, w, h, { x: 17, y: 15, width: 62, height: 34, radius: 17, kind: "control" }, 1, 0);
   const byte = (x, y) => result[(y * w + x) * 4];
-  assert.equal(byte(48, 33), 35);
+  assert.equal(byte(48, 33), 59, "11% Lab white mix in a regular control center");
   assert(byte(48, 15) > byte(48, 48));
+});
+
+test("the production regular card and control both use the requested center tint and exceed the old 4px softness cap", () => {
+  const w = 128, h = 90, scene = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < scene.length; i += 4) scene.set([35, 50, 70, 255], i);
+  const pixel = (image, x, y) => Array.from(image.slice((y * w + x) * 4, (y * w + x) * 4 + 4));
+  for (const kind of ["panel", "control"]) {
+    const box = { x: 24, y: 18, width: 80, height: 54, radius: 22, kind };
+    const flat = scene.slice();
+    shadeLens(flat, scene, w, h, box, 1, .7);
+    assert.deepEqual(pixel(flat, 64, 45), [59, 72, 90, 255], kind);
+    const detail = scene.slice();
+    detail[(44 * w + 59) * 4] = 230;
+    const now = detail.slice(), capped = detail.slice();
+    shadeLens(now, detail, w, h, box, 1, .7);
+    shadeLens(capped, detail, w, h, box, 1, .7, { ...glassAppearanceRecipes.dark, softness: 4 });
+    assert.notDeepEqual(pixel(now, 64, 45), pixel(capped, 64, 45), kind);
+  }
 });
