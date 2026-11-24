@@ -1,0 +1,110 @@
+name: AeRift Android branded unsigned release qualification
+on:
+  push:
+    branches: [qualify/android-branded-unsigned-471b1a5]
+permissions:
+  contents: read
+jobs:
+  unsigned-release-only:
+    if: github.repository == 'Kgray44/AeRift' && github.event_name == 'push' && github.ref == 'refs/heads/qualify/android-branded-unsigned-471b1a5'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      ANDROID_NDK_VERSION: '29.0.14206865'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 471b1a5a9509dd1994df96e1cf39d9a9511f4eec
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare pinned SDK and both Android Rust targets
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = 471b1a5a9509dd1994df96e1cf39d9a9511f4eec
+          bash apps/android/bootstrap-ci-tools.sh
+      - name: Compile and inspect unsigned packages, emit receipt only
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-linux-android
+          npm ci
+          AERIFT_BUNDLETOOL_JAR="$RUNNER_TEMP/bundletool-all-1.18.3.jar"
+          export AERIFT_BUNDLETOOL_JAR
+          curl --fail --show-error --silent --location --retry 3 --proto '=https' --proto-redir '=https' \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+            --output "$AERIFT_BUNDLETOOL_JAR"
+          #!/usr/bin/env bash
+          # Draft for a disposable release-qualification runner only. No keys and no upload.
+          set -euo pipefail
+          umask 077
+          export LC_ALL=C
+          expected=471b1a5a9509dd1994df96e1cf39d9a9511f4eec
+          : "${RUNNER_TEMP:?Disposable runner directory required}"
+          : "${ANDROID_HOME:?Pinned Android SDK required}"
+          : "${NDK_HOME:?Pinned NDK required}"
+          : "${AERIFT_BUNDLETOOL_JAR:?Pinned local bundletool verifier required}"
+          for variable in AERIFT_ANDROID_KEYSTORE AERIFT_ANDROID_KEY_ALIAS AERIFT_ANDROID_STORE_PASS AERIFT_ANDROID_KEY_PASS; do
+            [[ ! -v "$variable" ]] || { echo 'Signing configuration must not be present.' >&2; exit 2; }
+          done
+          test "$(git rev-parse HEAD)" = "$expected"
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          test ! -e apps/aerift/src-tauri/gen/android
+          test "$(sha256sum assets/branding/aerift-logo.png | cut -d' ' -f1)" = 2aa3948cead24d7afeb23d9b417943ef869bcaf776f2e5182eeb97161fe7476f
+          # An isolated compile diagnostic only. Never reserve or publish this value.
+          export AERIFT_ANDROID_VERSION_CODE=1
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          base=apps/aerift/src-tauri/gen/android/app/build/outputs
+          test "$(sha256sum "$AERIFT_BUNDLETOOL_JAR" | cut -d' ' -f1)" = a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+          cargo fetch --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --target aarch64-linux-android --target x86_64-linux-android
+          bash apps/android/build-android.sh release
+          test "$(git rev-parse HEAD)" = "$expected"
+          git diff --exit-code -- Cargo.lock package-lock.json apps/aerift/src-tauri/Cargo.lock
+          mapfile -t apks < <(find "$base/apk" -type f -name '*-release-unsigned.apk')
+          mapfile -t aabs < <(find "$base/bundle" -type f -name '*-release.aab')
+          [[ "${#apks[@]}" -eq 1 && "${#aabs[@]}" -eq 1 ]]
+          test -s "${apks[0]}"
+          test -s "${aabs[0]}"
+          badging="$("$tools/aapt2" dump badging "${apks[0]}")"
+          ! grep -q application-debuggable <<<"$badging"
+          if "$tools/apksigner" verify "${apks[0]}" >/dev/null 2>&1; then
+            echo 'Expected an unsigned APK, not a signed or debug artifact.' >&2; exit 2
+          fi
+          grep -Fq 'jar is unsigned.' <<<"$(jarsigner -verify "${aabs[0]}")"
+          work="$(mktemp -d "$RUNNER_TEMP/branded-unsigned.XXXXXX")"
+          trap 'rm -rf "$work"' EXIT
+          # Apply normal alignment on a disposable diagnostic copy only; never sign it.
+          "$tools/zipalign" -P 16 -f 4 "${apks[0]}" "$work/release-aligned-unsigned.apk"
+          bash apps/android/verify-package.sh "$work/release-aligned-unsigned.apk" "$AERIFT_ANDROID_VERSION_CODE"
+          bash apps/android/verify-bundle.sh "${aabs[0]}" "$AERIFT_ANDROID_VERSION_CODE"
+          python3 - "${apks[0]}" "${aabs[0]}" <<'PY'
+          import re, sys
+          from zipfile import ZipFile
+
+          for filename, lib_prefix in zip(sys.argv[1:], ["lib", "base/lib"]):
+              with ZipFile(filename) as archive:
+                  files = archive.namelist()
+              assert not any(re.match(r"^META-INF/[^/]+\.(?:SF|RSA|DSA|EC)$", p, re.I) for p in files)
+              for target in ("arm64-v8a", "x86_64"):
+                  assert any(p.startswith(f"{lib_prefix}/{target}/") and p.endswith(".so") for p in files), target
+          PY
+          printf 'source=%s\npackage=%s\nbuild_lane=unsigned-release-qualification\nversion_code=%s\n' \
+            "$expected" 'com.kgamazing44.aerift' "$AERIFT_ANDROID_VERSION_CODE"
+          sha256sum "${apks[0]}" "${aabs[0]}"
+          {
+            printf '### Unsigned Android release qualification (not installable)\n\n'
+            printf -- '- Exact source: `%s`\n' "$expected"
+            printf -- '- Diagnostic version code: `%s` (not reserved)\n' "$AERIFT_ANDROID_VERSION_CODE"
+            printf -- '- Package: `com.kgamazing44.aerift`; CPU ABIs: `arm64-v8a` and `x86_64`\n'
+            printf -- '- Results: nondebug APK; no signing; launcher/round resources; Android 16 manifest, AAB validity and 16 KiB compatibility\n'
+            printf -- '- Unsigned APK checksum: `%s`\n' "$(sha256sum "${apks[0]}" | cut -d' ' -f1)"
+            printf -- '- Unsigned AAB checksum: `%s`\n' "$(sha256sum "${aabs[0]}" | cut -d' ' -f1)"
+            printf -- '- No app binaries uploaded; no tester installation or signing performed.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
