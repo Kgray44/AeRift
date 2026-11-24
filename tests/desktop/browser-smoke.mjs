@@ -228,7 +228,9 @@ try {
   await preview.goto((process.env.AERIFT_DESKTOP_URL ?? "http://127.0.0.1:1420") + "?surface=desktop-preview");
   await preview.getByText("Sending", { exact: true }).waitFor();
   assert.equal(await preview.getByRole("progressbar").getAttribute("value"), "0.43");
-  assert.equal(await preview.locator(".ae-ambient-orbit").evaluate(el => getComputedStyle(el).animationName), "none");
+  const initialSilhouette = await preview.locator("#ambient-liquid-shape").getAttribute("d");
+  await preview.waitForTimeout(125);
+  assert.equal(await preview.locator("#ambient-liquid-shape").getAttribute("d"), initialSilhouette);
   await capture(preview, "light-ambient-preview");
   await preview.evaluate(() => window.desktopFixture.updatePreview({ sequence: 4, phase: "transferring", progress: 1 }));
   await preview.locator("progress[value='1']").waitFor();

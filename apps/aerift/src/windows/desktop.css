@@ -185,50 +185,45 @@ html[data-aerift-ambient-preview] :is(body, #root, .ae-theme) {
   pointer-events: none;
   overflow: hidden;
 }
-.ae-surface.ae-ambient-overlay {
-  position: relative;
+.ae-ambient-overlay {
   display: grid;
-  grid-template-columns: 3.35rem 1fr;
-  gap: .8rem;
-  align-items: center;
-  margin: 1.1rem .85rem;
-  padding: .85rem;
-  contain: layout paint;
+  grid-template-rows: 99px minmax(1rem, auto);
+  justify-items: center;
+  text-align: center;
   color: var(--ae-text);
-  backdrop-filter: blur(var(--ae-glass-blur, 7px));
   animation: ae-overlay-enter var(--ae-motion-content) var(--ae-motion-out) both;
-  --ae-overlay-y: .45rem;
-  --ae-overlay-start-scale: .96;
+  --ae-overlay-y: .28rem;
+  --ae-overlay-start-scale: .97;
 }
-.ae-ambient-label { display: grid; gap: .35rem; z-index: 1; font: var(--ae-size-body) var(--ae-font); }
-.ae-ambient-label progress { max-inline-size: 100%; accent-color: var(--ae-static-violet); }
-.ae-ambient-orbit {
-  position: relative;
-  display: grid;
-  place-items: center;
-  inline-size: 3.15rem;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  z-index: 1;
-  box-shadow: inset 0 0 .7rem var(--ae-static-violet);
-  animation: ae-ambient-breathe 2.4s ease-in-out infinite alternate;
+.ae-ambient-label {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .35rem;
+  max-inline-size: 94%;
+  font: 600 .72rem var(--ae-font);
+  color: white;
+  text-shadow: 0 1px 1px #131325, 0 0 3px #131325, 0 0 6px #131325;
 }
-.ae-ambient-orbit i {
-  position: absolute;
-  inset: .35rem;
-  border-radius: 50%;
-  border: 1px solid currentColor;
-  border-inline-start-color: transparent;
-  border-block-end-color: var(--ae-static-violet);
-  animation: ae-ambient-travel 2.8s linear infinite;
+.ae-ambient-label strong { font-weight: 650; }
+.ae-ambient-label small { font: inherit; opacity: .92; }
+.ae-ambient-label small::before { content: "· "; }
+.ae-ambient-label progress { inline-size: 3.55rem; block-size: .2rem; accent-color: #b6aeff; }
+.ae-ambient-liquid {
+  width: 140px;
+  height: 101px;
+  overflow: visible;
+  filter: drop-shadow(0 1px 1px #10073b44);
 }
-.ae-ambient-orbit i:nth-child(2) { inset: .7rem; opacity: .55; animation-direction: reverse; }
-.ae-ambient-orbit i:nth-child(3) { inset: .12rem; opacity: .28; animation-duration: 4.8s; }
+.ae-liquid-center { fill: rgb(210 224 255 / var(--ae-liquid-tint)); }
+@media (prefers-reduced-transparency: reduce) {
+  .ae-liquid-center { fill: rgb(66 62 101 / .85); }
+}
+.ae-theme[data-transparency="reduce"] .ae-liquid-center { fill: rgb(66 62 101 / .85); }
 .ae-ambient-overlay[data-ambient-phase="completed"] {
   animation: ae-ambient-settle 1.1s var(--ae-motion-out) both;
 }
-@keyframes ae-ambient-travel { to { rotate: 1turn; } }
-@keyframes ae-ambient-breathe { from { scale: .92; } to { scale: 1.04; } }
 @keyframes ae-ambient-settle { 0% { opacity: .85; } 35%, 66% { opacity: 1; } 100% { opacity: 0; } }
 .ae-theme[data-motion="reduce"] .ae-ambient-overlay,
 .ae-theme[data-motion="reduce"] .ae-ambient-overlay * { animation: none; }
@@ -237,29 +232,29 @@ html[data-aerift-ambient-preview] :is(body, #root, .ae-theme) {
 }
 
 /* Milestones change the Rift without recreating its ring or resetting rotation. */
-.ae-ambient-overlay[data-ambient-phase="context"] .ae-ambient-orbit,
-.ae-ambient-overlay[data-ambient-phase="destination-ready"] .ae-ambient-orbit {
-  box-shadow: inset 0 0 .8rem var(--ae-static-violet), 0 0 .95rem var(--ae-static-violet);
+.ae-ambient-overlay[data-ambient-phase="context"] .ae-ambient-liquid,
+.ae-ambient-overlay[data-ambient-phase="destination-ready"] .ae-ambient-liquid {
+  filter: drop-shadow(0 0 .28rem var(--ae-static-violet));
 }
-.ae-ambient-overlay[data-ambient-phase="picked-up"] .ae-ambient-orbit {
+.ae-ambient-overlay[data-ambient-phase="picked-up"] .ae-ambient-liquid {
   animation: ae-ambient-converge var(--ae-motion-object) var(--ae-motion-out) both;
 }
-.ae-ambient-overlay[data-ambient-phase="released"] .ae-ambient-orbit {
+.ae-ambient-overlay[data-ambient-phase="released"] .ae-ambient-liquid {
   animation: ae-ambient-release var(--ae-motion-flight) var(--ae-motion-out) both;
 }
-.ae-ambient-overlay:is([data-ambient-phase="arriving"], [data-ambient-phase="completed"]) .ae-ambient-orbit {
+.ae-ambient-overlay:is([data-ambient-phase="arriving"], [data-ambient-phase="completed"]) .ae-ambient-liquid {
   animation: ae-ambient-arrive var(--ae-motion-flight) var(--ae-motion-out) both;
 }
 .ae-ambient-overlay:is([data-ambient-phase="interrupted"], [data-ambient-phase="failed"],
 [data-ambient-phase="cancelled"], [data-ambient-phase="expired"], [data-ambient-phase="rejected"],
-[data-ambient-phase="disconnected"]) .ae-ambient-orbit {
+[data-ambient-phase="disconnected"]) .ae-ambient-liquid {
   animation: ae-ambient-interrupt var(--ae-motion-overlay) var(--ae-motion-out) both;
 }
 @keyframes ae-ambient-converge { from { scale: 1.24; opacity: .5; } 70% { scale: .86; } to { scale: 1; opacity: 1; } }
 @keyframes ae-ambient-release { from { scale: 1; } to { scale: .48; opacity: .4; } }
 @keyframes ae-ambient-arrive { from { scale: .48; opacity: .4; } 70% { scale: 1.12; } to { scale: 1; opacity: 1; } }
 @keyframes ae-ambient-interrupt { from { scale: 1.07; } to { scale: .86; opacity: .55; } }
-.ae-theme[data-motion="reduce"] .ae-ambient-overlay .ae-ambient-orbit { animation: none; }
+.ae-theme[data-motion="reduce"] .ae-ambient-overlay .ae-ambient-liquid { animation: none; }
 @media (prefers-reduced-motion: reduce) {
-  .ae-theme .ae-ambient-overlay .ae-ambient-orbit { animation: none; }
+  .ae-theme .ae-ambient-overlay .ae-ambient-liquid { animation: none; }
 }

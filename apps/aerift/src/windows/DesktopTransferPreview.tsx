@@ -1,8 +1,9 @@
 import { advanceAmbientChoreography, isAmbientTerminal, type AmbientChoreographyFrame, type AmbientPhase } from "@aerift/app-contract/ambient-experience";
 import { Channel } from "@tauri-apps/api/core";
-import { GlassOptics, GlassSurface, ThemeProvider } from "@aerift/ui";
+import { ThemeProvider } from "@aerift/ui";
 import { useEffect, useState } from "react";
 import { command } from "../nativeAppPort";
+import { AmbientLiquid } from "./AmbientLiquid";
 import { readDesktopPreferences } from "./preferences";
 import "./desktop.css";
 
@@ -52,15 +53,14 @@ export function DesktopTransferPreview() {
   if (!frame) return null;
 
   return <ThemeProvider {...appearance}>
-    <GlassSurface material="overlay" className="ae-ambient-overlay" data-ambient-phase={frame.phase}
+    <div className="ae-ambient-overlay" data-ambient-phase={frame.phase}
       role="status" aria-live="polite">
-      <GlassOptics />
-      <span className="ae-ambient-orbit" aria-hidden="true"><i /><i /><i /></span>
+      <AmbientLiquid reduce={appearance.motion === "reduce"} />
       <div className="ae-ambient-label">
         <strong>{labels[frame.phase]}</strong>
         {frame.count !== undefined && <small>{frame.count} {frame.count === 1 ? "object" : "objects"}</small>}
         {frame.progress !== undefined && <progress max={1} value={frame.progress} aria-label="Transfer progress" />}
       </div>
-    </GlassSurface>
+    </div>
   </ThemeProvider>;
 }
