@@ -1,0 +1,30 @@
+name: Remote WAN adapter CI
+
+on:
+  pull_request:
+    paths:
+      - 'crates/remote-wan/**'
+      - '.github/workflows/remote-wan.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standalone:
+    name: WAN transport
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: crates/remote-wan
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: cargo fmt --all --check
+      - run: cargo test --locked
