@@ -7,6 +7,7 @@ mod nearby;
 mod network;
 mod pairing;
 mod remote;
+mod remote_folder;
 
 pub use discovery::{DiscoveredPeer, Discovery, SERVICE_TYPE};
 pub use friends::*;
@@ -16,3 +17,5 @@ pub use pairing::{Device, InvitationCode, Pairing, PendingPairing, Platform, Tru
 
 pub use nearby::{NearbyChallenge, NearbyPending};
 pub use remote::{RemotePeerNode, RemoteTrustStore};
+
+pub use remote_folder::RemoteFolderIngress;

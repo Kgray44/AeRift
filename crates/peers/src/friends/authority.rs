@@ -40,7 +40,7 @@ pub struct FriendAcceptance(String);
 #[serde(deny_unknown_fields)]
 pub struct FriendApproval(String);
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceEnrollment {
     pub(super) person: PersonId,
@@ -58,6 +58,7 @@ pub struct FriendRecord {
     pub(super) primary: PeerId,
     pub(super) nonce: Uuid,
     pub(super) expires: u64,
+    pub(super) transcript: FriendshipTranscript,
 }
 
 pub struct FriendAuthority(Ed25519KeyPair);
@@ -370,6 +371,177 @@ impl FriendAuthority {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) struct FriendshipTranscript {
+    pub(super) invitation: FriendInvitation,
+    pub(super) acceptance: FriendAcceptance,
+    pub(super) approval: FriendApproval,
+}
+
+/// A portable, privately shared, public-key-only transcript. It grants no
+/// authority without a current relationship, fresh grant, and pinned device proof.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedFriendMember {
+    invitation: FriendInvitation,
+    acceptance: FriendAcceptance,
+    approval: FriendApproval,
+    grant: DeviceEnrollment,
+}
+
+impl DelegatedFriendMember {
+    pub fn new(
+        invitation: FriendInvitation,
+        acceptance: FriendAcceptance,
+        approval: FriendApproval,
+        grant: DeviceEnrollment,
+    ) -> Self {
+        Self {
+            invitation,
+            acceptance,
+            approval,
+            grant,
+        }
+    }
+
+    pub(super) fn record(
+        &self,
+        local_device: PeerId,
+        now: u64,
+    ) -> Result<FriendRecord, TransferError> {
+        self.grant.verify(local_device, now)?;
+        if self.grant.relationship != self.invitation.id()
+            || self.grant.issued < self.invitation.issued
+        {
+            return Err(ErrorCode::PairingRejected.into());
+        }
+        let (original, remote) = if self.grant.person == self.invitation.issuer {
+            (
+                self.invitation.issuer_device,
+                self.invitation.recipient_device,
+            )
+        } else if self.grant.person == self.invitation.recipient {
+            (
+                self.invitation.recipient_device,
+                self.invitation.issuer_device,
+            )
+        } else {
+            return Err(ErrorCode::PeerUntrusted.into());
+        };
+        if local_device == original || local_device == remote {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        // Original consent need not still be within its historical 5-minute
+        // window. Its signatures are checked at issuance; fresh proof below
+        // revalidates the actual remaining relationship on the other device.
+        let mut record = FriendRecord::verify(
+            &self.invitation,
+            &self.acceptance,
+            &self.approval,
+            self.grant.person,
+            original,
+            remote,
+            self.invitation.issued,
+        )?;
+        record.expires = self.grant.expires;
+        Ok(record)
+    }
+
+    pub fn review(&self, device: PeerId, now: u64) -> Result<DelegatedReview, TransferError> {
+        let record = self.record(device, now)?;
+        Ok(DelegatedReview {
+            owner: record.owner,
+            friend: record.person,
+            device,
+            friend_device: record.primary,
+            relationship: record.nonce,
+            expires_at: record.expires,
+        })
+    }
+    pub(super) fn grant(&self) -> &DeviceEnrollment {
+        &self.grant
+    }
+    pub(super) fn issued(&self) -> u64 {
+        self.grant.issued
+    }
+}
+
+pub struct DelegatedReview {
+    pub owner: PersonId,
+    pub friend: PersonId,
+    pub device: PeerId,
+    pub friend_device: PeerId,
+    pub relationship: Uuid,
+    pub expires_at: u64,
+}
+
+/// Original friend's person key binds the exact capsule, ticket and private
+/// endpoint. The connection independently pins the original TLS certificate.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedRoute {
+    member: DelegatedFriendMember,
+    ticket: Uuid,
+    route: std::net::SocketAddr,
+    signature: String,
+}
+
+impl DelegatedRoute {
+    fn body(&self) -> impl Serialize + '_ {
+        (
+            "aerift/friends/delegated-route/1",
+            &self.member,
+            self.ticket,
+            self.route,
+        )
+    }
+
+    pub fn sign(
+        authority: &FriendAuthority,
+        member: DelegatedFriendMember,
+        device: PeerId,
+        ticket: Uuid,
+        route: std::net::SocketAddr,
+        now: u64,
+    ) -> Result<Self, TransferError> {
+        let details = member.review(device, now)?;
+        if authority.id() != details.friend {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        if !crate::RemotePeerNode::supports_private_endpoint(route)
+            || ticket.get_version() != Some(Version::Random)
+        {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        let mut wire = Self {
+            member,
+            ticket,
+            route,
+            signature: String::new(),
+        };
+        wire.signature = authority.sign(&canonical(wire.body())?);
+        Ok(wire)
+    }
+
+    pub fn review(&self, device: PeerId, now: u64) -> Result<DelegatedReview, TransferError> {
+        let details = self.member.review(device, now)?;
+        if !crate::RemotePeerNode::supports_private_endpoint(self.route)
+            || self.ticket.get_version() != Some(Version::Random)
+        {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        verify(details.friend, &canonical(self.body())?, &self.signature)?;
+        Ok(details)
+    }
+
+    pub fn route(&self) -> std::net::SocketAddr {
+        self.route
+    }
+    pub fn into_parts(self) -> (DelegatedFriendMember, std::net::SocketAddr, Uuid) {
+        (self.member, self.route, self.ticket)
+    }
+}
+
 impl FriendRecord {
     pub fn verify(
         invite: &FriendInvitation,
@@ -412,6 +584,11 @@ impl FriendRecord {
             primary,
             nonce: invite.nonce,
             expires: invite.expires,
+            transcript: FriendshipTranscript {
+                invitation: invite.clone(),
+                acceptance: acceptance.clone(),
+                approval: approval.clone(),
+            },
         })
     }
     pub fn relationship(&self) -> Uuid {

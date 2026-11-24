@@ -6,6 +6,7 @@ pub mod ambient_camera;
 pub mod ambient_inbox;
 mod checkpoint;
 mod client;
+pub mod folder;
 #[cfg(unix)]
 mod journal;
 mod model;
@@ -15,7 +16,9 @@ mod server;
 pub use client::{Connector, Sender, inspect_file_offer};
 pub use model::{ErrorCode, Offer, PeerId, State, Status, TransferError};
 pub use receiver::{IncomingTransfer, ReceiveLimits, Receiver, TransferKey};
-pub use server::{TransferScope, serve, serve_request, serve_scoped_request};
+pub use server::{
+    TransferScope, serve, serve_admitted_folder_request, serve_request, serve_scoped_request,
+};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Limited};

@@ -1053,3 +1053,396 @@ async fn explicit_file_window_uses_exact_route_and_consent_then_reports_durable_
     assert!(!window_b.is_open());
     assert!(window_b.incoming().is_err());
 }
+
+#[tokio::test]
+async fn person_file_window_awards_one_of_two_authenticated_acceptances() {
+    use aerift_peers::{FriendDecision, FriendFileWindow, Identity};
+    use aerift_transfer::State;
+    use std::{
+        fs,
+        net::Ipv4Addr,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    let alice = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let bob = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let identity = || Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let (a, b, c) = (identity(), identity(), identity());
+    let (ap, bp, cp) = (a.id(), b.id(), c.id());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let invite = alice.invite(ap, bob.id(), bp, now).unwrap();
+    let acceptance = bob.accept(&invite, ap, bp, now).unwrap();
+    let approval = alice.confirm(&invite, &acceptance, bp, now).unwrap();
+    let for_alice =
+        FriendRecord::verify(&invite, &acceptance, &approval, alice.id(), ap, bp, now).unwrap();
+    let for_bob =
+        FriendRecord::verify(&invite, &acceptance, &approval, bob.id(), bp, ap, now).unwrap();
+    let book = |owner| Arc::new(FriendBook::open(owner, Arc::new(Memory::default())).unwrap());
+    let (ab, bb, cb) = (book(alice.id()), book(bob.id()), book(bob.id()));
+    let relationship = for_alice.relationship();
+    ab.add(for_alice, now).unwrap();
+    bb.add(for_bob.clone(), now).unwrap();
+    cb.add(for_bob, now).unwrap();
+    ab.enroll(bob.enroll(relationship, cp, now).unwrap(), cp, now)
+        .unwrap();
+    let (ad, bd, cd) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let wa = FriendFileWindow::open(a, ab.clone(), ad.path(), Ipv4Addr::LOCALHOST)
+        .await
+        .unwrap();
+    let wb = FriendFileWindow::open(b, bb, bd.path(), Ipv4Addr::LOCALHOST)
+        .await
+        .unwrap();
+    let wc = FriendFileWindow::open(c, cb, cd.path(), Ipv4Addr::LOCALHOST)
+        .await
+        .unwrap();
+    let path = ad.path().join("once.bin");
+    fs::write(&path, vec![92u8; 73_411]).unwrap();
+    assert!(
+        wa.offer_person(
+            bob.id(),
+            path.clone(),
+            &[(bp, wb.route()), (bp, wb.route())]
+        )
+        .await
+        .is_err()
+    );
+    let routes = [(bp, wb.route()), (cp, wc.route())];
+    let offers = || wa.offer_person(bob.id(), path.clone(), &routes);
+    let id = offers().await.unwrap();
+    assert_eq!(wa.outgoing_person().unwrap(), Some((id, 2, None)));
+    assert!(wa.send(id).await.is_err());
+    let r = wa.route().offers;
+    let (b_result, c_result) = tokio::join!(wb.accept(ap, id, r), wc.accept(ap, id, r));
+    assert_ne!(b_result.is_ok(), c_result.is_ok());
+    let (winner, loser, winner_id, loser_id) = if b_result.is_ok() {
+        (&wb, &wc, bp, cp)
+    } else {
+        (&wc, &wb, cp, bp)
+    };
+    assert_eq!(
+        wa.outgoing_person().unwrap(),
+        Some((id, 2, Some(winner_id)))
+    );
+    assert_eq!(
+        loser.reconcile(ap, id, r).await.unwrap(),
+        FriendDecision::Withdrawn
+    );
+    assert!(loser.accept(ap, id, r).await.is_err());
+    assert_eq!(wa.send(id).await.unwrap().state, State::Completed);
+    let (winning_dir, losing_dir) = if winner_id == bp {
+        (bd.path(), cd.path())
+    } else {
+        (cd.path(), bd.path())
+    };
+    assert_eq!(
+        fs::read(winning_dir.join("once.bin")).unwrap(),
+        vec![92u8; 73_411]
+    );
+    assert!(!losing_dir.join("once.bin").exists());
+    assert_eq!(winner.receipts().len(), 1);
+    assert!(loser.receipts().is_empty());
+    assert!(wa.send(id).await.is_err());
+
+    let next = offers().await.unwrap();
+    winner.accept(ap, next, r).await.unwrap();
+    ab.revoke_device(bob.id(), winner_id).unwrap();
+    assert!(wa.send(next).await.is_err());
+    assert!(loser.accept(ap, next, r).await.is_err());
+    assert_eq!(winner.receipts().len(), 1);
+    assert!(loser.receipts().is_empty());
+    assert_eq!(ab.winner(next).unwrap(), Some(winner_id));
+    assert_ne!(winner_id, loser_id);
+}
+
+#[tokio::test]
+async fn protected_delegated_device_enrollment_respects_certificate_grant_expiry_and_revocation() {
+    use aerift_peers::{DelegatedRoute, FriendFileWindow, FriendInviteEndpoint, Identity};
+    use aerift_transfer::State;
+    use std::net::Ipv4Addr;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::net::TcpListener;
+    use tokio_util::sync::CancellationToken;
+
+    let person_store = Memory::default();
+    let owner = FriendAuthority::load_or_create(&person_store).unwrap();
+    let friend = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let origin = Identity::load_or_create(&Memory::default()).unwrap();
+    let endpoint = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let member_tls = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let attacker_tls = Identity::load_or_create(&Memory::default()).unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let ago = now - 500;
+    let invite = owner
+        .invite(origin.id(), friend.id(), endpoint.id(), ago)
+        .unwrap();
+    let accepting = friend
+        .accept(&invite, origin.id(), endpoint.id(), ago)
+        .unwrap();
+    let approve = owner
+        .confirm(&invite, &accepting, endpoint.id(), ago)
+        .unwrap();
+    let book = |id| Arc::new(FriendBook::open(id, Arc::new(Memory::default())).unwrap());
+    let (a, b) = (book(owner.id()), book(friend.id()));
+    a.add(
+        FriendRecord::verify(
+            &invite,
+            &accepting,
+            &approve,
+            owner.id(),
+            origin.id(),
+            endpoint.id(),
+            ago,
+        )
+        .unwrap(),
+        ago,
+    )
+    .unwrap();
+    b.add(
+        FriendRecord::verify(
+            &invite,
+            &accepting,
+            &approve,
+            friend.id(),
+            endpoint.id(),
+            origin.id(),
+            ago,
+        )
+        .unwrap(),
+        ago,
+    )
+    .unwrap();
+    let bundle = a
+        .delegate_contact(&owner, friend.id(), member_tls.id(), now)
+        .unwrap();
+    let expired = a
+        .delegate_contact(&owner, friend.id(), member_tls.id(), ago)
+        .unwrap();
+    let swapped = a
+        .delegate_contact(&owner, friend.id(), member_tls.id(), now - 1)
+        .unwrap();
+    assert!(
+        FriendInviteEndpoint::expect_delegated(&endpoint, &b, &bundle, attacker_tls.id(), now)
+            .is_err()
+    );
+    assert!(
+        FriendInviteEndpoint::expect_delegated(&endpoint, &b, &expired, member_tls.id(), now)
+            .is_err()
+    );
+    let ticket =
+        FriendInviteEndpoint::expect_delegated(&endpoint, &b, &bundle, member_tls.id(), now)
+            .unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let routes = [listener.local_addr().unwrap()];
+    let approved_route = DelegatedRoute::sign(
+        &friend,
+        bundle.clone(),
+        member_tls.id(),
+        ticket,
+        routes[0],
+        now,
+    )
+    .unwrap();
+    assert_eq!(
+        approved_route
+            .review(member_tls.id(), now)
+            .unwrap()
+            .friend_device,
+        endpoint.id()
+    );
+    assert!(approved_route.review(attacker_tls.id(), now).is_err());
+    assert!(approved_route.review(member_tls.id(), now + 300).is_err());
+    assert!(
+        DelegatedRoute::sign(
+            &owner,
+            bundle.clone(),
+            member_tls.id(),
+            ticket,
+            routes[0],
+            now
+        )
+        .is_err()
+    );
+    assert!(
+        DelegatedRoute::sign(
+            &friend,
+            bundle.clone(),
+            member_tls.id(),
+            ticket,
+            "8.8.8.8:8000".parse().unwrap(),
+            now
+        )
+        .is_err()
+    );
+    let mut tampered = serde_json::to_value(&approved_route).unwrap();
+    tampered["route"] = serde_json::json!("127.0.0.2:8200");
+    let tampered = serde_json::from_value::<DelegatedRoute>(tampered).unwrap();
+    assert!(tampered.review(member_tls.id(), now).is_err());
+    let mut fresh_ticket = serde_json::to_value(&approved_route).unwrap();
+    fresh_ticket["ticket"] = serde_json::json!(Uuid::new_v4());
+    assert!(
+        serde_json::from_value::<DelegatedRoute>(fresh_ticket)
+            .unwrap()
+            .review(member_tls.id(), now)
+            .is_err()
+    );
+    let stop = CancellationToken::new();
+    let task = tokio::spawn({
+        let (endpoint, b, stop) = (endpoint.clone(), b.clone(), stop.clone());
+        async move { FriendInviteEndpoint::serve(&endpoint, listener, b, stop).await }
+    });
+    let local = Arc::new(Memory::default());
+    assert!(
+        FriendBook::join_delegated(
+            &attacker_tls,
+            local.clone(),
+            bundle.clone(),
+            &routes,
+            ticket
+        )
+        .await
+        .is_err()
+    );
+    // Mismatched, separately valid exact grant. The same valid device and ticket
+    // are insufficient when the remote approved a different signed capsule.
+    assert!(
+        FriendBook::join_delegated(&member_tls, local.clone(), swapped, &routes, ticket)
+            .await
+            .is_err()
+    );
+    assert!(FriendStore::load(local.as_ref()).unwrap().is_none());
+    assert!(!b.may_receive_from(owner.id(), member_tls.id()).unwrap());
+    let member =
+        FriendBook::join_delegated(&member_tls, local.clone(), bundle.clone(), &routes, ticket)
+            .await
+            .unwrap();
+    assert!(member.may_receive_from(friend.id(), endpoint.id()).unwrap());
+    assert!(b.may_receive_from(owner.id(), member_tls.id()).unwrap());
+    assert!(FriendBook::open_delegated(&attacker_tls, local.clone()).is_err());
+    assert!(FriendBook::open_delegated(&member_tls, local.clone()).is_ok());
+    assert!(
+        member
+            .delegate_contact(&owner, friend.id(), attacker_tls.id(), now)
+            .is_err()
+    );
+    let stored = FriendStore::load(local.as_ref()).unwrap().unwrap();
+    let private = SecretStore::load(&person_store).unwrap().unwrap();
+    assert!(
+        !stored
+            .windows(private.len())
+            .any(|candidate| candidate == private)
+    );
+    assert!(
+        FriendBook::join_delegated(&member_tls, local, bundle.clone(), &routes, ticket)
+            .await
+            .is_err()
+    );
+
+    let member_dest = tempfile::tempdir().unwrap();
+    let friend_dest = tempfile::tempdir().unwrap();
+    let member_window = FriendFileWindow::open(
+        member_tls.clone(),
+        Arc::new(member),
+        member_dest.path(),
+        Ipv4Addr::LOCALHOST,
+    )
+    .await
+    .unwrap();
+    let friend_window = FriendFileWindow::open(
+        endpoint.clone(),
+        b.clone(),
+        friend_dest.path(),
+        Ipv4Addr::LOCALHOST,
+    )
+    .await
+    .unwrap();
+    let payload = vec![44u8; 21_019];
+    let input = friend_dest.path().join("delegation-received.bin");
+    std::fs::write(&input, &payload).unwrap();
+    let receive = friend_window
+        .offer(
+            owner.id(),
+            member_tls.id(),
+            input.clone(),
+            member_window.route(),
+        )
+        .await
+        .unwrap();
+    assert!(friend_window.send(receive).await.is_err());
+    member_window
+        .accept(endpoint.id(), receive, friend_window.route().offers)
+        .await
+        .unwrap();
+    let receipt = friend_window.send(receive).await.unwrap();
+    assert_eq!(receipt.state, State::Completed);
+    assert_eq!(
+        member_window.receipts(),
+        [(endpoint.id(), receive, receipt)]
+    );
+    assert_eq!(
+        std::fs::read(member_dest.path().join("delegation-received.bin")).unwrap(),
+        payload
+    );
+
+    let back = member_dest.path().join("delegation-sent.bin");
+    std::fs::write(&back, &payload).unwrap();
+    let returned = member_window
+        .offer(
+            friend.id(),
+            endpoint.id(),
+            back.clone(),
+            friend_window.route(),
+        )
+        .await
+        .unwrap();
+    friend_window
+        .accept(member_tls.id(), returned, member_window.route().offers)
+        .await
+        .unwrap();
+    let forwarded = member_window.send(returned).await.unwrap();
+    assert_eq!(
+        friend_window.receipts(),
+        [(member_tls.id(), returned, forwarded)]
+    );
+    assert_eq!(
+        std::fs::read(friend_dest.path().join("delegation-sent.bin")).unwrap(),
+        payload
+    );
+
+    let pending = member_window
+        .offer(
+            friend.id(),
+            endpoint.id(),
+            back.clone(),
+            friend_window.route(),
+        )
+        .await
+        .unwrap();
+    friend_window
+        .accept(member_tls.id(), pending, member_window.route().offers)
+        .await
+        .unwrap();
+    assert!(member_window.can_release(pending).unwrap());
+    b.revoke_device(owner.id(), member_tls.id()).unwrap();
+    let pending_count = friend_window.receipts().len();
+    assert!(member_window.send(pending).await.is_err());
+    assert_eq!(friend_window.receipts().len(), pending_count);
+    assert!(
+        member_window
+            .offer(friend.id(), endpoint.id(), back, friend_window.route())
+            .await
+            .is_err()
+    );
+    assert!(!b.may_receive_from(owner.id(), member_tls.id()).unwrap());
+    stop.cancel();
+    task.await.unwrap().unwrap();
+}

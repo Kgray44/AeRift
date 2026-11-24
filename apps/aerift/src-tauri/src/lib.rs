@@ -39,6 +39,8 @@ mod windows;
 #[cfg(windows)]
 mod windows_friends;
 #[cfg(windows)]
+mod windows_friends_member;
+#[cfg(windows)]
 mod windows_friends_files;
 #[cfg(windows)]
 mod windows_storage;
@@ -136,6 +138,8 @@ pub fn run() {
         .manage(private_remote_app::RemoteRuntime::default())
         .manage(windows_friends::WindowsFriends::default())
         .manage(explorer_receive::ExplorerReceiveRuntime::default())
+        .manage(windows_friends_member::MemberRuntime::default())
+        .manage(windows_friends_member::ReviewRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             private_remote_app::windows_remote_mode,
@@ -146,8 +150,11 @@ pub fn run() {
             private_remote_app::private_remote_action,
             private_remote_app::windows_redeem_remote,
             private_remote_app::windows_send_remote_file,
+            #[cfg(feature = "private-remote-folder-qualification")]
+            private_remote_app::folder_mode::windows_remote_folder_command,
             windows::watch_app,
             windows_friends::friends_setup_view,
+            windows_friends_member::friends_member,
             windows_friends::friends_setup_card,
             windows_friends::friends_setup_issue,
             windows_friends::friends_setup_review,
