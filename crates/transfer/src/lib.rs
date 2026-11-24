@@ -1,6 +1,7 @@
 //! AeRift v1 file transport on a peer-authenticated HTTP/1.1 stream.
 
 pub mod ambient;
+pub mod ambient_camera;
 mod client;
 mod model;
 mod receiver;

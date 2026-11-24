@@ -16,3 +16,5 @@ A4 can consume a frozen capture through the process-owned runtime after purpose-
 
 ### Qualification
 Run the workspace Rust suite; the host's Linux cross-check is limited where an MSVC C/assembly toolchain is unavailable. Hosted Windows compilation/installer checks do not prove real camera/Explorer interactions. Before promoting, qualify on an authorized physical Windows machine: dual Explorer tabs, desktop and multiple nested selections, switching foreground mid-request, same-count selection changes, virtual/cloud/elevated contexts, manual pause, secure desktop and session lock/unlock, refusal without altering focus/selection, and original local manual and gesture paths. No real files or camera frames are uploaded as CI artifacts.
+
+The staged [native camera lifecycle](ambient-native-camera.md) describes the next A1 seam. It is separate from the shipped focused camera path.
