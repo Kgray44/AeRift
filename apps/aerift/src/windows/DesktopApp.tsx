@@ -12,6 +12,7 @@ import { DesktopHome } from "./DesktopHome";
 import { DesktopSettings } from "./DesktopSettings";
 import { DesktopWorkspace } from "./DesktopWorkspace";
 import { GestureCamera } from "./GestureCamera";
+import { useDesktopContentEnter } from "./desktopContentMotion";
 import { desktopSettings, watchFileSelection, type ReceiveFolder } from "./nativeAppPort";
 import { readDesktopPreferences, settingsKey, type DesktopPreferences } from "./preferences";
 import "./desktop.css";
@@ -39,6 +40,7 @@ export function DesktopApp() {
     ambient: ambientAvailable ? "available" : "unsupported", camera: "unknown",
   });
   const route = navigation.primary.some(item => item.id === settings.route) ? settings.route : "home";
+  useDesktopContentEnter(route, surfaceRef, "orbit");
 
   useEffect(() => {
     try {

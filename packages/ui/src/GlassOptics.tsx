@@ -212,9 +212,16 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     let frame = 0, timer = 0, lastAdvanced = 0, phase = 0, deadline = 0, faulted = false;
     let atmosphere = atmosphereTarget();
     let output: ImageData | undefined;
-    const tag = (next: Set<HTMLElement>) => {
-      for (const element of marked) if (!next.has(element)) { delete element.dataset.aeLens; marked.delete(element); }
-      for (const element of next) if (!marked.has(element)) { element.dataset.aeLens = "sampled"; marked.add(element); }
+    const tag = (sampled: Set<HTMLElement>, local: Set<HTMLElement> = new Set()) => {
+      for (const element of marked) if (!sampled.has(element) && !local.has(element)) {
+        delete element.dataset.aeLens;
+        marked.delete(element);
+      }
+      for (const [elements, mode] of [[sampled, "sampled"], [local, "local"]] as const)
+        for (const element of elements) {
+          if (element.dataset.aeLens !== mode) element.dataset.aeLens = mode;
+          marked.add(element);
+        }
     };
     const clear = () => { delete shell.dataset.aeOptics; tag(new Set()); if (!canvas.hidden) canvas.hidden = true; };
     const paintFrame = (now: number) => {
@@ -241,16 +248,37 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       canvas.style.width = width + "px"; canvas.style.height = height + "px";
       const originX = bounds.left + left, originY = bounds.top + top;
       const elements = new Map<HTMLElement, Surface>();
+      const local = new Set<HTMLElement>();
+      const movingNodes = new Map<Element, boolean>();
+      const movingGeometry = (element: Element | null) => {
+        if (!element || !element.getAnimations) return false;
+        if (!movingNodes.has(element)) movingNodes.set(element, element.getAnimations().some(animation => {
+          const property = (animation as Partial<CSSTransition>).transitionProperty;
+          return (!property || /^(transform|scale|translate|opacity|clip-path)$/.test(property)) &&
+            (animation.pending || animation.playState === "running");
+        }));
+        return movingNodes.get(element);
+      };
       for (const element of shell.querySelectorAll<HTMLElement>(lensSelector)) {
-        if (elements.size >= 32) break;
+        if (elements.size + local.size >= 32) break;
         if (element.closest("dialog, .ae-popover, .ae-toast, .ios-dock, .ae-surface[data-material=overlay]")) continue;
         const bb = element.getBoundingClientRect();
         if (bb.width < 2 || bb.height < 2 || bb.right <= originX || bb.bottom <= originY
           || bb.left >= originX + width || bb.top >= originY + height) continue;
         const style = getComputedStyle(element);
         const fanButton = element.closest<HTMLElement>(".ae-orbit-choice");
-        if (style.visibility !== "visible" || style.display === "none" || +style.opacity === 0
-          || (fanButton && +getComputedStyle(fanButton).opacity < .98)) continue;
+        if (style.visibility !== "visible" || style.display === "none" || +style.opacity === 0) continue;
+        const movingContainer = element.closest("[data-ae-route-enter], .ae-workspace-view");
+        const interactive = element.matches(".ae-orbit-orb, .ae-spatial-glyph, .ae-button");
+        // Do not leave a reflected duplicate at a previous screen position.
+        // The local WebView material travels with the element until its final
+        // geometry can be sampled accurately by the shared fixed raster.
+        if (!reduced && (element.closest("[data-morphing='true']") ||
+          movingGeometry(movingContainer) || movingGeometry(fanButton) || (interactive && movingGeometry(element)))) {
+          local.add(element);
+          continue;
+        }
+        if (fanButton && +getComputedStyle(fanButton).opacity < .98) continue;
         const ordinaryCard = element.matches(".ae-panel, .ae-surface[data-material=content], .ae-surface[data-material=raised]");
         const corner = ordinaryCard ? appearance.radius : Number.parseFloat(style.borderTopLeftRadius);
         const kind = element.matches(".ae-file-slot, [data-ae-lens-role=orb], .ae-spatial-glyph") ? "stage" :
@@ -290,7 +318,9 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         shell.style.setProperty("--ae-lab-shadow-blur", `${4 + 5 * shadow}px`);
         shell.style.setProperty("--ae-lab-card-shadow", String(.37 * shadow));
         shell.style.setProperty("--ae-lab-control-shadow", String(.51 * shadow));
-        tag(new Set(elements.keys()));
+        shell.style.setProperty("--ae-lab-local-tint", String(appearance.opacity / 100));
+        shell.style.setProperty("--ae-lab-local-blur", `${appearance.softness * .70}px`);
+        tag(new Set(elements.keys()), local);
         if (canvas.hidden) canvas.hidden = false;
         shell.dataset.aeOptics = "ready";
         // Schedule only an in-flight interaction/transition, never an idle loop.
@@ -327,6 +357,11 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       } else queue();
     };
     const onScroll = () => queue();
+    const geometryEvent = (event: Event) => {
+      if (event.target instanceof Element && event.target.matches(
+        "[data-ae-route-enter], .ae-workspace-view, .ae-orbit-choice, .ae-orbit-orb, .ae-spatial-glyph, .ae-button")) settle();
+    };
+    const geometryEvents = ["animationstart", "animationend", "animationcancel", "transitionrun", "transitionend", "transitioncancel"];
     const changes = new MutationObserver(records => {
       if (records.some(record => record.attributeName === "data-open" || record.attributeName === "data-morphing")) animate();
       else settle();
@@ -334,7 +369,7 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     changes.observe(theme, { attributes: true, attributeFilter: ["data-ae-theme", "data-appearance", "data-contrast", "data-transparency", "data-motion"] });
     changes.observe(shell, { childList: true, subtree: true, attributes: true,
       attributeFilter: ["aria-current", "aria-disabled", "data-destination", "data-selected", "data-open", "data-morphing", "hidden", "disabled",
-        "data-experience-phase", "data-experience-progress", "data-experience-x", "data-experience-y"] });
+        "data-ae-route-enter", "data-experience-phase", "data-experience-progress", "data-experience-x", "data-experience-y"] });
     const resize = typeof ResizeObserver !== "undefined" ? new ResizeObserver(settle) : undefined;
     resize?.observe(shell);
     for (const mq of media) {
@@ -352,6 +387,7 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     shell.addEventListener("focusin", animate);
     shell.addEventListener("pointerover", opticalHover, { passive: true });
     shell.addEventListener("pointerout", opticalHover, { passive: true });
+    for (const name of geometryEvents) shell.addEventListener(name, geometryEvent, true);
     deadline = performance.now() + 840;
     queue();
     return () => {

@@ -46,27 +46,46 @@ export function transitionAppearance(change: () => void, motion: Reduction) {
     document.dispatchEvent(new Event(appearanceCommitEvent));
   };
   const root = document.documentElement;
-  if (motion === "reduce" || document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+  const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+  if (motion === "reduce" || document.hidden || preference.matches ||
     !document.startViewTransition) {
     delete root.dataset.aeAppearanceTransition;
     commit();
     return;
   }
+  const surface = root.querySelector<HTMLElement>(".ae-theme");
+  if (surface) {
+    const style = getComputedStyle(surface);
+    root.style.setProperty("--ae-appearance-duration", style.getPropertyValue("--ae-motion-overlay"));
+    root.style.setProperty("--ae-appearance-ease", style.getPropertyValue("--ae-motion-out"));
+  }
   root.dataset.aeAppearanceTransition = "";
+  let active: ViewTransition;
   try {
-    transition = document.startViewTransition(commit);
+    active = document.startViewTransition(commit);
+    transition = active;
   } catch {
     delete root.dataset.aeAppearanceTransition;
     commit();
     return;
   }
-  void transition.ready.catch(() => {});
+  const skipIfSuppressed = () => {
+    if (document.hidden || preference.matches || surface?.dataset.motion === "reduce") active.skipTransition();
+  };
+  const observer = typeof MutationObserver === "function" && surface ? new MutationObserver(skipIfSuppressed) : undefined;
+  if (surface) observer?.observe(surface, { attributes: true, attributeFilter: ["data-motion"] });
+  preference.addEventListener("change", skipIfSuppressed);
+  document.addEventListener("visibilitychange", skipIfSuppressed);
+  void active.ready.catch(() => {});
   const finish = () => {
+    observer?.disconnect();
+    preference.removeEventListener("change", skipIfSuppressed);
+    document.removeEventListener("visibilitychange", skipIfSuppressed);
     if (requested !== revision) return;
     transition = undefined;
     delete root.dataset.aeAppearanceTransition;
   };
-  void transition.finished.then(finish, finish);
+  void active.finished.then(finish, finish);
 }
 
 function systemAppearance() {

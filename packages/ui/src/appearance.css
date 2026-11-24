@@ -70,9 +70,11 @@
 }
 :root[data-ae-appearance-transition]::view-transition-new(root) {
   mix-blend-mode: normal;
-  animation: ae-appearance-reveal 240ms cubic-bezier(.28, .65, .35, 1) both;
+  animation: ae-appearance-reveal var(--ae-appearance-duration, 240ms) var(--ae-appearance-ease, ease-out) both;
 }
 @keyframes ae-appearance-reveal {
   from { clip-path: inset(0 0 100% 0); }
   to { clip-path: inset(0); }
 }
+
+:root[data-ae-appearance-transition]::view-transition { pointer-events: none; }

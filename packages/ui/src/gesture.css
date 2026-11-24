@@ -39,7 +39,7 @@
 
 [data-ae-theme="glass"] .ae-camera-indicator:is([data-state="detected"], [data-state="held"]) .ae-camera-light {
   box-shadow: 0 0 .6rem var(--ae-camera-signal);
-  animation: ae-camera-signal var(--ae-duration-expressive, 460ms) var(--ae-ease) both;
+  animation: ae-camera-signal var(--ae-motion-expressive) var(--ae-ease) both;
 }
 
 @keyframes ae-camera-signal {

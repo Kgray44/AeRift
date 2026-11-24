@@ -110,8 +110,8 @@ export function RiftExperience({ transfer, deviceName, action, error, objectId, 
       data-direction={transfer.direction} data-arrived={phase === "delivered"}>
       <div className="ae-rift-inline-track">
         <span className="ae-rift-inline-fill" style={{ transform: `scaleX(${phase === "delivered" ? 1 : ratio})` }} />
-        <span className="ae-rift-inline-object" style={{ insetInlineStart: `${phase === "delivered" ? 100 : ratio * 100}%` }}>
-          <FileGlyph name={transfer.file.name} />
+        <span className="ae-rift-inline-carrier" style={{ "--ae-rift-travel": `${phase === "delivered" ? 100 : ratio * 100}%` } as CSSProperties}>
+          <span className="ae-rift-inline-object"><FileGlyph name={transfer.file.name} /></span>
         </span>
       </div>
     </div>}

@@ -4,7 +4,6 @@
   --ae-radius-panel: 2rem;
   --ae-size-title: 1.3125rem;
   --ae-size-display: clamp(2.5rem, 6vw, 4.625rem);
-  --ae-press-scale: .955;
   --ae-blur-chrome: 2px;
   --ae-blur-overlay: 3px;
   --ae-glass-canvas: #040508;
@@ -439,10 +438,8 @@
     border-radius: 1.95rem;
     padding-block-start: .5rem;
     translate: 0 var(--ae-sheet-swipe, 0px);
-    transition: translate var(--ae-duration-enter) var(--ae-ease);
   }
   .ae-theme[data-ae-theme="glass"] .ae-sheet[data-dragging] { transition: none; }
-  .ae-theme[data-ae-theme="glass"] .ae-sheet[open] { animation-name: ae-sheet-rise; }
 
   .ae-theme[data-ae-theme="glass"] .ae-sheet-grip {
     display: grid;
@@ -461,10 +458,6 @@
     background: var(--ae-control-edge);
   }
 }
-@keyframes ae-sheet-rise {
-  from { opacity: 0; transform: translateY(calc(var(--ae-enter-distance) * 3)); }
-}
-
 .ae-theme[data-ae-theme="glass"][data-motion="reduce"] .ae-sheet { translate: none; }
 @media (prefers-reduced-motion: reduce) {
   .ae-theme[data-ae-theme="glass"] .ae-sheet { translate: none; }
@@ -525,7 +518,7 @@
 }
 
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens] {
+  .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens="sampled"] {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -533,9 +526,9 @@
   backdrop-filter: none;
 }
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens]::before,
+  .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens="sampled"]::before,
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens]::after {
+  .ae-shell[data-ae-optics="ready"] .ae-file-slot[data-ae-lens="sampled"]::after {
   display: none;
 }
 
@@ -548,7 +541,7 @@
     radial-gradient(ellipse at 96% 100%, var(--ae-optical-cool), transparent 32%);
 }
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] .ae-workspace-nav[data-ae-lens]::before {
+  .ae-shell[data-ae-optics="ready"] .ae-workspace-nav[data-ae-lens="sampled"]::before {
   background:
     radial-gradient(ellipse at 11% 0%, var(--ae-optical-rim), transparent 41%),
     radial-gradient(ellipse at 93% 100%, var(--ae-optical-cool), transparent 49%),
@@ -561,7 +554,7 @@
     display: none;
   }
   .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-    .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens] {
+    .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-file-slot, .ae-button, .ae-activity-empty)[data-ae-lens="sampled"] {
     background: var(--ae-material-solid, var(--ae-content));
     border-color: var(--ae-display-edge, var(--ae-edge));
   }
@@ -695,4 +688,22 @@
   .ae-theme[data-ae-theme="glass"] .ae-orbit[data-open="true"] .ae-orbit-veil {
     background: var(--ae-base); -webkit-backdrop-filter: none; backdrop-filter: none;
   }
+}
+
+
+/* While geometry moves, its native decoration is attached to the shape.
+   This is a thin moving fallback, not a second opaque layer on the raster. */
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] :is(.ae-surface, .ae-button, .ae-file-slot)[data-ae-lens="local"] {
+  background:
+    radial-gradient(ellipse at 91% 5%, color-mix(in srgb, var(--ae-optical-rim) 45%, transparent), transparent 42%),
+    rgb(249 253 255 / var(--ae-lab-local-tint, .11));
+  border-color: color-mix(in srgb, var(--ae-optical-rim) 44%, transparent);
+  -webkit-backdrop-filter: blur(var(--ae-lab-local-blur, 3.5px));
+  backdrop-filter: blur(var(--ae-lab-local-blur, 3.5px));
+}
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"]
+  .ae-button[data-ae-lens="local"][data-variant="primary"] {
+  color: var(--ae-text);
+  border-color: var(--ae-accent);
 }

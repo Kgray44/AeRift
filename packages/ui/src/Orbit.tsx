@@ -191,9 +191,11 @@ export function Orbit<Id extends string>({
     return () => document.removeEventListener("keydown", activate);
   }, [open, presentation, shortcut]);
 
-  function select(id: Id, button: HTMLButtonElement) {
+  function select(id: Id, button: HTMLButtonElement, spatialPointer = false) {
     if (id === active) return;
-    const orb = radial ? button.querySelector<HTMLElement>(".ae-orbit-orb") : null;
+    // Pointer users retain the spatial morph. Keyboard and assistive
+    // activation use the ordinary route entry so the new focus isn't clipped.
+    const orb = radial && spatialPointer ? button.querySelector<HTMLElement>(".ae-orbit-orb") : null;
     const source = orb ? { bounds: orb.getBoundingClientRect(), glyph: orb.querySelector("svg") } : undefined;
     pending.current = { id, source };
     setOpen(false);
@@ -262,7 +264,7 @@ export function Orbit<Id extends string>({
           ref={element => { names.current[index] = element; }}
           onPointerMove={reflect}
           onKeyDown={event => navigateKey(event, index)}
-          onClick={event => select(id, event.currentTarget)}
+          onClick={event => select(id, event.currentTarget, event.detail > 0)}
           aria-label={status?.[id] ? `${label}, ${status[id]}` : label}>
           <span className="ae-orbit-orb ae-surface" data-material="chrome" data-ae-lens-role="orb"><DestinationIcon id={icon ?? id} />
             {status?.[id] && <span className="ae-orbit-indicator" aria-hidden="true" />}</span>

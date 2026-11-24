@@ -8,8 +8,10 @@ export function OrbitSurface({ children, className = "", ...props }: ComponentPr
   </section>;
 }
 
-const morphDuration = 460;
-const compressionFraction = 85 / morphDuration;
+export function motionMilliseconds(style: string, fallback: number) {
+  const match = style.trim().match(/^(\d+(?:\.\d+)?|\.\d+)(ms|s)$/);
+  return match ? Number(match[1]) * (match[2] === "s" ? 1000 : 1) : fallback;
+}
 
 function inset(from: DOMRect, to: DOMRect) {
   return [
@@ -32,6 +34,9 @@ export function useOrbitMorph() {
 
     const source = origin.bounds;
     const skinStyle = getComputedStyle(skin);
+    const morphDuration = motionMilliseconds(skinStyle.getPropertyValue("--ae-motion-orbit-morph"), 460);
+    if (!morphDuration) return false;
+    const compressionFraction = .185;
     const radius = skinStyle.borderTopLeftRadius;
     const unfold = skinStyle.getPropertyValue("--ae-ease").trim() || "ease-out";
     const spring = skinStyle.getPropertyValue("--ae-motion-spring").trim() || unfold;
@@ -43,11 +48,12 @@ export function useOrbitMorph() {
     const motion = { duration: morphDuration, fill: "both" } as const;
     const compress = spring;
 
+    let glyphMotion: Animation | undefined;
     const glyph = origin.glyph?.cloneNode(true) as SVGSVGElement | undefined;
     if (glyph) {
       glyph.classList.add("ae-orbit-morph-glyph");
       skin.append(glyph);
-      glyph.animate([
+      glyphMotion = glyph.animate([
         { opacity: 1 },
         { opacity: 1, offset: .23 },
         { opacity: 0, offset: .47 },
@@ -93,11 +99,13 @@ export function useOrbitMorph() {
       position.cancel();
       reveal.cancel();
       settle.cancel();
+      glyphMotion?.cancel();
       glyph?.remove();
       delete surface.dataset.morphing;
       window.removeEventListener("resize", resize);
       window.visualViewport?.removeEventListener("resize", resize);
-      observer.disconnect();
+      observer?.disconnect();
+      document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("scroll", finish, true);
       onFinish();
     };
@@ -109,8 +117,10 @@ export function useOrbitMorph() {
           bounds.left !== target.left || bounds.top !== target.top) finish();
     }
 
-    const observer = new ResizeObserver(resize);
-    observer.observe(surface);
+    const visibility = () => { if (document.hidden) finish(); };
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : undefined;
+    observer?.observe(surface);
+    document.addEventListener("visibilitychange", visibility);
     window.addEventListener("resize", resize);
     window.visualViewport?.addEventListener("resize", resize);
     window.addEventListener("scroll", finish, { passive: true, capture: true });

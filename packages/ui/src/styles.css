@@ -241,7 +241,7 @@
   background: var(--ae-accent);
   border-radius: inherit;
   transform-origin: left center;
-  transition: transform var(--ae-duration-progress) var(--ae-ease);
+  transition: transform var(--ae-motion-progress) var(--ae-motion-travel);
 }
 [dir="rtl"] .ae-progress > span { transform-origin: right center; }
 
@@ -259,7 +259,6 @@
   padding: var(--ae-space-5);
   border-radius: var(--ae-radius-panel);
 }
-.ae-sheet[open], .ae-popover:popover-open { animation: ae-enter var(--ae-duration-enter) var(--ae-ease) both; }
 .ae-sheet::backdrop { background: var(--ae-veil); }
 .ae-sheet-header { justify-content: space-between; margin-block-end: var(--ae-space-4); }
 .ae-settings { display: grid; gap: var(--ae-space-2); }

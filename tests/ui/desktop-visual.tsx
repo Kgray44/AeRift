@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { AppSnapshot, FileSelection } from "@aerift/app-contract";
+import type { AppSnapshot, FileSelection, TransferRequest } from "@aerift/app-contract";
+import { installMotionFixture, respondToMotionReceipt } from "./motion-fixture";
 import { DesktopApp } from "../../apps/aerift/src/windows/DesktopApp";
 import "@aerift/ui/styles.css";
 import "../../apps/aerift/public/appearance-bootstrap.css";
@@ -18,20 +19,41 @@ localStorage.setItem("aerift.settings.v1", JSON.stringify({ route, experience: s
 const first = { id: "iphone", name: "Mira’s iPhone", paired: true, online: true, platform: "ios" } as const;
 const second = { id: "laptop", name: "Travel laptop", paired: true, online: false, platform: "windows" } as const;
 const file: FileSelection = { selectionId: "visual-fixture", name: "Harbor survey.pdf", sizeBytes: 36812 };
-const snapshot: AppSnapshot = { version: 1, devices: state === "empty" ? [] : [first, second], pendingPairing: [],
-  transfers: state === "empty" ? [] : [
+const motionFixture = query.get("motionFixture") === "1";
+let snapshot: AppSnapshot = { version: 1, devices: state === "empty" ? [] : [first, second], pendingPairing: [],
+  transfers: state === "empty" || motionFixture ? [] : [
     { id: "current", deviceId: first.id, direction: "outgoing", state: "transferring", bytesTransferred: 15273, file },
     { id: "received", deviceId: first.id, direction: "incoming", state: "completed", bytesTransferred: 211400,
       file: { name: "Harbor aerial.heic", sizeBytes: 211400 } },
     { id: "stopped", deviceId: second.id, direction: "outgoing", state: "cancelled", bytesTransferred: 0,
       file: { name: "North coast notes.txt", sizeBytes: 4722 } },
   ] };
+const subscribers = new Map<number, number>();
+function emit(id: number, value: AppSnapshot) {
+  const index = subscribers.get(id);
+  if (index === undefined) return;
+  (window as Window & { __TAURI_INTERNALS__?: { runCallback(id: number, value: unknown): void } }).__TAURI_INTERNALS__?.runCallback(id, { index, message: value });
+  subscribers.set(id, index + 1);
+}
+function broadcast(value: AppSnapshot) {
+  snapshot = value;
+  for (const id of subscribers.keys()) emit(id, value);
+}
+if (motionFixture) installMotionFixture(first.id, () => snapshot, broadcast);
 mockIPC((cmd, args) => {
   if (cmd === "watch_app") {
     if (state === "offline") throw { code: "connection_failed" };
     const channel = (args as { updates: { id: number } }).updates;
-    (window as Window & { __TAURI_INTERNALS__?: { runCallback(id: number, value: unknown): void } }).__TAURI_INTERNALS__?.runCallback(channel.id, { index: 0, message: snapshot });
-    return "visual-fixture-watch";
+    subscribers.set(channel.id, 0);
+    emit(channel.id, snapshot);
+    return String(channel.id);
+  }
+  if (cmd === "unwatch_app") subscribers.delete(Number((args as { subscriptionId: string }).subscriptionId));
+  if (cmd === "transfer_app_file" && motionFixture) {
+    const receipt = respondToMotionReceipt((args as { request: TransferRequest }).request, snapshot);
+    if (!receipt) throw { code: "invalid_request" };
+    broadcast({ ...snapshot, transfers: [receipt, ...snapshot.transfers.filter(item => item.id !== receipt.id)] });
+    return receipt;
   }
   if (cmd === "get_receive_folder") return { active: "Downloads", next: null };
   if (cmd === "watch_desktop_ambient") return true;
