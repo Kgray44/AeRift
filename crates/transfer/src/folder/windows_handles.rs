@@ -864,15 +864,17 @@ mod tests {
         fs::write(root.join("outside/junction-proof"), b"actual junction").unwrap();
         // cmd.exe does not use CommandLineToArgvW quoting. Keep this
         // command a fixed literal and set cwd as a separate API parameter.
-        let status = Command::new("cmd.exe")
+        let output = Command::new("cmd.exe")
             .args(["/D", "/C"])
             .raw_arg(r"mklink /J destination\Jump outside")
             .current_dir(root)
-            .status()
+            .output()
             .unwrap();
         assert!(
-            status.success(),
-            "Windows hosted runner must support a real junction"
+            output.status.success(),
+            "Windows hosted runner must support a real junction: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         );
         assert_eq!(
             fs::read(junction.join("junction-proof")).unwrap(),
@@ -907,18 +909,20 @@ mod tests {
         );
         drop(ledger);
         let binary = std::env::current_exe().unwrap();
-        let status = Command::new(binary)
+        let output = Command::new(binary)
             .args([
                 "--exact",
                 "folder::windows_handles::tests::ntfs_folder_child_checks_spent_receipt",
                 "--nocapture",
             ])
             .env("AERIFT_SYNTHETIC_FOLDER_LEDGER", root.join("ledger"))
-            .status()
+            .output()
             .unwrap();
         assert!(
-            status.success(),
-            "new process did not verify the spent receipt"
+            output.status.success(),
+            "new process did not verify the spent receipt: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         );
         let reopened = trusted.open_child("ledger", false).unwrap();
         assert!(reopened.reserve("synthetic-receipt-v1").is_err());
