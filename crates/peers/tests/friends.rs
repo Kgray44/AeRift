@@ -314,100 +314,147 @@ fn separate_book_instances_cannot_double_award_after_reading_same_revision() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn private_mtls_award_uses_certificate_not_caller_claim_and_withdraws_other_device() {
+async fn friends_offer_fanout_retains_real_recipient_consent_and_withdrawal() {
     use aerift_peers::{
-        FriendAuthority, FriendClaim, FriendDecision, FriendOfferEndpoint, Identity,
+        FriendControlObject, FriendDecision, FriendObjectKind, FriendOfferEndpoint, Identity,
     };
     use tokio::net::TcpListener;
     use tokio_util::sync::CancellationToken;
-
     let alice = FriendAuthority::load_or_create(&Memory::default()).unwrap();
     let bob = FriendAuthority::load_or_create(&Memory::default()).unwrap();
-    let a = Identity::load_or_create(&Memory::default()).unwrap();
-    let b = Identity::load_or_create(&Memory::default()).unwrap();
-    let c = Identity::load_or_create(&Memory::default()).unwrap();
+    let a = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let b = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let c = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
     let unrelated = Identity::load_or_create(&Memory::default()).unwrap();
-    let issuer = a.id();
-    let invite = alice.invite(issuer, bob.id(), b.id(), 100).unwrap();
-    let accept = bob.accept(&invite, issuer, b.id(), 101).unwrap();
-    let approved = alice.confirm(&invite, &accept, b.id(), 102).unwrap();
-    let verified =
-        FriendRecord::verify(&invite, &accept, &approved, alice.id(), issuer, b.id(), 103).unwrap();
-    let relation = verified.relationship();
-    let book = Arc::new(FriendBook::open(alice.id(), Arc::new(Memory::default())).unwrap());
-    book.add(verified, 103).unwrap();
-    book.enroll(bob.enroll(relation, c.id(), 104).unwrap(), c.id(), 105)
+    let (ap, bp, cp) = (a.id(), b.id(), c.id());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let invitation = alice.invite(ap, bob.id(), bp, now).unwrap();
+    let consent = bob.accept(&invitation, ap, bp, now).unwrap();
+    let approval = alice.confirm(&invitation, &consent, bp, now).unwrap();
+    let av =
+        FriendRecord::verify(&invitation, &consent, &approval, alice.id(), ap, bp, now).unwrap();
+    let bv = FriendRecord::verify(&invitation, &consent, &approval, bob.id(), bp, ap, now).unwrap();
+    let relationship = av.relationship();
+    let book_a = Arc::new(FriendBook::open(alice.id(), Arc::new(Memory::default())).unwrap());
+    let b_store = Arc::new(Memory::default());
+    let book_b = Arc::new(FriendBook::open(bob.id(), b_store.clone()).unwrap());
+    let book_c = Arc::new(FriendBook::open(bob.id(), Arc::new(Memory::default())).unwrap());
+    book_a.add(av, now).unwrap();
+    book_b.add(bv.clone(), now).unwrap();
+    book_c.add(bv, now).unwrap();
+    book_a
+        .enroll(bob.enroll(relationship, cp, now).unwrap(), cp, now)
         .unwrap();
-    let intent = Uuid::new_v4();
-    let digest = [23; 32];
-    book.offer(intent, bob.id(), None, digest).unwrap();
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let routes = [listener.local_addr().unwrap()];
     let cancel = CancellationToken::new();
-    let stop = cancel.clone();
-    let server = {
-        let book = book.clone();
-        tokio::spawn(async move { FriendOfferEndpoint::serve(&a, listener, book, stop).await })
-    };
-
+    let mut servers = Vec::new();
+    let mut routes = Vec::new();
+    for (identity, book) in [(&a, &book_a), (&b, &book_b), (&c, &book_c)] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        routes.push([listener.local_addr().unwrap()]);
+        let (identity, book, stop) = (identity.clone(), book.clone(), cancel.clone());
+        servers.push(tokio::spawn(async move {
+            FriendOfferEndpoint::serve(&identity, listener, book, stop).await
+        }));
+    }
+    let intent = Uuid::new_v4();
+    let hash = [22; 32];
+    book_a.offer(intent, bob.id(), None, hash).unwrap();
+    book_a
+        .prepare_fanout(
+            intent,
+            FriendControlObject::new(FriendObjectKind::File, "fixture.bin".into(), 900, now + 350)
+                .unwrap(),
+            now,
+        )
+        .unwrap();
     assert!(
-        FriendOfferEndpoint::decision(&unrelated, &routes, issuer, intent, digest)
+        FriendOfferEndpoint::deliver(&unrelated, &book_a, intent, bp, &routes[1], now)
+            .await
+            .is_err()
+    );
+    assert!(book_b.incoming(now).unwrap().is_empty());
+    book_c.set_receive_permission(alice.id(), false).unwrap();
+    assert!(
+        FriendOfferEndpoint::deliver(&a, &book_a, intent, cp, &routes[2], now)
+            .await
+            .is_err()
+    );
+    book_c.set_receive_permission(alice.id(), true).unwrap();
+    assert!(
+        FriendOfferEndpoint::deliver(&a, &book_a, intent, bp, &routes[2], now)
             .await
             .is_err()
     );
     assert!(
-        FriendOfferEndpoint::accept(&unrelated, &routes, issuer, intent, digest)
+        FriendOfferEndpoint::accept_received(&b, &book_b, &routes[0], ap, intent, now)
             .await
             .is_err()
     );
-    assert!(
-        FriendOfferEndpoint::accept(&b, &routes, issuer, intent, [22; 32])
-            .await
-            .is_err()
+    assert_eq!(book_a.winner(intent).unwrap(), None);
+    let (r1, r2) = tokio::join!(
+        FriendOfferEndpoint::deliver(&a, &book_a, intent, bp, &routes[1], now),
+        FriendOfferEndpoint::deliver(&a, &book_a, intent, cp, &routes[2], now)
     );
+    r1.unwrap();
+    r2.unwrap();
+    FriendOfferEndpoint::deliver(&a, &book_a, intent, bp, &routes[1], now)
+        .await
+        .unwrap();
+    assert_eq!(book_a.winner(intent).unwrap(), None);
     assert_eq!(
-        FriendOfferEndpoint::decision(&b, &routes, issuer, intent, digest)
-            .await
-            .unwrap(),
+        book_b.incoming(now).unwrap().len(),
+        1,
+        "delivery retry is deduplicated"
+    );
+    assert_eq!(book_c.incoming(now).unwrap().len(), 1);
+    let reopened = FriendBook::open(bob.id(), b_store).unwrap();
+    assert_eq!(
+        reopened.incoming(now).unwrap()[0].decision(),
         FriendDecision::Open
     );
-    let (b_result, c_result) = tokio::join!(
-        FriendOfferEndpoint::accept(&b, &routes, issuer, intent, digest),
-        FriendOfferEndpoint::accept(&c, &routes, issuer, intent, digest)
+    let (first, second) = tokio::join!(
+        FriendOfferEndpoint::accept_received(&b, &book_b, &routes[0], ap, intent, now),
+        FriendOfferEndpoint::accept_received(&c, &book_c, &routes[0], ap, intent, now)
     );
-    assert_ne!(b_result.is_ok(), c_result.is_ok());
-    let (winner, loser) = if b_result.is_ok() { (&b, &c) } else { (&c, &b) };
+    assert_ne!(first.is_ok(), second.is_ok());
+    let (winner, win_book, loser, lose_book) = if first.is_ok() {
+        (&b, &book_b, &c, &book_c)
+    } else {
+        (&c, &book_c, &b, &book_b)
+    };
+    assert_eq!(book_a.winner(intent).unwrap(), Some(winner.id()));
     assert_eq!(
-        FriendOfferEndpoint::accept(winner, &routes, issuer, intent, digest)
+        FriendOfferEndpoint::accept_received(winner, win_book, &routes[0], ap, intent, now)
             .await
             .unwrap(),
-        FriendClaim::AlreadyAwarded
+        aerift_peers::FriendClaim::AlreadyAwarded
     );
     assert_eq!(
-        FriendOfferEndpoint::decision(loser, &routes, issuer, intent, digest)
+        FriendOfferEndpoint::refresh_received(loser, lose_book, &routes[0], ap, intent, now)
             .await
             .unwrap(),
         FriendDecision::Withdrawn
     );
     assert_eq!(
-        FriendOfferEndpoint::decision(winner, &routes, issuer, intent, digest)
-            .await
-            .unwrap(),
-        FriendDecision::Granted
+        lose_book.incoming(now).unwrap()[0].decision(),
+        FriendDecision::Withdrawn
     );
-    book.revoke_device(bob.id(), winner.id()).unwrap();
     assert!(
-        FriendOfferEndpoint::accept(winner, &routes, issuer, intent, digest)
+        FriendOfferEndpoint::accept_received(loser, lose_book, &routes[0], ap, intent, now)
             .await
             .is_err()
     );
-    assert_eq!(
-        FriendOfferEndpoint::decision(loser, &routes, issuer, intent, digest)
+    win_book.set_receive_permission(alice.id(), false).unwrap();
+    assert!(
+        FriendOfferEndpoint::accept_received(winner, win_book, &routes[0], ap, intent, now)
             .await
-            .unwrap(),
-        FriendDecision::Withdrawn
+            .is_err()
     );
     cancel.cancel();
-    server.await.unwrap().unwrap();
+    for server in servers {
+        server.await.unwrap().unwrap();
+    }
 }

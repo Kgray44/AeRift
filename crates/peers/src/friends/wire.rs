@@ -18,12 +18,13 @@ use uuid::{Uuid, Variant};
 
 use crate::{Identity, RemotePeerNode, network::pinned_endpoint};
 
-use super::{FriendBook, FriendClaim, FriendDecision};
+use super::{FriendBook, FriendClaim, FriendDecision, book::Delivery};
 
 const ALPN: &[u8] = b"aerift-friends-offer/1";
+const DELIVER: &str = "/friends/v1/deliver";
 const ACCEPT: &str = "/friends/v1/accept";
 const DECISION: &str = "/friends/v1/decision";
-const CONTROL_LIMIT: usize = 1024;
+const CONTROL_LIMIT: usize = 2048;
 const BUDGET: Duration = Duration::from_secs(10);
 
 pub struct FriendOfferEndpoint;
@@ -33,6 +34,7 @@ pub struct FriendOfferEndpoint;
 struct Control {
     id: Uuid,
     digest: [u8; 32],
+    ticket: Uuid,
 }
 
 impl FriendOfferEndpoint {
@@ -48,6 +50,7 @@ impl FriendOfferEndpoint {
         if !RemotePeerNode::supports_private_endpoint(bound) {
             return Err(ErrorCode::InvalidRequest.into());
         }
+        let local = identity.id();
         let mut config = identity.server_config()?;
         config.alpn_protocols = vec![ALPN.to_vec()];
         let tls = TlsAcceptor::from(Arc::new(config));
@@ -72,7 +75,7 @@ impl FriendOfferEndpoint {
                         let authenticated = PeerId::from_tls_leaf(leaf.as_ref());
                         let service = service_fn(|request| {
                             let book = book.clone();
-                            async move { Ok::<_, Infallible>(dispatch(request, authenticated, &book).await) }
+                            async move { Ok::<_, Infallible>(dispatch(request, authenticated, local, &book).await) }
                         });
                         let _ = hyper::server::conn::http1::Builder::new()
                             .timer(TokioTimer::new()).header_read_timeout(BUDGET)
@@ -86,42 +89,125 @@ impl FriendOfferEndpoint {
         Ok(())
     }
 
+    /// Contact only the exact, previously enrolled device at a route supplied
+    /// by the host. Repeat for eligible devices; delivery does not award it.
+    pub async fn deliver(
+        identity: &Identity,
+        book: &FriendBook,
+        id: Uuid,
+        device: PeerId,
+        routes: &[SocketAddr],
+        now: u64,
+    ) -> Result<(), TransferError> {
+        let notice = book.outgoing_delivery(id, device, now)?;
+        client(identity, routes, device, DELIVER, notice).await
+    }
+
+    /// Prompt action of this device only. A known offer in the private book
+    /// and a still-current friendship are required before it asks the sender.
+    pub async fn accept_received(
+        identity: &Identity,
+        book: &FriendBook,
+        routes: &[SocketAddr],
+        issuer: PeerId,
+        id: Uuid,
+        now: u64,
+    ) -> Result<FriendClaim, TransferError> {
+        let notice = book.store_consent_intent(issuer, identity.id(), id, now)?;
+        let accepted = Self::accept(
+            identity,
+            routes,
+            issuer,
+            id,
+            notice.digest(),
+            notice.ticket(),
+        )
+        .await?;
+        let now = wall_clock()?;
+        if book.update_decision(issuer, identity.id(), id, now, FriendDecision::Granted)?
+            != FriendDecision::Granted
+        {
+            return Err(ErrorCode::TransferRejected.into());
+        }
+        Ok(accepted)
+    }
+
+    /// Poll the pinned issuer when reachable. Does not automatically accept.
+    pub async fn refresh_received(
+        identity: &Identity,
+        book: &FriendBook,
+        routes: &[SocketAddr],
+        issuer: PeerId,
+        id: Uuid,
+        now: u64,
+    ) -> Result<FriendDecision, TransferError> {
+        let notice = book.incoming_exact(issuer, identity.id(), id, now)?;
+        let decision = Self::decision(
+            identity,
+            routes,
+            issuer,
+            id,
+            notice.digest(),
+            notice.ticket(),
+        )
+        .await?;
+        book.update_decision(issuer, identity.id(), id, wall_clock()?, decision)
+    }
+
     /// Client policy: call only for the deliberate acceptance of this exact
     /// offer on this device. Network retries by the same winner are safe.
-    pub async fn accept(
+    async fn accept(
         identity: &Identity,
         routes: &[SocketAddr],
         issuer: PeerId,
         id: Uuid,
         digest: [u8; 32],
+        ticket: Uuid,
     ) -> Result<FriendClaim, TransferError> {
-        client(identity, routes, issuer, ACCEPT, Control { id, digest }).await
+        client(
+            identity,
+            routes,
+            issuer,
+            ACCEPT,
+            Control { id, digest, ticket },
+        )
+        .await
     }
 
     /// Poll only a known offer from its authenticated issuer. A non-winner
     /// learns only that its own prompt is withdrawn, never which device won.
-    pub async fn decision(
+    async fn decision(
         identity: &Identity,
         routes: &[SocketAddr],
         issuer: PeerId,
         id: Uuid,
         digest: [u8; 32],
+        ticket: Uuid,
     ) -> Result<FriendDecision, TransferError> {
-        client(identity, routes, issuer, DECISION, Control { id, digest }).await
+        client(
+            identity,
+            routes,
+            issuer,
+            DECISION,
+            Control { id, digest, ticket },
+        )
+        .await
     }
 }
 
 async fn dispatch(
     request: Request<Incoming>,
     peer: PeerId,
+    local: PeerId,
     book: &FriendBook,
 ) -> Response<Full<Bytes>> {
     let fail = |code: ErrorCode| response::<()>(Err(code.into()));
     let accept = request.uri().path() == ACCEPT;
+    let deliver = request.uri().path() == DELIVER;
     if request.method() != Method::POST
         || request.version() != Version::HTTP_11
         || request.uri().query().is_some()
-        || (!accept && request.uri().path() != DECISION)
+        || (!deliver && !accept && request.uri().path() != DECISION)
     {
         return fail(ErrorCode::InvalidRequest);
     }
@@ -133,17 +219,37 @@ async fn dispatch(
     else {
         return fail(ErrorCode::InvalidRequest);
     };
-    let Ok(Control { id, digest }) = serde_json::from_slice(&data.to_bytes()) else {
+    if deliver {
+        let Ok(notice) = serde_json::from_slice::<Delivery>(&data.to_bytes()) else {
+            return fail(ErrorCode::InvalidRequest);
+        };
+        let now = match wall_clock() {
+            Ok(now) => now,
+            Err(error) => return response::<()>(Err(error)),
+        };
+        return response(book.receive_delivery(peer, local, notice, now));
+    }
+    let Ok(Control { id, digest, ticket }) = serde_json::from_slice(&data.to_bytes()) else {
         return fail(ErrorCode::InvalidRequest);
     };
     if id.get_version() != Some(uuid::Version::Random) || id.get_variant() != Variant::RFC4122 {
         return fail(ErrorCode::InvalidRequest);
     }
     if accept {
-        response(book.claim(id, peer, digest))
+        match wall_clock() {
+            Ok(now) => response(book.claim_at(id, peer, digest, Some(ticket), now)),
+            Err(error) => response::<()>(Err(error)),
+        }
     } else {
-        response(book.decision(id, peer, digest))
+        response(book.decision(id, peer, digest, ticket))
     }
+}
+
+fn wall_clock() -> Result<u64, TransferError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|time| time.as_secs())
+        .map_err(|_| ErrorCode::InternalError.into())
 }
 
 fn response<T: Serialize>(result: Result<T, TransferError>) -> Response<Full<Bytes>> {
@@ -170,7 +276,7 @@ async fn client<T: DeserializeOwned>(
     routes: &[SocketAddr],
     issuer: PeerId,
     path: &'static str,
-    control: Control,
+    control: impl Serialize,
 ) -> Result<T, TransferError> {
     if routes
         .iter()

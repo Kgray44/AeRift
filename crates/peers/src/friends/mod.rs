@@ -9,6 +9,9 @@ pub use authority::{
     DeviceEnrollment, FriendAcceptance, FriendApproval, FriendAuthority, FriendInvitation,
     FriendRecord, PersonId,
 };
-pub use book::{FriendBook, FriendClaim, FriendDecision, FriendStore};
+pub use book::{
+    FriendBook, FriendClaim, FriendControlObject, FriendDecision, FriendIncomingOffer,
+    FriendObjectKind, FriendStore,
+};
 
 pub use wire::FriendOfferEndpoint;

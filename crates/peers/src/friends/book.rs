@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use uuid::{Uuid, Variant, Version};
 
+#[path = "fanout.rs"]
+mod fanout;
+pub(super) use fanout::Delivery;
+pub use fanout::{FriendControlObject, FriendIncomingOffer, FriendObjectKind};
+
 const MAX_FRIENDS: usize = 256;
 const MAX_DEVICES: usize = 32;
 const MAX_OFFERS: usize = 1024;
@@ -45,6 +50,8 @@ struct Data {
     used: Vec<Uuid>,
     friends: Vec<Friend>,
     offers: Vec<Offer>,
+    #[serde(default)]
+    incoming: Vec<FriendIncomingOffer>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -65,6 +72,10 @@ struct Offer {
     winner: Option<PeerId>,
     started: bool,
     withdrawn: bool,
+    #[serde(default)]
+    presentation: Option<FriendControlObject>,
+    #[serde(default)]
+    delivery_tickets: Vec<(PeerId, Uuid)>,
 }
 
 impl FriendBook {
@@ -85,6 +96,7 @@ impl FriendBook {
                 used: Vec::new(),
                 friends: Vec::new(),
                 offers: Vec::new(),
+                incoming: Vec::new(),
             });
         };
         if raw.len() > MAX_STORE_BYTES {
@@ -216,6 +228,7 @@ impl FriendBook {
                 .position(|friend| friend.person == person)
                 .ok_or(ErrorCode::PeerUntrusted)?;
             state.friends.remove(index);
+            state.incoming.retain(|offer| offer.sender() != person);
             state
                 .offers
                 .iter_mut()
@@ -291,6 +304,8 @@ impl FriendBook {
                 winner: None,
                 started: false,
                 withdrawn: false,
+                presentation: None,
+                delivery_tickets: Vec::new(),
             });
             Ok(())
         })
@@ -305,13 +320,32 @@ impl FriendBook {
         device: PeerId,
         digest: [u8; 32],
     ) -> Result<FriendClaim, TransferError> {
+        self.claim_at(id, device, digest, None, fanout::unix_seconds()?)
+    }
+
+    pub(super) fn claim_at(
+        &self,
+        id: Uuid,
+        device: PeerId,
+        digest: [u8; 32],
+        ticket: Option<Uuid>,
+        now: u64,
+    ) -> Result<FriendClaim, TransferError> {
         self.mutate(|state| {
             let offer = state
                 .offers
                 .iter_mut()
                 .find(|offer| offer.id == id)
                 .ok_or(ErrorCode::TransferRejected)?;
-            if offer.withdrawn || offer.digest != digest || !offer.eligible.contains(&device) {
+            if offer.withdrawn
+                || offer
+                    .presentation
+                    .as_ref()
+                    .is_some_and(|object| object.expired(now))
+                || ticket.is_some_and(|ticket| !offer.delivery_tickets.contains(&(device, ticket)))
+                || offer.digest != digest
+                || !offer.eligible.contains(&device)
+            {
                 return Err(ErrorCode::TransferRejected.into());
             }
             match offer.winner {
@@ -332,15 +366,25 @@ impl FriendBook {
         id: Uuid,
         device: PeerId,
         digest: [u8; 32],
+        ticket: Uuid,
     ) -> Result<FriendDecision, TransferError> {
         let data = self.read()?;
         let offer = data
             .offers
             .iter()
             .find(|offer| offer.id == id)
-            .filter(|o| o.digest == digest && o.eligible.contains(&device))
+            .filter(|o| {
+                o.digest == digest
+                    && o.eligible.contains(&device)
+                    && o.delivery_tickets.contains(&(device, ticket))
+            })
             .ok_or(ErrorCode::TransferRejected)?;
-        Ok(match (offer.withdrawn, offer.winner) {
+        let now = fanout::unix_seconds()?;
+        let expired = offer
+            .presentation
+            .as_ref()
+            .is_some_and(|object| object.expired(now));
+        Ok(match (offer.withdrawn || expired, offer.winner) {
             (true, _) => FriendDecision::Withdrawn,
             (_, None) => FriendDecision::Open,
             (_, Some(winner)) if winner == device => FriendDecision::Granted,
@@ -377,6 +421,7 @@ impl FriendBook {
         device: PeerId,
         digest: [u8; 32],
     ) -> Result<(), TransferError> {
+        let now = fanout::unix_seconds()?;
         let data = self.read()?;
         let offer = data
             .offers
@@ -384,6 +429,10 @@ impl FriendBook {
             .find(|offer| offer.id == id)
             .ok_or(ErrorCode::TransferRejected)?;
         if !offer.withdrawn
+            && offer
+                .presentation
+                .as_ref()
+                .is_none_or(|object| !object.expired(now))
             && offer.digest == digest
             && offer.winner == Some(device)
             && offer.eligible.contains(&device)
@@ -401,6 +450,7 @@ impl FriendBook {
         device: PeerId,
         digest: [u8; 32],
     ) -> Result<(), TransferError> {
+        let now = fanout::unix_seconds()?;
         self.mutate(|data| {
             let offer = data
                 .offers
@@ -408,6 +458,10 @@ impl FriendBook {
                 .find(|offer| offer.id == id)
                 .ok_or(ErrorCode::TransferRejected)?;
             if offer.withdrawn
+                || offer
+                    .presentation
+                    .as_ref()
+                    .is_some_and(|object| object.expired(now))
                 || offer.digest != digest
                 || offer.winner != Some(device)
                 || !offer.eligible.contains(&device)
