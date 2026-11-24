@@ -18,10 +18,17 @@ pub trait FriendStore: Send + Sync {
     fn replace(&self, expected: Option<&[u8]>, data: &[u8]) -> Result<(), TransferError>;
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum FriendClaim {
     Awarded,
     AlreadyAwarded,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+pub enum FriendDecision {
+    Open,
+    Granted,
+    Withdrawn,
 }
 
 pub struct FriendBook {
@@ -315,6 +322,29 @@ impl FriendBook {
                     Ok(FriendClaim::Awarded)
                 }
             }
+        })
+    }
+
+    /// Current disposition for a device included in the specific offer.
+    /// Unauthorized callers cannot enumerate offers or learn a winner's ID.
+    pub(super) fn decision(
+        &self,
+        id: Uuid,
+        device: PeerId,
+        digest: [u8; 32],
+    ) -> Result<FriendDecision, TransferError> {
+        let data = self.read()?;
+        let offer = data
+            .offers
+            .iter()
+            .find(|offer| offer.id == id)
+            .filter(|o| o.digest == digest && o.eligible.contains(&device))
+            .ok_or(ErrorCode::TransferRejected)?;
+        Ok(match (offer.withdrawn, offer.winner) {
+            (true, _) => FriendDecision::Withdrawn,
+            (_, None) => FriendDecision::Open,
+            (_, Some(winner)) if winner == device => FriendDecision::Granted,
+            (_, Some(_)) => FriendDecision::Withdrawn,
         })
     }
 

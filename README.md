@@ -11,3 +11,5 @@ Alpha 0.1 is in device qualification. The matching Windows installer and TestFli
 - [Version 1 protocol](contracts/v1/protocol.md)
 - [Version 1 app interface](packages/app-contract/src/v1.ts)
 - [Acceptance test harness](tests/README.md)
+
+Experimental development: [AeRift Remote architecture](docs/superpowers/specs/2026-11-24-aerift-remote-design.md) and [private-network qualification harness](docs/remote-private-qualification.md). Remote is not yet enabled in the installed apps.

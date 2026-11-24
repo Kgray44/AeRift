@@ -3,9 +3,12 @@
 
 mod authority;
 mod book;
+mod wire;
 
 pub use authority::{
     DeviceEnrollment, FriendAcceptance, FriendApproval, FriendAuthority, FriendInvitation,
     FriendRecord, PersonId,
 };
-pub use book::{FriendBook, FriendClaim, FriendStore};
+pub use book::{FriendBook, FriendClaim, FriendDecision, FriendStore};
+
+pub use wire::FriendOfferEndpoint;
