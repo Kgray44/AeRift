@@ -143,12 +143,31 @@ function Write-OwnedDialogShape($Dialog) {
         $index++
     }
 }
+function Owned-FolderNameField($Dialog) {
+    # The observed Windows folder dialog exposes a direct Edit child with
+    # shell ID 1152, not the classic file-name ComboBox ID 1148.
+    $id = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1152')
+    $edit = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+    $matches = $Dialog.FindAll([System.Windows.Automation.TreeScope]::Children,
+        [System.Windows.Automation.AndCondition]::new($id, $edit))
+    if ($matches.Count -ne 1) { return }
+    $candidate = $matches[0]
+    $p = $candidate.Current
+    if ($p.ProcessId -ne $app.Id -or $p.ClassName -cne 'Edit' -or !$p.IsEnabled -or
+        $p.Name -cnotin @('Folder:', 'Folder name:', 'File name:')) { return }
+    $value = $null
+    if (!$candidate.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value) -or
+        $value.Current.IsReadOnly) { return }
+    return $value
+}
 function Choose-NativeDestination([bool]$Cancel) {
     $dialog = Wait-For { Owned-Dialog } 'Native folder picker not found in owned AeRift process.'
     if (!$Cancel) {
         try {
-            $field = Wait-For { Dialog-Child $dialog '1148' } 'Owned native folder input unavailable; no simulated keys or path injection.'
-            $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($destination)
+            $field = Wait-For { Owned-FolderNameField $dialog } 'Owned native folder input unavailable; no simulated keys or path injection.'
+            $field.SetValue($destination)
         } catch {
             Write-OwnedDialogShape $dialog
             throw
