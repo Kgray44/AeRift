@@ -2,6 +2,8 @@
 
 mod checkpoint;
 mod client;
+#[cfg(unix)]
+mod journal;
 mod model;
 mod receiver;
 mod server;

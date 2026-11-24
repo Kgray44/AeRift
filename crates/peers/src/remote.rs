@@ -58,7 +58,46 @@ impl RemotePeerNode {
         destination: &Path,
         limits: ReceiveLimits,
     ) -> Result<Self, TransferError> {
-        let receiver = Arc::new(Receiver::new_resumable(destination, limits)?);
+        Self::with_receiver(
+            identity,
+            name,
+            platform,
+            store,
+            Arc::new(Receiver::new_resumable(destination, limits)?),
+        )
+    }
+
+    /// Unix-only development opt-in, never enabled implicitly by the app.
+    #[cfg(unix)]
+    pub fn with_restart_journal(
+        identity: Identity,
+        name: String,
+        platform: Platform,
+        store: Arc<dyn RemoteTrustStore>,
+        destination: &Path,
+        journal_directory: &Path,
+        limits: ReceiveLimits,
+    ) -> Result<Self, TransferError> {
+        Self::with_receiver(
+            identity,
+            name,
+            platform,
+            store,
+            Arc::new(Receiver::with_restart_journal(
+                destination,
+                journal_directory,
+                limits,
+            )?),
+        )
+    }
+
+    fn with_receiver(
+        identity: Identity,
+        name: String,
+        platform: Platform,
+        store: Arc<dyn RemoteTrustStore>,
+        receiver: Arc<Receiver>,
+    ) -> Result<Self, TransferError> {
         let peer = PeerNode::with_lane(
             identity,
             name,
@@ -134,7 +173,10 @@ impl RemotePeerNode {
     }
 
     pub fn revoke(&self, peer: PeerId) -> Result<(), TransferError> {
-        self.peer.revoke(peer)
+        self.peer.revoke(peer)?;
+        #[cfg(unix)]
+        self.receiver.discard_restart_checkpoints_for_peer(peer)?;
+        Ok(())
     }
 
     /// Bind only a dedicated explicit private address, never a wildcard.

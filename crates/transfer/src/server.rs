@@ -196,7 +196,12 @@ async fn resumable(
         let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
             return error(ErrorCode::InvalidRequest.into());
         };
-        return match receiver.offer_resumable(peer, offer, &trust) {
+        return match tokio::task::spawn_blocking(move || {
+            receiver.offer_resumable(peer, offer, &trust)
+        })
+        .await
+        .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        {
             Ok((created, status)) => json(
                 if created {
                     StatusCode::CREATED
@@ -223,8 +228,16 @@ async fn resumable(
     let key = TransferKey { peer, id };
     let empty = request.body().size_hint().exact() == Some(0);
     let result = match (request.method(), action) {
-        (&Method::GET, "") if empty => receiver.status_resumable(key),
-        (&Method::DELETE, "") if empty => receiver.cancel_resumable(key),
+        (&Method::GET, "") if empty => {
+            tokio::task::spawn_blocking(move || receiver.status_resumable(key))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
+        (&Method::DELETE, "") if empty => {
+            tokio::task::spawn_blocking(move || receiver.cancel_resumable(key))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
         (&Method::POST, "commit") if empty => {
             tokio::task::spawn_blocking(move || receiver.commit_resumable(key))
                 .await
@@ -245,7 +258,12 @@ async fn resumable(
             };
             // Reject missing/unaccepted or wrong-mode transfers before allocating
             // a block body. The blocking operation checks authority again.
-            if let Err(failure) = receiver.can_append_resumable(key, offset, size) {
+            let permit = receiver.clone();
+            if let Err(failure) =
+                tokio::task::spawn_blocking(move || permit.can_append_resumable(key, offset, size))
+                    .await
+                    .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+            {
                 return error(failure);
             }
             let body = tokio::select! {
