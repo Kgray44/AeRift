@@ -30,9 +30,13 @@ if ($loopback.Count -ne 1) { throw 'Expected one independently identifiable loop
 $interface = $loopback[0].InterfaceIndex
 $root = Join-Path $runnerRoot ('aerift-private-folders-' + [Guid]::NewGuid().ToString('N'))
 $installRoot = Join-Path $root 'App'
-$destination = Join-Path $root 'Destination'
-New-Item -ItemType Directory -Path $destination | Out-Null
+# Atomic no-replace publication must stay on one NTFS volume. The runner
+# installer scratch can be on another volume from the local app profile.
+$destinationRoot = Join-Path $env:LOCALAPPDATA ('aerift-owned-folder-fixture-' + [Guid]::NewGuid().ToString('N'))
+$destination = Join-Path $destinationRoot 'Destination'
+New-Item -ItemType Directory -Path $root | Out-Null
 $alias = $false; $app = $null; $peer = $null; $socket = $null; $profileOwned = $false
+$destinationOwned = $false
 $deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromMinutes(4))
 $cdpId = 0
 $previousCdp = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
@@ -196,6 +200,22 @@ try {
     Write-Peer $Consent
     $fingerprint = Read-Peer 'fingerprint'
     $profileOwned = $true
+    # Only newly-created runner-owned siblings are touched; no test touches
+    # user files or changes the native no-cross-volume publication rule.
+    New-Item -ItemType Directory -Path $destinationRoot -ErrorAction Stop | Out-Null
+    $destinationOwned = $true
+    New-Item -ItemType Directory -Path $destination | Out-Null
+    $volumeFixture = Join-Path $destination '.volume-fixture'
+    [IO.File]::WriteAllBytes($volumeFixture, [byte[]]@(0))
+    $profileVolume = @(Get-Volume -FilePath (Join-Path $profile 'windows-private-remote-mode-v1.dpapi') -ErrorAction Stop)
+    $targetVolume = @(Get-Volume -FilePath $volumeFixture -ErrorAction Stop)
+    Remove-Item -LiteralPath $volumeFixture
+    if ($profileVolume.Count -ne 1 -or $targetVolume.Count -ne 1 -or
+        !$profileVolume[0].UniqueId -or $profileVolume[0].UniqueId -cne $targetVolume[0].UniqueId -or
+        $profileVolume[0].FileSystem -ne 'NTFS' -or $targetVolume[0].FileSystem -ne 'NTFS') {
+        throw 'Fixture target must be on the same owned NTFS volume as protected staging.'
+    }
+    Write-Host 'Synthetic destination and protected stage share one owned NTFS volume.'
     if ($fingerprint -notmatch '^[0-9a-f]{64}$') { throw 'Missing exact fixture fingerprint.' }
     $setup = Start-Process $Installer -ArgumentList "/S /D=$installRoot" -Wait -PassThru
     if ($setup.ExitCode -ne 0) { throw 'Qualification installer failed.' }
@@ -264,7 +284,7 @@ try {
     # A successful Save consumed the lease, so the owned directory is
     # renameable again. Restore our fixture path before collision testing.
     Rename-Item -LiteralPath $destination -NewName 'Released Destination'
-    Rename-Item -LiteralPath (Join-Path $root 'Released Destination') -NewName 'Destination'
+    Rename-Item -LiteralPath (Join-Path $destinationRoot 'Released Destination') -NewName 'Destination'
     Button 'Dismiss receipt'
 
     Write-Peer 'OFFER FOLDER FIXTURE'
@@ -312,6 +332,7 @@ try {
         $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousCdp
         if ($alias) { Remove-NetIPAddress -InterfaceIndex $interface -IPAddress $ip -PolicyStore ActiveStore -Confirm:$false }
         if ($profileOwned -and (Test-Path -LiteralPath $profile)) { Remove-Item -LiteralPath $profile -Recurse -Force }
+        if ($destinationOwned -and (Test-Path -LiteralPath $destinationRoot)) { Remove-Item -LiteralPath $destinationRoot -Recurse -Force }
         if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
         $deadline.Dispose()
     }

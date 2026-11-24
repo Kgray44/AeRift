@@ -52,3 +52,15 @@ synthetic data. The real installed fixture must pass on the exact head before
 considering ordinary app enablement. Those results would still be hosted
 Windows loopback evidence, not physical camera, independent-network, actual
 VPN interoperability, or public release evidence.
+
+
+## Destination volume boundary
+
+The positive fixture selects a newly created, runner-owned directory beside
+the synthetic local app profile, and verifies the destination and protected
+staging share the same local NTFS volume. The install/build scratch may reside
+on another volume. This does not qualify cross-volume destinations. The
+current handle-relative no-replace rename intentionally does not copy or
+fall back across volumes. Before ordinary enablement, reject unsupported
+volume choices before accepting an offer and tell the user which destination
+type is supported, or separately design and qualify cross-volume publication.
