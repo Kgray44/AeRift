@@ -5,13 +5,17 @@ use aerift_transfer::{
     ErrorCode, IncomingTransfer, PeerId, ReceiveLimits, Receiver, Sender, Status, TransferError,
     TransferKey,
 };
-use tokio::{net::TcpListener, sync::watch};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpListener,
+    sync::{Semaphore, watch},
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
     Device, Identity, InvitationCode, PeerNode, PendingPairing, PinnedEndpoint, Platform,
-    TrustStore, network::Lane, pairing::RedeemCode,
+    RemoteRoute, RoutedPinnedEndpoint, TrustStore, network::Lane, pairing::RedeemCode,
 };
 
 const PREFIX: &str = "aerift-remote:v1:";
@@ -47,6 +51,8 @@ impl TrustStore for RemoteStore {
 pub struct RemotePeerNode {
     peer: PeerNode,
     receiver: Arc<Receiver>,
+    routed_connections: Semaphore,
+    routed_untrusted: Semaphore,
 }
 
 impl RemotePeerNode {
@@ -67,7 +73,12 @@ impl RemotePeerNode {
             receiver.clone(),
             Lane::Remote,
         )?;
-        Ok(Self { peer, receiver })
+        Ok(Self {
+            peer,
+            receiver,
+            routed_connections: Semaphore::new(48),
+            routed_untrusted: Semaphore::new(8),
+        })
     }
 
     /// Validate before opening a listener or attempting a routed connection.
@@ -131,6 +142,53 @@ impl RemotePeerNode {
         validate_private_routes(routes)?;
         self.peer
             .sender_with_routes(routes, peer, decision_timeout, upload_timeout)
+    }
+
+    /// Redeem an explicit targeted Remote invitation over a separately
+    /// admitted byte stream. Inner TLS validates the invitation's issuer before
+    /// submitting its capability. The caller's deliberate action is consent
+    /// to request pairing; the issuer still approves the authenticated caller.
+    pub async fn redeem_via<R: RemoteRoute>(
+        &self,
+        route: R,
+        code: &str,
+    ) -> Result<Device, TransferError> {
+        let invite = parse_invitation(code)?;
+        let endpoint = self.peer.routed_endpoint(route, invite.peer, false)?;
+        self.peer.redeem_over(endpoint, invite).await
+    }
+
+    /// A route is not a grant. This fails before dialing if the target has
+    /// no active Remote grant, and in-flight transfers respect revocation.
+    pub fn sender_via<R: RemoteRoute>(
+        &self,
+        route: R,
+        peer: PeerId,
+        decision_timeout: Duration,
+        upload_timeout: Duration,
+    ) -> Result<Sender<RoutedPinnedEndpoint<R>>, TransferError> {
+        let endpoint = self.peer.routed_endpoint(route, peer, true)?;
+        Ok(Sender::new(endpoint, decision_timeout, upload_timeout))
+    }
+
+    /// Serve exactly one admitted Remote route stream. The host derives
+    /// the expected peer from a deliberately bound outer endpoint, never
+    /// from the request itself. Both TLS identities are still checked.
+    pub async fn serve_routed_stream<S>(
+        &self,
+        stream: S,
+        expected_peer: PeerId,
+    ) -> Result<(), TransferError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let _permit = self
+            .routed_connections
+            .try_acquire()
+            .map_err(|_| ErrorCode::PeerUnavailable)?;
+        self.peer
+            .serve_bound_remote(stream, expected_peer, &self.routed_untrusted)
+            .await
     }
 
     pub fn revoke(&self, peer: PeerId) -> Result<(), TransferError> {

@@ -1,4 +1,4 @@
-use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
+use std::{convert::Infallible, future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use aerift_transfer::{
     Connector, ErrorCode, PeerId, Receiver, Sender, TransferError, serve_request,
@@ -8,6 +8,7 @@ use http_body_util::{BodyExt, Full, Limited};
 use hyper::{Method, Request, Response, StatusCode, body::Incoming, header, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
     sync::Semaphore,
     task::JoinSet,
@@ -143,6 +144,14 @@ impl PeerNode {
         code: RedeemCode,
     ) -> Result<Device, TransferError> {
         let connection = self.endpoint(addresses, code.peer, None)?;
+        self.redeem_over(connection, code).await
+    }
+
+    pub(crate) async fn redeem_over(
+        &self,
+        connection: impl Connector,
+        code: RedeemCode,
+    ) -> Result<Device, TransferError> {
         let device = self.pairing.device();
         let request = PairRequest {
             token: code.token,
@@ -191,34 +200,64 @@ impl PeerNode {
                     let unknown = Arc::clone(&unknown);
                     tasks.spawn(async move {
                         let _permit = permit;
-                        let Ok(Ok(stream)) = timeout(CONNECT_TIMEOUT, tls.accept(socket)).await else { return };
-                        let session = stream.get_ref().1;
-                        if session.alpn_protocol() != Some(lane.alpn()) { return; }
-                        let Some(leaf) = session.peer_certificates().and_then(|chain| chain.first()) else { return };
-                        let peer = PeerId::from_tls_leaf(leaf.as_ref());
-                        let _untrusted = if pairing.is_trusted(peer) {
-                            None
-                        } else {
-                            let Ok(permit) = unknown.try_acquire_owned() else { return };
-                            Some(permit)
-                        };
-                        let service = service_fn(|request| {
-                            let pairing = Arc::clone(&pairing);
-                            let receiver = Arc::clone(&receiver);
-                            async move { Ok::<_, Infallible>(route(request, peer, pairing, receiver, lane).await) }
-                        });
-                        let _ = hyper::server::conn::http1::Builder::new()
-                            .timer(TokioTimer::new())
-                            .header_read_timeout(CONNECT_TIMEOUT)
-                            .max_buf_size(32 * 1024)
-                            .keep_alive(false)
-                            .serve_connection(TokioIo::new(stream), service).await;
+                        let _ = serve_stream(socket, tls, pairing, receiver, lane, None, &unknown).await;
                     });
                 }
             }
         }
         tasks.shutdown().await;
         Ok(())
+    }
+
+    pub(crate) async fn serve_bound_remote<S>(
+        &self,
+        stream: S,
+        expected: PeerId,
+        untrusted: &Semaphore,
+    ) -> Result<(), TransferError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let lane = Lane::Remote;
+        let mut config = self.identity.server_config()?;
+        config.alpn_protocols = vec![lane.alpn().to_vec()];
+        serve_stream(
+            stream,
+            TlsAcceptor::from(Arc::new(config)),
+            self.pairing.clone(),
+            self.receiver.clone(),
+            lane,
+            Some(expected),
+            untrusted,
+        )
+        .await
+    }
+
+    pub(crate) fn routed_endpoint<R>(
+        &self,
+        route: R,
+        expected: PeerId,
+        require_grant: bool,
+    ) -> Result<RoutedPinnedEndpoint<R>, TransferError>
+    where
+        R: RemoteRoute,
+    {
+        let trust = if require_grant {
+            Some(
+                self.pairing
+                    .trust(expected)
+                    .ok_or(ErrorCode::PeerUntrusted)?,
+            )
+        } else {
+            None
+        };
+        let mut config = self.identity.client_config(expected)?;
+        config.alpn_protocols = vec![Lane::Remote.alpn().to_vec()];
+        Ok(RoutedPinnedEndpoint {
+            route,
+            tls: TlsConnector::from(Arc::new(config)),
+            trust,
+        })
     }
 
     fn endpoint(
@@ -239,6 +278,112 @@ impl PeerNode {
             trust,
             lane: self.lane,
         })
+    }
+}
+
+async fn serve_stream<S>(
+    socket: S,
+    tls: TlsAcceptor,
+    pairing: Arc<Pairing>,
+    receiver: Arc<Receiver>,
+    lane: Lane,
+    expected: Option<PeerId>,
+    untrusted: &Semaphore,
+) -> Result<(), TransferError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let stream = timeout(CONNECT_TIMEOUT, tls.accept(socket))
+        .await
+        .map_err(|_| ErrorCode::PeerUnavailable)?
+        .map_err(|_| ErrorCode::PeerUntrusted)?;
+    let session = stream.get_ref().1;
+    if session.alpn_protocol() != Some(lane.alpn()) {
+        return Err(ErrorCode::UnsupportedVersion.into());
+    }
+    let leaf = session
+        .peer_certificates()
+        .and_then(|chain| chain.first())
+        .ok_or(ErrorCode::PeerUntrusted)?;
+    let peer = PeerId::from_tls_leaf(leaf.as_ref());
+    if expected.is_some_and(|expected| expected != peer) {
+        return Err(ErrorCode::PeerUntrusted.into());
+    }
+    let _untrusted = if pairing.is_trusted(peer) {
+        None
+    } else {
+        Some(
+            untrusted
+                .try_acquire()
+                .map_err(|_| ErrorCode::PeerUnavailable)?,
+        )
+    };
+    let service = service_fn(|request| {
+        let pairing = Arc::clone(&pairing);
+        let receiver = Arc::clone(&receiver);
+        async move { Ok::<_, Infallible>(route(request, peer, pairing, receiver, lane).await) }
+    });
+    hyper::server::conn::http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(CONNECT_TIMEOUT)
+        .max_buf_size(32 * 1024)
+        .keep_alive(false)
+        .serve_connection(TokioIo::new(stream), service)
+        .await
+        .map_err(|_| ErrorCode::NetworkError.into())
+}
+
+/// One explicit, host-authorized byte-stream route. The host must bind the
+/// route's outer identity to the inner certificate fingerprint before using it.
+pub trait RemoteRoute: Send + Sync {
+    type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
+
+    fn dial(&self) -> impl Future<Output = Result<Self::Stream, TransferError>> + Send;
+}
+
+/// A non-TCP route with the same Remote-only TLS and grant policy as TCP.
+pub struct RoutedPinnedEndpoint<R> {
+    route: R,
+    tls: TlsConnector,
+    trust: Option<CancellationToken>,
+}
+
+impl<R: RemoteRoute> Connector for RoutedPinnedEndpoint<R> {
+    type Stream = TlsStream<R::Stream>;
+
+    async fn connect(&self) -> Result<Self::Stream, TransferError> {
+        let handshake = async {
+            let socket = self.route.dial().await?;
+            let name = ServerName::try_from("aerift-remote.invalid")
+                .map_err(|_| ErrorCode::InternalError)?;
+            let stream = self
+                .tls
+                .connect(name, socket)
+                .await
+                .map_err(|_| ErrorCode::PeerUntrusted)?;
+            if stream.get_ref().1.alpn_protocol() != Some(Lane::Remote.alpn()) {
+                return Err(ErrorCode::UnsupportedVersion.into());
+            }
+            Ok(stream)
+        };
+        let bounded = timeout(CONNECT_TIMEOUT, handshake);
+        if let Some(trust) = &self.trust {
+            tokio::select! {
+                biased;
+                _ = trust.cancelled() => Err(ErrorCode::PeerUntrusted.into()),
+                result = bounded => result.map_err(|_| ErrorCode::PeerUnavailable)?,
+            }
+        } else {
+            bounded.await.map_err(|_| ErrorCode::PeerUnavailable)?
+        }
+    }
+
+    fn authority(&self) -> &str {
+        "aerift-remote.invalid"
+    }
+
+    fn trust_revoked(&self) -> Option<CancellationToken> {
+        self.trust.clone()
     }
 }
 
@@ -384,7 +529,7 @@ async fn route(
 }
 
 async fn pair_remote(
-    endpoint: PinnedEndpoint,
+    endpoint: impl Connector,
     route: &str,
     data: Vec<u8>,
 ) -> Result<Device, TransferError> {

@@ -17,3 +17,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 iroh-relay = { version = "=1.5.0", default-features = false, features = ["server"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+aerift-peers = { path = "../peers" }
+aerift-transfer = { path = "../transfer" }
+tempfile = "3"
+tokio-util = { version = "0.7", features = ["rt"] }
+ring = "0.17"

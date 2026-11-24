@@ -300,10 +300,8 @@ mod tests {
         },
     };
 
-    // The fixture has its own trusted CA and no UDP transports. Seeing the relay
-    // selected is mandatory, not inferred from the fact that relay was enabled.
-    #[tokio::test]
-    async fn encrypted_bytes_can_use_operator_https_relay_without_any_direct_transport() {
+    pub(super) async fn private_relay_fixture()
+    -> (server::Server, RelayUrl, WanEndpoint, WanEndpoint) {
         let socket: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let cert = generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
         let ca = cert.cert.der().clone();
@@ -350,6 +348,13 @@ mod tests {
             }
         };
         let (receiver, sender) = tokio::join!(bind(1), bind(2));
+        (relay, url, receiver, sender)
+    }
+
+    // No UDP: see a selected relay path, don't infer from configuration.
+    #[tokio::test]
+    async fn encrypted_bytes_can_use_operator_https_relay_without_any_direct_transport() {
+        let (relay, url, receiver, sender) = private_relay_fixture().await;
         let route = WanRoute::new(receiver.id(), &[], Some(url)).unwrap();
         let allowed = HashSet::from([sender.id()]);
         // Separate TLS identity from the operator relay certificate, so a
@@ -372,7 +377,11 @@ mod tests {
                 .add(if inner_trust_correct {
                     leaf.clone()
                 } else {
-                    ca.clone()
+                    generate_simple_self_signed(vec!["wrong.example.invalid".into()])
+                        .unwrap()
+                        .cert
+                        .der()
+                        .clone()
                 })
                 .unwrap();
             let config = ClientConfig::builder_with_provider(provider.clone())
@@ -422,3 +431,6 @@ mod tests {
         relay.shutdown().await.unwrap();
     }
 }
+
+#[cfg(test)]
+mod pinned_remote_tests;
