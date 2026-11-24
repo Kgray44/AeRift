@@ -23,10 +23,10 @@ use aerift_transfer::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
-#[cfg(target_os = "ios")]
-use tauri_plugin_aerift_ios::{BonjourState as DiscoveryState, BonjourUpdate};
 #[cfg(target_os = "android")]
 use tauri_plugin_aerift_android::{DiscoveryState, DiscoveryUpdate};
+#[cfg(target_os = "ios")]
+use tauri_plugin_aerift_ios::{BonjourState as DiscoveryState, BonjourUpdate};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 #[cfg(windows)]
 use tokio::net::TcpListener;
@@ -665,7 +665,31 @@ impl Session {
                         None => PairResult::Rejected,
                     }
                 } else {
-                    self.peer.confirm_nearby(request_id, accept)?;
+                    if accept {
+                        // Serialize approval against native discovery readiness changes;
+                        // declining a stale prompt remains safe at any time.
+                        let state = lock(&self.state);
+                        #[cfg(any(target_os = "ios", target_os = "android"))]
+                        if !matches!(state.local_network, Some(DiscoveryState::Ready)) {
+                            return Err(ErrorCode::PeerUnavailable.into());
+                        }
+                        let pending = self
+                            .peer
+                            .subscribe_nearby()
+                            .borrow()
+                            .clone()
+                            .filter(|entry| entry.id == request_id)
+                            .ok_or(ErrorCode::PairingExpired)?;
+                        if !state.peers.iter().any(|peer| {
+                            peer.device.id == pending.device.id
+                                && peer.endpoints.iter().any(|address| address.is_ipv4())
+                        }) {
+                            return Err(ErrorCode::PeerUnavailable.into());
+                        }
+                        self.peer.confirm_nearby(request_id, true)?;
+                    } else {
+                        self.peer.confirm_nearby(request_id, false)?;
+                    }
                     if accept {
                         PairResult::NearbyWaiting
                     } else {

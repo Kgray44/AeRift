@@ -44,7 +44,10 @@ impl Session {
         let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
             .await
             .map_err(|_| ErrorCode::NetworkError)?;
-        let port = listener.local_addr().map_err(|_| ErrorCode::NetworkError)?.port();
+        let port = listener
+            .local_addr()
+            .map_err(|_| ErrorCode::NetworkError)?
+            .port();
         let session = Arc::new(Self {
             port,
             destination,
@@ -111,7 +114,8 @@ impl Session {
             self.peer.pairing().device(),
             self.port,
             events,
-        ).await;
+        )
+        .await;
         if result.is_err() {
             self.update_android_discovery(DiscoveryState::Unavailable, Vec::new());
             return Err(ErrorCode::NetworkError.into());
@@ -143,6 +147,7 @@ impl Session {
             }
         }
         if inactive {
+            self.peer.cancel_nearby();
             for entry in self.receiver.snapshot() {
                 if !entry.status.state.is_terminal() {
                     let _ = self.receiver.cancel(entry.key);
@@ -153,9 +158,17 @@ impl Session {
     }
 
     /// A UI-supplied ID names an authoritative completed incoming receipt, not a path.
-    pub(crate) fn android_received(&self, transfer_id: &str) -> Result<(PathBuf, String), TransferError> {
-        let receipt = self.receiver.snapshot().into_iter()
-            .find(|entry| incoming_id(entry) == transfer_id && entry.status.state == State::Completed)
+    pub(crate) fn android_received(
+        &self,
+        transfer_id: &str,
+    ) -> Result<(PathBuf, String), TransferError> {
+        let receipt = self
+            .receiver
+            .snapshot()
+            .into_iter()
+            .find(|entry| {
+                incoming_id(entry) == transfer_id && entry.status.state == State::Completed
+            })
             .ok_or(ErrorCode::InvalidRequest)?;
         let path = receipt.saved_path.ok_or(ErrorCode::StorageFailed)?;
         let metadata = fs::symlink_metadata(&path).map_err(storage_failed)?;
@@ -170,7 +183,10 @@ impl Session {
 fn clear_interrupted_receives(staging: &Path) -> Result<(), TransferError> {
     for entry in fs::read_dir(staging).map_err(storage_failed)? {
         let entry = entry.map_err(storage_failed)?;
-        if entry.file_name().as_encoded_bytes().starts_with(b".aerift-part-")
+        if entry
+            .file_name()
+            .as_encoded_bytes()
+            .starts_with(b".aerift-part-")
             && entry.file_type().map_err(storage_failed)?.is_file()
         {
             fs::remove_file(entry.path()).map_err(storage_failed)?;
