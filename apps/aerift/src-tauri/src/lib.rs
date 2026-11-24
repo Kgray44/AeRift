@@ -3,6 +3,13 @@ mod ambient_context;
 #[cfg(all(windows, feature = "ambient-media-qualification"))]
 #[allow(dead_code)]
 mod ambient_media_foundation;
+#[cfg(all(
+    windows,
+    target_arch = "x86_64",
+    feature = "ambient-native-model-qualification"
+))]
+#[allow(dead_code)]
+mod ambient_native_model;
 #[cfg(windows)]
 mod ambient_runtime;
 #[cfg(windows)]

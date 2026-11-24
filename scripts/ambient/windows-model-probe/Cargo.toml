@@ -1,0 +1,13 @@
+[package]
+name = "aerift-windows-model-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
+aerift-transfer = { path = "../../../crates/transfer" }
+sha2 = "0.10.9"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }

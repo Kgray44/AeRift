@@ -43,3 +43,18 @@ python3 -I -B scripts/ambient/verify_native_landmarker.py \
 For an authorized Windows build/test environment, opt into compiling the native adapter with
 `cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --lib --features ambient-media-qualification`.
 The checked-in native unit tests exercise device-grant rejection only; they never call the Windows camera, even on a physical Windows machine.
+
+## Packaged Windows x64 native model proof
+
+The Windows model qualification follow-on stages the exact upstream x64 wheel contents (native DLL and upstream notice) and current task asset into a clean, offline, checksummed bundle. The Rust adapter checks the DLL and model again under a package-local file lock, rejects reparse points and nonabsolute bundle roots, and loads only its pinned DLL by an absolute path with dependencies restricted to System32. An install-time trusted resource root is still required before any production activation.
+
+The Windows platform adapter implements the local RGB model provider in video mode and emits only one valid set of 21 normalized landmarks, or no pose. No DLL or model binary is committed or automatically fetched by the app; the model-qualification feature remains off by default, with no Tauri command or sensor integration. The dedicated hosted Windows x64 workflow stages pinned artifacts in temporary storage, executes the exact Rust adapter on a generated pinned black CPU fixture (no camera), confirms a one-byte-modified DLL is refused, then independently confirms the positive 21-landmark fixture using the upstream C ABI. A passing hosted job verifies Windows model execution, not camera, permission, indicator, packaging installer or physical lifecycle behavior.
+
+Manual qualification on an authorized Windows x64 CI runner (Python 3.11+ and Rust installed):
+
+```powershell
+python -I -B scripts/ambient/stage_windows_landmarker.py --wheel .\windows.whl --model .\hand_landmarker.task --output .\ambient-cpu-inputs
+cargo run --locked --manifest-path scripts/ambient/windows-model-probe/Cargo.toml -- .\ambient-cpu-inputs
+```
+
+The procured Windows DLL and model stay off the shipping path until chooser, real permission+indicator, driver teardown, dependency provenance/license, and physical Windows tests are accepted. Rust preflight, CPU frame processing and the runner probe expose no user frames, raw landmarks, logs of device identifiers, or transfer permissions.
