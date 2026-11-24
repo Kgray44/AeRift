@@ -418,6 +418,9 @@ impl AmbientRuntime {
 }
 
 fn require_main(window: &WebviewWindow) -> Result<(), TransferError> {
+    if !window.state::<crate::runtime::AppRuntime>().nearby_enabled() {
+        return Err(ErrorCode::PeerUnavailable.into());
+    }
     if window.label() != "main" {
         return Err(ErrorCode::InvalidRequest.into());
     }

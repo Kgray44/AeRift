@@ -49,3 +49,16 @@ test("the installed Windows shell admits either Nearby or explicit Remote, not b
   assert.match(settings, /type="submit" disabled=\{!mode \|\| !authorized/);
   assert.match(settings, /windows_exit_for_remote_mode/);
 });
+
+test("Windows Ambient capture and its global shortcut respect the native exclusive transfer mode", () => {
+  const ambient = read("apps/aerift/src-tauri/src/ambient_runtime.rs");
+  const guard = ambient.slice(ambient.indexOf("fn require_main"), ambient.indexOf("pub(crate) fn set_ambient_capture"));
+  assert.match(guard, /AppRuntime>\(\)\.nearby_enabled\(\)/);
+  for (const name of ["set_ambient_capture", "watch_ambient_capture", "send_ambient_file"]) {
+    const item = ambient.slice(ambient.indexOf(` fn ${name}(`));
+    assert.match(item.split("#[tauri::command]")[0], /require_main\(&window\)\?/);
+  }
+  const desktop = read("apps/aerift/src-tauri/src/desktop.rs");
+  const shortcut = desktop.slice(desktop.indexOf("fn handle_shortcut"), desktop.indexOf("request_pickup()"));
+  assert.match(shortcut, /if !app\.state::<AppRuntime>\(\)\.nearby_enabled\(\) \{\s*return;/);
+});
