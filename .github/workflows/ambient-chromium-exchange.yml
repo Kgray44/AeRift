@@ -1,0 +1,41 @@
+name: Ambient Chromium companion qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ambient-chromium-exchange.yml'
+      - 'apps/browser-extension/**'
+      - 'scripts/ambient/browser_chromium_qualification.mjs'
+      - 'scripts/ambient/test_browser_exact_fixture.py'
+      - 'crates/transfer/examples/ambient_browser_exact_fixture.rs'
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-browser-to-companion:
+    runs-on: windows-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install pinned browser fixture tooling into runner temp
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tooling = Join-Path $env:RUNNER_TEMP 'aerift-fixture-browser-tools'
+          New-Item -ItemType Directory -Path $tooling -ErrorAction Stop | Out-Null
+          $env:PUPPETEER_CACHE_DIR = Join-Path $tooling 'cache'
+          npm install --prefix $tooling --no-save --package-lock=false puppeteer@25.12.0
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "AERIFT_FIXTURE_TOOLS=$tooling" >> $env:GITHUB_ENV
+          "PUPPETEER_CACHE_DIR=$env:PUPPETEER_CACHE_DIR" >> $env:GITHUB_ENV
+      - name: Verify exact selection through actual Chromium native messaging
+        shell: pwsh
+        run: node scripts/ambient/browser_chromium_qualification.mjs
