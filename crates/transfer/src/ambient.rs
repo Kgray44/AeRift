@@ -1,5 +1,9 @@
 //! Local-only capture contracts. A captured manifest conveys no transport authority.
 
+pub mod nearby_drop;
+pub mod nearby_runtime;
+pub mod session;
+
 use serde::{Deserialize, Serialize};
 
 pub(super) const CONTENT_BLOCK: usize = 1024 * 1024;

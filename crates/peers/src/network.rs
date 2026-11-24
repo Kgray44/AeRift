@@ -23,6 +23,25 @@ use crate::{
     pairing::{PairRequest, RedeemCode},
 };
 
+/// An explicitly installed native Nearby Ambient hook. No generic transfer
+/// or Remote listener can supply this callback.
+pub type NearbyAmbientHook = Arc<
+    dyn Fn() -> Option<(
+            Option<Arc<aerift_transfer::ambient::nearby_drop::NearbyDrop>>,
+            CancellationToken,
+        )> + Send
+        + Sync,
+>;
+
+struct NearbyAuthority<F>(F);
+impl<F: Fn(PeerId) -> bool> aerift_transfer::ambient::session::DropAuthority
+    for NearbyAuthority<F>
+{
+    fn permits(&self, peer: PeerId, lane: aerift_transfer::ambient::session::Lane) -> bool {
+        lane == aerift_transfer::ambient::session::Lane::Nearby && (self.0)(peer)
+    }
+}
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 // Reserve part of the existing total budget for alternatives. A single LAN
 // address still receives the full original timeout.
@@ -269,7 +288,7 @@ impl PeerNode {
         listener: TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), TransferError> {
-        self.serve_scoped(listener, shutdown, None).await
+        self.serve_scoped(listener, shutdown, None, None).await
     }
 
     /// Explicitly attach native Nearby discovery policy to the legacy LAN lane.
@@ -283,7 +302,21 @@ impl PeerNode {
         if self.nearby.is_none() {
             return Err(ErrorCode::UnsupportedVersion.into());
         }
-        self.serve_scoped(listener, shutdown, Some(Arc::new(is_nearby)))
+        self.serve_scoped(listener, shutdown, Some(Arc::new(is_nearby)), None)
+            .await
+    }
+
+    pub async fn serve_with_nearby_ambient(
+        &self,
+        listener: TcpListener,
+        shutdown: CancellationToken,
+        is_nearby: impl Fn(PeerId, SocketAddr) -> bool + Send + Sync + 'static,
+        ambient: NearbyAmbientHook,
+    ) -> Result<(), TransferError> {
+        if !matches!(self.lane, Lane::Nearby) || self.nearby.is_none() {
+            return Err(ErrorCode::UnsupportedVersion.into());
+        }
+        self.serve_scoped(listener, shutdown, Some(Arc::new(is_nearby)), Some(ambient))
             .await
     }
 
@@ -292,6 +325,7 @@ impl PeerNode {
         listener: TcpListener,
         shutdown: CancellationToken,
         is_nearby: Option<Arc<dyn Fn(PeerId, SocketAddr) -> bool + Send + Sync>>,
+        ambient: Option<NearbyAmbientHook>,
     ) -> Result<(), TransferError> {
         let lane = self.lane;
         let nearby = is_nearby.zip(self.nearby.clone());
@@ -320,6 +354,7 @@ impl PeerNode {
                     let receiver = Arc::clone(&self.receiver);
                     let unknown = Arc::clone(&unknown);
                     let nearby = nearby.clone();
+                    let ambient = ambient.clone();
                     tasks.spawn(async move {
                         let _permit = permit;
                         let Ok(Ok(stream)) = timeout(CONNECT_TIMEOUT, tls.accept(socket)).await else { return };
@@ -342,6 +377,7 @@ impl PeerNode {
                             let nearby_request = matches!(request.uri().path(), nearby::START | nearby::FINISH);
                             let nearby = nearby.clone();
                             let pairing = Arc::clone(&pairing);
+                            let ambient = ambient.clone();
                             let receiver = Arc::clone(&receiver);
                             async move {
                                 let response = if nearby_request {
@@ -349,6 +385,33 @@ impl PeerNode {
                                         Some((is_nearby, state)) if is_nearby(peer, source) =>
                                             nearby_route(request, peer, &pairing, &state, nearby_secret).await,
                                         _ => error(ErrorCode::PeerUnavailable.into()),
+                                    }
+                                } else if request.uri().path() == aerift_transfer::ambient::nearby_drop::PATH
+                                    && ambient.is_some() {
+                                    use aerift_transfer::ambient::{nearby_drop::NearbyDrop, session::Lane as DropLane};
+                                    let permit = |id| nearby.as_ref().is_some_and(|(scope, _)| scope(id, source))
+                                        && pairing.is_trusted(id);
+                                    let authority = NearbyAuthority(permit);
+                                    if !permit(peer) {
+                                        error(ErrorCode::PeerUntrusted.into())
+                                    } else if let (Some(grant), Some((pickup, generation))) =
+                                        (pairing.trust(peer), ambient.as_ref().and_then(|hook| hook()))
+                                    {
+                                        tokio::select! {
+                                            biased;
+                                            _ = grant.cancelled() => error(ErrorCode::PeerUntrusted.into()),
+                                            _ = generation.cancelled() => error(ErrorCode::PeerUntrusted.into()),
+                                            reply = async {
+                                                match pickup {
+                                                    Some(pickup) => pickup.handle_authenticated(
+                                                        request, peer, DropLane::Nearby, &grant, &authority).await,
+                                                    None => NearbyDrop::availability(
+                                                        None, request, peer, DropLane::Nearby, &grant, &authority),
+                                                }
+                                            } => reply,
+                                        }
+                                    } else {
+                                        error(ErrorCode::UnsupportedVersion.into())
                                     }
                                 } else {
                                     route(request, peer, pairing, receiver, lane).await

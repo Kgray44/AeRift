@@ -415,6 +415,30 @@ pub(crate) fn capture_anchor() -> Result<CaptureAnchor, ContextError> {
     })
 }
 
+pub(crate) mod receive_destination;
+
+// The receiving adapter resolves an exact native folder without inspecting
+// selected file contents or turning a selection into writable authority.
+fn active_receive_folder(anchor: CaptureAnchor) -> Result<PathBuf, ContextError> {
+    let foreground = Foreground::current()?;
+    if capture_anchor()? != anchor {
+        return Err(ContextError::SelectionChanged);
+    }
+    let class = window_class(foreground.window)?;
+    if !matches!(class.as_str(), "CabinetWClass" | "ExploreWClass") {
+        return Err(ContextError::Unsupported);
+    }
+    explorer_process(foreground.process)?;
+    let _com = ComApartment::sta()?;
+    let view = active_folder_view(foreground, &class)?;
+    let folder: IFolderView = view.cast()?;
+    let target = active_filesystem_folder(&folder).ok_or(ContextError::UnsafeSelection)?;
+    if Foreground::current()? != foreground || capture_anchor()? != anchor {
+        return Err(ContextError::SelectionChanged);
+    }
+    Ok(target)
+}
+
 pub(crate) fn capture(anchor: CaptureAnchor) -> Result<ExplorerContext, ContextError> {
     let foreground = Foreground::current()?;
     if capture_anchor()? != anchor {

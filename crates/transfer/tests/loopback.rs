@@ -71,7 +71,7 @@ fn provision(root: &Path) {
     let cert = ca.self_signed(&ca_key).unwrap();
     let issuer = Issuer::from_params(&ca, &ca_key);
     fs::write(root.join("ca.der"), cert.der()).unwrap();
-    for name in ["a", "b"] {
+    for name in ["a", "b", "c"] {
         let key = KeyPair::generate().unwrap();
         let mut params = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
         params
@@ -299,7 +299,7 @@ fn two_independent_processes_transfer_binary_in_both_directions() {
     let root = temp.path();
     provision(root);
     fs::write(root.join("empty.bin"), []).unwrap();
-    for name in ["a", "b"] {
+    for name in ["a", "b", "c"] {
         let salt = if name == "a" { 11 } else { 37 };
         let binary: Vec<_> = (0..SOURCE_BYTES)
             .map(|i| ((i * salt + i / 251) % 256) as u8)
@@ -340,5 +340,256 @@ fn two_independent_processes_transfer_binary_in_both_directions() {
         assert_eq!(fs::metadata(dir.join("empty.bin")).unwrap().len(), 0);
         assert_eq!(fs::read_dir(dir).unwrap().count(), 1);
         println!("{source} -> {destination}: SHA-256 {digest:x}");
+    }
+}
+
+#[tokio::test]
+async fn nearby_drop_uses_verified_tls_leaf_and_rejects_cross_lane_forgery_replay() {
+    use aerift_transfer::ambient::{
+        Candidate, CaptureContext, CaptureLimits, freeze,
+        nearby_drop::NearbyDrop,
+        session::{DropAuthority, Lane},
+    };
+    use hyper_util::rt::TokioIo;
+    use std::{convert::Infallible, time::Instant};
+    use uuid::Uuid;
+
+    struct Scope(PeerId);
+    impl DropAuthority for Scope {
+        fn permits(&self, peer: PeerId, lane: Lane) -> bool {
+            peer == self.0 && lane == Lane::Nearby
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    provision(root.path());
+    let source = root.path().join("source.bin");
+    fs::write(&source, b"test object").unwrap();
+    let capture = freeze(
+        CaptureContext {
+            explicit_selection: vec![Candidate::path(source)],
+            ..Default::default()
+        },
+        CaptureLimits::default(),
+    )
+    .unwrap();
+    let drop = Arc::new(NearbyDrop::open(capture, Instant::now()).unwrap());
+    let id = drop.interaction().unwrap();
+    let source_cert = PeerId::from_tls_leaf(&fs::read(root.path().join("a.der")).unwrap());
+    let allowed = PeerId::from_tls_leaf(&fs::read(root.path().join("b.der")).unwrap());
+    let authority = Scope(allowed);
+    let (forger, server_tls) = tls(root.path(), "a");
+    let (receiver_tls, _) = tls(root.path(), "b");
+    let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = socket.local_addr().unwrap().to_string();
+    let server_drop = drop.clone();
+    let server = tokio::spawn(async move {
+        for lane in [
+            Lane::Nearby,
+            Lane::Remote,
+            Lane::Nearby,
+            Lane::Nearby,
+            Lane::Nearby,
+            Lane::Nearby,
+        ] {
+            let (socket, _) = socket.accept().await.unwrap();
+            let tls = server_tls.accept(socket).await.unwrap();
+            let tls_state = tls.get_ref().1;
+            assert_eq!(tls_state.alpn_protocol(), Some(&b"http/1.1"[..]));
+            let peer = PeerId::from_tls_leaf(tls_state.peer_certificates().unwrap()[0].as_ref());
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(
+                    TokioIo::new(tls),
+                    hyper::service::service_fn(|request| async {
+                        Ok::<_, Infallible>(
+                            server_drop
+                                .handle_authenticated(
+                                    request,
+                                    peer,
+                                    lane,
+                                    &CancellationToken::new(),
+                                    &authority,
+                                )
+                                .await,
+                        )
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+    });
+    let send = |tls| {
+        Sender::new(
+            Endpoint {
+                addr: addr.clone(),
+                tls,
+                peer: source_cert,
+            },
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+    };
+    assert_eq!(
+        send(forger).record_nearby_drop(id).await.unwrap_err().code,
+        ErrorCode::PeerUntrusted
+    );
+    let client = send(receiver_tls);
+    assert_eq!(
+        client.record_nearby_drop(id).await.unwrap_err().code,
+        ErrorCode::PeerUntrusted
+    );
+    assert_eq!(
+        client
+            .record_nearby_drop(Uuid::new_v4())
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidRequest
+    );
+    let challenge = client.nearby_drop_challenge().await.unwrap().unwrap();
+    assert_ne!(challenge, id);
+    client.record_nearby_drop(challenge).await.unwrap();
+    assert_eq!(
+        client.record_nearby_drop(challenge).await.unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    server.await.unwrap();
+    tokio::time::sleep(Duration::from_millis(510)).await;
+    assert!(drop.resolve(Instant::now(), &Scope(allowed)).is_ok());
+}
+
+#[tokio::test]
+async fn nearby_drop_selection_requires_exactly_one_pinned_source() {
+    use aerift_transfer::ambient::{
+        Candidate, CaptureContext, CaptureLimits, freeze,
+        nearby_drop::{NearbyDrop, claim_only_nearby_pickup},
+        session::{DropAuthority, DropError, Lane},
+    };
+    use hyper_util::rt::TokioIo;
+    use std::{convert::Infallible, time::Instant};
+
+    struct Scope(PeerId);
+    impl DropAuthority for Scope {
+        fn permits(&self, peer: PeerId, lane: Lane) -> bool {
+            peer == self.0 && lane == Lane::Nearby
+        }
+    }
+
+    for ambiguous in [false, true] {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        provision(root);
+        let (client, _) = tls(root, "b");
+        let left = PeerId::from_tls_leaf(&fs::read(root.join("a.der")).unwrap());
+        let right = PeerId::from_tls_leaf(&fs::read(root.join("c.der")).unwrap());
+        let recipient = PeerId::from_tls_leaf(&fs::read(root.join("b.der")).unwrap());
+        let source = root.join("source.bin");
+        fs::write(&source, b"selected").unwrap();
+        let service = || {
+            Arc::new(
+                NearbyDrop::open(
+                    freeze(
+                        CaptureContext {
+                            explicit_selection: vec![Candidate::path(source.clone())],
+                            ..Default::default()
+                        },
+                        CaptureLimits::default(),
+                    )
+                    .unwrap(),
+                    Instant::now(),
+                )
+                .unwrap(),
+            )
+        };
+        let active = service();
+        let alternative = ambiguous.then(service);
+        let mut senders = Vec::new();
+        let mut servers = Vec::new();
+        for (name, identity, service) in [
+            ("a", left, Some(active.clone())),
+            ("c", right, alternative.clone()),
+        ] {
+            let (_, tls) = tls(root, name);
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let requests = if !ambiguous && name == "a" { 2 } else { 1 };
+            servers.push(tokio::spawn(async move {
+                let scope = Scope(recipient);
+                let trust = CancellationToken::new();
+                for _ in 0..requests {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let stream = tls.accept(stream).await.unwrap();
+                    let session = stream.get_ref().1;
+                    assert_eq!(session.alpn_protocol(), Some(&b"http/1.1"[..]));
+                    let peer =
+                        PeerId::from_tls_leaf(session.peer_certificates().unwrap()[0].as_ref());
+                    hyper::server::conn::http1::Builder::new()
+                        .serve_connection(
+                            TokioIo::new(stream),
+                            hyper::service::service_fn(|request| async {
+                                Ok::<_, Infallible>(match &service {
+                                    Some(active) => {
+                                        active
+                                            .handle_authenticated(
+                                                request,
+                                                peer,
+                                                Lane::Nearby,
+                                                &trust,
+                                                &scope,
+                                            )
+                                            .await
+                                    }
+                                    None => NearbyDrop::availability(
+                                        None,
+                                        request,
+                                        peer,
+                                        Lane::Nearby,
+                                        &trust,
+                                        &scope,
+                                    ),
+                                })
+                            }),
+                        )
+                        .await
+                        .unwrap();
+                }
+            }));
+            senders.push((
+                identity,
+                Sender::new(
+                    Endpoint {
+                        addr,
+                        tls: client.clone(),
+                        peer: identity,
+                    },
+                    Duration::from_secs(1),
+                    Duration::from_secs(1),
+                ),
+            ));
+        }
+        let result = claim_only_nearby_pickup(senders, &CancellationToken::new()).await;
+        if ambiguous {
+            assert_eq!(result.unwrap_err().code, ErrorCode::Conflict);
+            assert_eq!(
+                active.resolve(Instant::now(), &Scope(recipient)).err(),
+                Some(DropError::NoDrop)
+            );
+            assert_eq!(
+                alternative
+                    .unwrap()
+                    .resolve(Instant::now(), &Scope(recipient))
+                    .err(),
+                Some(DropError::NoDrop)
+            );
+        } else {
+            result.unwrap();
+            tokio::time::sleep(Duration::from_millis(510)).await;
+            assert!(active.resolve(Instant::now(), &Scope(recipient)).is_ok());
+        }
+        for server in servers {
+            tokio::time::timeout(Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 }

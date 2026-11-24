@@ -20,6 +20,8 @@ mod android_received;
 mod desktop;
 #[cfg(windows)]
 mod desktop_explorer;
+#[cfg(windows)]
+mod explorer_receive;
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(windows)]
@@ -133,6 +135,7 @@ pub fn run() {
         .manage(ambient_runtime::AmbientRuntime::default())
         .manage(private_remote_app::RemoteRuntime::default())
         .manage(windows_friends::WindowsFriends::default())
+        .manage(explorer_receive::ExplorerReceiveRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             private_remote_app::windows_remote_mode,
@@ -168,6 +171,10 @@ pub fn run() {
             windows::list_ambient_inbox,
             windows::verify_ambient_inbox_entry,
             windows::save_ambient_inbox_entry,
+            explorer_receive::arm_explorer_receive,
+            explorer_receive::view_explorer_receive,
+            explorer_receive::confirm_explorer_receive,
+            explorer_receive::cancel_explorer_receive,
             windows::get_receive_folder,
             windows::choose_receive_folder,
             desktop::watch_desktop_ambient,

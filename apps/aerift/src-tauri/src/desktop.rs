@@ -40,6 +40,7 @@ struct Ambient {
     tray: TrayIcon,
     status: MenuItem<Wry>,
     capture_pause: MenuItem<Wry>,
+    a4_opt_in: MenuItem<Wry>,
     enabled: AtomicBool,
     route: Mutex<Option<Channel<&'static str>>>,
     shortcut: Mutex<Option<Shortcut>>,
@@ -89,6 +90,27 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let a4_opt_in = MenuItem::with_id(
+        app,
+        "aerift-a4-opt-in",
+        "Enable Nearby pickup/drop",
+        true,
+        None::<&str>,
+    )?;
+    let a4_hold = MenuItem::with_id(
+        app,
+        "aerift-a4-hold",
+        "Hold captured file for Nearby drop",
+        true,
+        None::<&str>,
+    )?;
+    let a4_drop = MenuItem::with_id(
+        app,
+        "aerift-a4-drop",
+        "Drop from Nearby pickup",
+        true,
+        None::<&str>,
+    )?;
     let divider = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(
         app,
@@ -105,6 +127,9 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
             &activity,
             &preview,
             &capture_pause,
+            &a4_opt_in,
+            &a4_hold,
+            &a4_drop,
             &status,
             &divider,
             &quit,
@@ -124,6 +149,7 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
         tray,
         status,
         capture_pause,
+        a4_opt_in,
         enabled: AtomicBool::new(false),
         route: Mutex::new(None),
         shortcut: Mutex::new(None),
@@ -132,8 +158,112 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
     Ok(())
 }
 
+async fn a4_session(
+    app: &AppHandle,
+) -> Result<std::sync::Arc<crate::runtime::Session>, TransferError> {
+    let root = app
+        .path()
+        .app_local_data_dir()
+        .map_err(crate::windows_storage::storage_failed)?;
+    let session = app.state::<AppRuntime>().session(root).await?;
+    session.attach_a4(app.state::<AmbientRuntime>().inner().clone());
+    Ok(session)
+}
+
+fn a4_notice(app: &AppHandle, status: &str) {
+    let _ = app
+        .notification()
+        .builder()
+        .title("AeRift Nearby pickup/drop")
+        .body(status)
+        .show();
+}
+
+async fn a4_action(app: &AppHandle, hold: bool) -> Result<(), TransferError> {
+    use aerift_transfer::ambient::session::DropError;
+    if !app.state::<AppRuntime>().nearby_enabled() {
+        return Err(ErrorCode::Conflict.into());
+    }
+    let runtime = app.state::<AmbientRuntime>().inner().clone();
+    runtime.a4_for_nearby()?;
+    let session = a4_session(app).await?;
+    if !hold {
+        runtime.drop_a4_native(session.a4_roster()?).await?;
+        a4_notice(
+            app,
+            "Drop recorded. Accept the incoming file offer when it appears.",
+        );
+        return Ok(());
+    }
+    let capture = runtime
+        .a4_current_capture()
+        .ok_or(ErrorCode::InvalidRequest)?;
+    runtime.hold_a4_native_pickup(capture)?;
+    let (pickup, generation) = runtime
+        .a4_for_nearby()?
+        .source()
+        .ok_or(ErrorCode::Conflict)?;
+    let frame = pickup
+        .as_ref()
+        .and_then(|item| item.held_frame())
+        .ok_or(ErrorCode::Conflict)?;
+    let interaction = frame.projection().0;
+    session.publish_a4_projection(frame);
+    let result = async {
+        let mut tick = tokio::time::interval(Duration::from_millis(80));
+        loop {
+            tokio::select! {
+                biased;
+                _ = generation.cancelled() => return Err(ErrorCode::Cancelled.into()),
+                _ = tick.tick() => {},
+            }
+            let nearby = runtime.a4_for_nearby()?;
+            match nearby.resolve_guarded(std::time::Instant::now(), session.as_ref(), &generation) {
+                Ok(dispatch) => {
+                    let sent = session.send_a4(dispatch).await;
+                    // Completion is already committed/recorded; only keep the
+                    // native preview tail long enough for an existing observer.
+                    tokio::select! {
+                        _ = generation.cancelled() => {},
+                        _ = tokio::time::sleep(Duration::from_millis(1150)) => {},
+                    }
+                    return sent.map(|_| ());
+                }
+                Err(DropError::WindowOpen | DropError::NoDrop) => continue,
+                Err(DropError::Ambiguous) => return Err(ErrorCode::Conflict.into()),
+                Err(DropError::Closed) => return Ok(()),
+                Err(_) => return Err(ErrorCode::PeerUntrusted.into()),
+            }
+        }
+    }
+    .await;
+    session.clear_a4_projection(interaction);
+    result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum A4TrayAction {
+    Toggle,
+    Hold,
+    Drop,
+}
+
+fn a4_tray_action(id: &str, nearby_mode: bool) -> Option<A4TrayAction> {
+    if !nearby_mode {
+        return None;
+    }
+    match id {
+        "aerift-a4-opt-in" => Some(A4TrayAction::Toggle),
+        "aerift-a4-hold" => Some(A4TrayAction::Hold),
+        "aerift-a4-drop" => Some(A4TrayAction::Drop),
+        _ => None,
+    }
+}
+
 fn handle_menu(app: &AppHandle, event: tauri::menu::MenuEvent) {
-    let route = match event.id().as_ref() {
+    let id = event.id().as_ref();
+    let a4 = a4_tray_action(id, app.state::<AppRuntime>().nearby_enabled());
+    let route = match id {
         "aerift-ambient-show" => None,
         "aerift-ambient-rift" => Some("rift"),
         "aerift-ambient-activity" => Some("activity"),
@@ -154,6 +284,54 @@ fn handle_menu(app: &AppHandle, event: tauri::menu::MenuEvent) {
                     });
                 }
             }
+            return;
+        }
+        "aerift-a4-opt-in" => {
+            if a4 != Some(A4TrayAction::Toggle) {
+                return;
+            }
+            let runtime = app.state::<AmbientRuntime>();
+            let enable = !runtime.a4_is_enabled();
+            if runtime.set_a4_native_opt_in(enable).is_ok() {
+                if let Some(tray) = app.try_state::<Ambient>() {
+                    let _ = tray.a4_opt_in.set_text(if enable {
+                        "Disable Nearby pickup/drop"
+                    } else {
+                        "Enable Nearby pickup/drop"
+                    });
+                }
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = a4_session(&app).await;
+                });
+            } else {
+                a4_notice(app, "Turn on Ambient capture in Settings first.");
+            }
+            return;
+        }
+        "aerift-a4-hold" | "aerift-a4-drop" => {
+            let Some(action @ (A4TrayAction::Hold | A4TrayAction::Drop)) = a4 else {
+                return;
+            };
+            let app = app.clone();
+            let holding = action == A4TrayAction::Hold;
+            tauri::async_runtime::spawn(async move {
+                if let Err(failure) = a4_action(&app, holding).await {
+                    a4_notice(
+                        &app,
+                        match failure.code {
+                            ErrorCode::Conflict => {
+                                "Nearby pickup/drop is off, unavailable, or ambiguous."
+                            }
+                            ErrorCode::InvalidRequest => {
+                                "Capture a single file before choosing Hold."
+                            }
+                            ErrorCode::Cancelled => "Nearby pickup/drop was cancelled.",
+                            _ => "No supported paired Nearby pickup could be reached.",
+                        },
+                    );
+                }
+            });
             return;
         }
         "aerift-ambient-quit" => {
@@ -231,6 +409,12 @@ pub(crate) fn set_desktop_ambient(app: AppHandle, enabled: bool) -> Result<(), T
 
 pub(crate) fn handle_shortcut(app: &AppHandle, key: &Shortcut, state: ShortcutState) {
     if !app.state::<AppRuntime>().nearby_enabled() {
+        return;
+    }
+    if key == &crate::explorer_receive::shortcut() {
+        if state == ShortcutState::Pressed {
+            crate::explorer_receive::capture_focused_explorer(app);
+        }
         return;
     }
     if key == &ambient_runtime::capture_shortcut() {
@@ -573,5 +757,31 @@ pub(crate) fn set_desktop_startup(enabled: bool) -> Result<bool, TransferError> 
         desktop_startup_enabled()
     } else {
         Err(ErrorCode::StorageFailed.into())
+    }
+}
+
+#[cfg(test)]
+mod a4_tray_tests {
+    use super::{a4_tray_action, A4TrayAction};
+
+    #[test]
+    fn a4_tray_dispatch_requires_exact_local_id_and_nearby_mode() {
+        for (id, action) in [
+            ("aerift-a4-opt-in", A4TrayAction::Toggle),
+            ("aerift-a4-hold", A4TrayAction::Hold),
+            ("aerift-a4-drop", A4TrayAction::Drop),
+        ] {
+            assert_eq!(a4_tray_action(id, true), Some(action));
+            assert_eq!(a4_tray_action(id, false), None);
+        }
+        for id in [
+            "aerift-ambient-preview",
+            "aerift-ambient-activity",
+            "aerift-a4-Hold",
+            "aerift-a4-drop/peer",
+            "",
+        ] {
+            assert_eq!(a4_tray_action(id, true), None);
+        }
     }
 }
