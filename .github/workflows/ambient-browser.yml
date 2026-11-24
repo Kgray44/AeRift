@@ -1,0 +1,75 @@
+name: Ambient browser qualification
+
+on:
+  pull_request:
+    paths:
+      - 'apps/browser-extension/**'
+      - 'apps/aerift/src/windows/DesktopTransferPreview.tsx'
+      - 'tests/desktop/ambient-overlay-smoke.mjs'
+      - 'crates/transfer/**'
+      - 'scripts/ambient/*browser*'
+      - 'scripts/ambient/windows-browser-pipe-probe/**'
+      - '.github/workflows/ambient-browser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-browser-and-native-stdio:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify one-shot extension policy without a browser
+        run: node --test apps/browser-extension/capture.test.mjs apps/browser-extension/worker.test.mjs
+      - name: Verify app-free browser-native intake
+        env:
+          AERIFT_BROWSER_ALLOWED_ORIGIN: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'
+        shell: pwsh
+        run: |
+          cargo test --locked -p aerift-transfer --test ambient_browser
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build --locked -p aerift-transfer --example ambient_browser_native_host
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -B scripts/ambient/test_browser_host_stdio.py "target/debug/examples/ambient_browser_native_host.exe"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Exercise native local pipe over real Windows subprocesses
+        shell: pwsh
+        run: |
+          cargo build --locked --manifest-path scripts/ambient/windows-browser-pipe-probe/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -B -c "import subprocess; subprocess.run(['scripts/ambient/windows-browser-pipe-probe/target/debug/aerift-windows-browser-pipe-probe.exe'], timeout=30, check=True)"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+  synthetic-overlay-renderer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false playwright@1.56.1
+      - run: npx playwright install chromium
+      - name: Verify and capture synthetic overlay
+        run: node tests/desktop/ambient-overlay-smoke.mjs
+        env:
+          AERIFT_SYNTHETIC_OVERLAY_EVIDENCE: ${{ runner.temp }}/aerift-synthetic-overlay
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ambient-glass-synthetic-chromium
+          path: ${{ runner.temp }}/aerift-synthetic-overlay/*.png
+          if-no-files-found: error

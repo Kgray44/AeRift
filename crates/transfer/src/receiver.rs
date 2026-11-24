@@ -14,6 +14,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::ambient_inbox::{FrozenDelivery, Inbox};
 use crate::{
     ErrorCode, Offer, PeerId, RESUMABLE_CHUNK_SIZE, State, Status, TransferError,
     checkpoint::{self, Checkpoint},
@@ -70,6 +71,7 @@ struct Entry {
     cancel: CancellationToken,
     trust: CancellationToken,
     deadline: Instant,
+    inbox: Option<(Arc<Inbox>, FrozenDelivery)>,
 }
 
 enum ResumeStage {
@@ -241,6 +243,27 @@ impl Receiver {
     }
 
     pub fn respond(&self, key: TransferKey, accept: bool) -> Result<Status, TransferError> {
+        self.respond_inner(key, accept, None)
+    }
+
+    /// Accept into the application-owned inbox instead of the ordinary receive
+    /// folder. Only the local host may call this. The choice is frozen by the
+    /// same transition that reserves and accepts the authenticated offer.
+    pub fn respond_to_inbox(
+        &self,
+        key: TransferKey,
+        inbox: Arc<Inbox>,
+        destination: FrozenDelivery,
+    ) -> Result<Status, TransferError> {
+        self.respond_inner(key, true, Some((inbox, destination)))
+    }
+
+    fn respond_inner(
+        &self,
+        key: TransferKey,
+        accept: bool,
+        inbox: Option<(Arc<Inbox>, FrozenDelivery)>,
+    ) -> Result<Status, TransferError> {
         let mut entries = self.entries();
         self.reap(&mut entries);
         let active = entries
@@ -256,6 +279,10 @@ impl Receiver {
         let entry = Self::entry(&mut entries, key)?;
         if entry.transfer.status.state != State::Pending {
             return Err(ErrorCode::Conflict.into());
+        }
+        // Inbox v1 stage and resumable checkpoint have different publish contracts.
+        if inbox.is_some() && entry.mode == Mode::Resumable {
+            return Err(ErrorCode::InvalidRequest.into());
         }
         if accept
             && entry.transfer.offer.size_bytes > self.limits.active_bytes.saturating_sub(active)
@@ -282,6 +309,7 @@ impl Receiver {
                 journal.discard(key)?;
             }
         }
+        entry.inbox = inbox;
         entry.transfer.status.state = if accept {
             if entry.transfer.status.bytes_transferred > 0 {
                 State::Transferring
@@ -395,6 +423,7 @@ impl Receiver {
                 cancel: CancellationToken::new(),
                 trust: trust.clone(),
                 deadline: Instant::now() + OFFER_TIMEOUT,
+                inbox: None,
             },
         );
         self.changed();
@@ -430,6 +459,7 @@ impl Receiver {
             offer: entry.transfer.offer.clone(),
             cancel: entry.cancel.clone(),
             trust: entry.trust.clone(),
+            inbox: entry.inbox.as_ref().map(|(inbox, _)| inbox.clone()),
         })
     }
 
@@ -581,6 +611,7 @@ impl Receiver {
                     offer: entry.transfer.offer.clone(),
                     cancel: entry.cancel.clone(),
                     trust: entry.trust.clone(),
+                    inbox: None,
                 },
                 checkpoint,
             )
@@ -695,10 +726,14 @@ pub(crate) struct Upload {
     pub offer: Offer,
     pub cancel: CancellationToken,
     pub trust: CancellationToken,
+    inbox: Option<Arc<Inbox>>,
 }
 
 impl Upload {
     pub fn tempfile(&self) -> Result<NamedTempFile, TransferError> {
+        if let Some(inbox) = &self.inbox {
+            return inbox.tempfile();
+        }
         tempfile::Builder::new()
             .prefix(".aerift-part-")
             .tempfile_in(&self.receiver.staging)
@@ -724,6 +759,13 @@ impl Upload {
         }
         if entry.transfer.status.state != State::Transferring {
             return Err(ErrorCode::Cancelled.into());
+        }
+        if let Some((inbox, destination)) = &entry.inbox {
+            let path = inbox.publish(self.key, &self.offer, *destination, file)?;
+            entry.transfer.saved_path = Some(path);
+            entry.transfer.status.state = State::Completed;
+            self.receiver.changed();
+            return Ok(entry.transfer.status);
         }
         for suffix in 0..1000 {
             let name = if suffix == 0 {
@@ -1097,5 +1139,72 @@ mod tests {
         assert_eq!(expired.state, State::Failed);
         assert_eq!(expired.error.unwrap().code, ErrorCode::PeerUnavailable);
         assert_eq!(receiver.status(next).unwrap().state, State::Accepted);
+    }
+}
+
+#[cfg(test)]
+mod inbox_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    #[test]
+    fn authenticated_completion_falls_back_to_persistent_inbox_and_is_auditable() {
+        let root = tempfile::tempdir().unwrap();
+        let ordinary = tempfile::tempdir().unwrap();
+        let inbox = Arc::new(Inbox::open(root.path()).unwrap());
+        let receiver = Arc::new(
+            Receiver::new(
+                ordinary.path(),
+                ReceiveLimits {
+                    active_bytes: 100,
+                    session_offers: 2,
+                },
+            )
+            .unwrap(),
+        );
+        let key = TransferKey {
+            peer: PeerId::from_tls_leaf(b"fixture"),
+            id: Uuid::new_v4(),
+        };
+        let trust = CancellationToken::new();
+        let payload = b"verified";
+        receiver
+            .offer(
+                key.peer,
+                Offer {
+                    id: key.id,
+                    name: "fixture.bin".into(),
+                    size_bytes: payload.len() as u64,
+                    sha256: format!("{:x}", Sha256::digest(payload)),
+                },
+                &trust,
+            )
+            .unwrap();
+        receiver
+            .respond_to_inbox(
+                key,
+                inbox.clone(),
+                FrozenDelivery::ExternalRequiresAuthorization,
+            )
+            .unwrap();
+        assert!(inbox.verified_receipt(key).is_err());
+        let upload = receiver.start(key, payload.len() as u64).unwrap();
+        let mut file = upload.tempfile().unwrap();
+        file.write_all(payload).unwrap();
+        file.as_file().sync_all().unwrap();
+        let status = upload.publish(file).unwrap();
+        assert_eq!(status.state, State::Completed);
+        assert_eq!(std::fs::read_dir(ordinary.path()).unwrap().count(), 0);
+        let saved = receiver.snapshot()[0].saved_path.clone().unwrap();
+        let reopened = Inbox::open(root.path()).unwrap();
+        let receipt = reopened.verified_receipt(key).unwrap();
+        assert_eq!(
+            receipt.requested_destination(),
+            FrozenDelivery::ExternalRequiresAuthorization
+        );
+        assert_eq!(receipt.offer().name, "fixture.bin");
+        std::fs::write(saved, b"tampered").unwrap(); // same size, different digest
+        assert!(reopened.verified_receipt(key).is_err());
     }
 }

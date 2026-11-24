@@ -73,12 +73,13 @@ export interface MobileTransferPresentation {
   render: (regions: TransferWorkspaceRegions) => ReactNode;
 }
 
-export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection,
+export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection, allowInbox = false,
   navigationStart = "AeRift", navigationEnd, pairRequest, onPairingOpenChange,
   platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift, mobile }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
+  allowInbox?: boolean;
   watchSelection?: (listener: (selection: FileSelection | null) => void) => () => void;
   connection?: { generation: number; retry: () => void; onChange: (value: WorkspaceConnection) => void };
   navigationStart?: ReactNode;
@@ -398,7 +399,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   }
 
   function updateTransfer(request: Exclude<TransferRequest, { action: "offer" }>, expectedPeer?: string, chosenOffer?: string) {
-    const operation = request.action === "cancel" ? "cancel" : request.accept ? "accept" : "decline";
+    const operation = request.action === "cancel" ? "cancel" : request.action === "respond_to_inbox" || request.accept ? "accept" : "decline";
     return run(transferKey(request.transferId), operation, session => {
       const transfer = session.snapshot?.transfers.find(item => item.id === request.transferId);
       if (!transfer || (expectedPeer !== undefined && transfer.deviceId !== expectedPeer)) return Promise.resolve(null);
@@ -414,7 +415,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
         }
       }
       const awaitingConsent = transfer.state === "pending" && transfer.direction === "incoming";
-      const allowed = request.action === "respond" ? awaitingConsent
+      const allowed = request.action === "respond_to_inbox" ? allowInbox && awaitingConsent
+        : request.action === "respond" ? awaitingConsent
         : !awaitingConsent && ["pending", "accepted", "transferring"].includes(transfer.state);
       return allowed ? port.transfer(request) : Promise.resolve(null);
     }, () => {});
@@ -563,7 +565,10 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           onClick={() => {
             transferRegion.current?.focus({ preventScroll: true });
             void accept({ transferId: transfer.id, deviceId: transfer.deviceId });
-          }}>Accept</Button>
+          }}>{allowInbox ? "Accept to receive folder" : "Accept"}</Button>
+        {allowInbox && <Button variant="quiet" disabled={!!watchError || operation !== undefined}
+          onClick={() => void updateTransfer({ action: "respond_to_inbox", transferId: transfer.id, accept: true }, transfer.deviceId)}>
+          Accept to Inbox</Button>}
         <Button variant="quiet" disabled={!!watchError || (operation !== undefined && operation !== "decline")}
           loading={operation === "decline"} loadingLabel="Declining…"
           onClick={() => void updateTransfer({ action: "respond", transferId: transfer.id, accept: false })}>Decline</Button>

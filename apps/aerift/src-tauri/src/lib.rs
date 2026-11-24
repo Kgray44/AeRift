@@ -1,7 +1,3 @@
-#[cfg(target_os = "android")]
-mod android;
-#[cfg(target_os = "android")]
-mod android_received;
 #[cfg(windows)]
 mod ambient_context;
 #[cfg(all(windows, feature = "ambient-media-qualification"))]
@@ -16,6 +12,10 @@ mod ambient_media_foundation;
 mod ambient_native_model;
 #[cfg(windows)]
 mod ambient_runtime;
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+mod android_received;
 #[cfg(windows)]
 mod desktop;
 #[cfg(windows)]
@@ -141,6 +141,9 @@ pub fn run() {
             windows::check_receiver,
             windows::pair_app_peer,
             windows::transfer_app_file,
+            windows::list_ambient_inbox,
+            windows::verify_ambient_inbox_entry,
+            windows::save_ambient_inbox_entry,
             windows::get_receive_folder,
             windows::choose_receive_folder,
             desktop::watch_desktop_ambient,

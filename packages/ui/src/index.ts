@@ -1,4 +1,5 @@
 export * from "./theme";
+export { aeRiftGlassRecipe, GlassOptics, shadeLens } from "./GlassOptics";
 export * from "./components";
 export * from "./overlays";
 export * from "./TransferWorkspace";

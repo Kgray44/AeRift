@@ -6,7 +6,9 @@ import { pathToFileURL } from "node:url";
 const playwright = process.env.AERIFT_PLAYWRIGHT_MODULE
   ? await import(pathToFileURL(process.env.AERIFT_PLAYWRIGHT_MODULE).href)
   : await import("playwright");
-const browser = await playwright.chromium.launch({ channel: process.env.AERIFT_BROWSER_CHANNEL ?? "chrome" });
+const browser = await playwright.chromium.launch(process.env.AERIFT_CHROMIUM_PATH
+  ? { executablePath: process.env.AERIFT_CHROMIUM_PATH }
+  : { channel: process.env.AERIFT_BROWSER_CHANNEL ?? "chrome" });
 const evidence = process.env.AERIFT_DESKTOP_EVIDENCE;
 if (evidence) await mkdir(evidence, { recursive: true });
 
@@ -42,7 +44,8 @@ try {
     let openTrayRoute;
     let startedAtSignIn = false;
     let explorerAction = false;
-    let previewTransfer = transfer;
+    let overlayUpdates;
+    let preview = { version: 1, interaction: "cafefade", phase: "transferring", sequence: 2, progress: .43 };
     const publish = (channel, event) => queueMicrotask(() => channel.onmessage(event));
     const nextId = (() => { let current = 0; return () => ++current; })();
 
@@ -73,7 +76,10 @@ try {
           case "set_desktop_startup": startedAtSignIn = args.enabled; return startedAtSignIn;
           case "pair_app_peer": throw new Error("Pairing requires physical verification");
           case "transfer_app_file": throw new Error("File delivery requires physical verification");
-          case "desktop_transfer_preview": return previewTransfer;
+          case "desktop_transfer_preview":
+            overlayUpdates = args.updates;
+            publish(overlayUpdates, preview);
+            return;
           case "open_workspace_url":
           case "set_desktop_ambient":
           case "set_desktop_shortcut":
@@ -87,7 +93,7 @@ try {
       count: name => calls.filter(call => call.channel === name).length,
       last: name => calls.findLast(call => call.channel === name)?.args,
       tray(route) { publish(openTrayRoute, route); },
-      updatePreview(next) { previewTransfer = { ...previewTransfer, ...next }; },
+      updatePreview(next) { publish(overlayUpdates, { ...preview, ...next }); },
     };
 
     const key = "aerift.settings.v1";
@@ -227,15 +233,22 @@ try {
   await capture(page, "light-compact-workspace");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   const preview = await context.newPage();
-  await preview.setViewportSize({ width: 360, height: 224 });
+  await preview.setViewportSize({ width: 332, height: 148 });
   await preview.goto((process.env.AERIFT_DESKTOP_URL ?? "http://127.0.0.1:1420") + "?surface=desktop-preview");
-  await preview.getByRole("heading", { name: "Transfer preview" }).waitFor();
-  assert.equal(await preview.getByRole("progressbar").getAttribute("aria-valuenow"), "43");
+  await preview.getByText("Sending", { exact: true }).waitFor();
+  assert.equal(await preview.getByRole("progressbar").getAttribute("value"), "0.43");
+  const initialSilhouette = await preview.locator("#ambient-liquid-shape").getAttribute("d");
+  await preview.waitForTimeout(125);
+  assert.equal(await preview.locator("#ambient-liquid-shape").getAttribute("d"), initialSilhouette);
   await capture(preview, "light-ambient-preview");
-  await preview.evaluate(() => window.desktopFixture.updatePreview({ bytesTransferred: 1000 }));
-  await preview.getByText("Awaiting delivery confirmation", { exact: true }).waitFor();
-  await preview.evaluate(() => window.desktopFixture.updatePreview({ state: "completed" }));
-  await preview.getByText("Delivered", { exact: true }).waitFor();
+  await preview.evaluate(() => window.desktopFixture.updatePreview({ sequence: 4, phase: "transferring", progress: 1 }));
+  await preview.locator("progress[value='1']").waitFor();
+  await preview.evaluate(() => window.desktopFixture.updatePreview({ sequence: 5, phase: "completed", progress: undefined }));
+  assert.equal(await preview.getByText("Delivery verified", { exact: true }).count(), 0);
+  await preview.evaluate(() => window.desktopFixture.updatePreview({ sequence: 6, phase: "completed", progress: undefined, verified: true }));
+  await preview.getByText("Delivery verified", { exact: true }).waitFor();
+  await preview.getByRole("status").waitFor({ state: "detached" });
+  assert.equal(await preview.evaluate(() => window.desktopFixture.count("desktop_transfer_preview")), 1);
   assert.deepEqual(errors, []);
   console.log("PASS: desktop shell, mode and module persistence, simulated native selection and progress, keyboard focus, tray commands, compact width.");
 } finally {

@@ -4,6 +4,12 @@ import type { CameraShortcut } from "./GestureCamera";
 
 export const settingsKey = "aerift.settings.v1";
 
+export const ambientPreviewCorners = ["top-left", "top-right", "bottom-left", "bottom-right"] as const;
+export type AmbientPreviewCorner = (typeof ambientPreviewCorners)[number];
+export function ambientPreviewCorner(value: unknown): AmbientPreviewCorner {
+  return ambientPreviewCorners.find(corner => corner === value) ?? "bottom-right";
+}
+
 export type AmbientShortcut = "off" | "alt-shift-r" | "ctrl-alt-r";
 
 export interface DesktopPreferences {
@@ -16,6 +22,7 @@ export interface DesktopPreferences {
   clipboard: boolean;
   ambientNotifications: boolean;
   ambientShortcut: AmbientShortcut;
+  ambientPreviewCorner: AmbientPreviewCorner;
   ambientContextEnabled: boolean;
   ambientExclusions: string;
 }
@@ -35,6 +42,7 @@ export function parseDesktopPreferences(value: unknown): DesktopPreferences {
       typeof input.cameraDeviceId === "string" ? input.cameraDeviceId : "",
     clipboard: input.clipboard === true,
     ambientNotifications: input.ambientNotifications === true,
+    ambientPreviewCorner: ambientPreviewCorner(input.ambientPreviewCorner),
     ambientContextEnabled: input.ambientContextEnabled === true,
     ambientExclusions: typeof input.ambientExclusions === "string" ? input.ambientExclusions.slice(0, 8192) : "",
     ambientShortcut: input.ambientShortcut === "alt-shift-r" || input.ambientShortcut === "ctrl-alt-r"

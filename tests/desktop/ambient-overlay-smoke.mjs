@@ -1,0 +1,168 @@
+// Isolated synthetic rendering; does not inspect, launch or input into a real desktop app.
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
+
+const vite = fileURLToPath(new URL("../../node_modules/vite/bin/vite.js", import.meta.url));
+const cwd = fileURLToPath(new URL("../../apps/aerift/", import.meta.url));
+const port = 1431;
+const address = `http://127.0.0.1:${port}`;
+const server = spawn(process.execPath, [vite, "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
+  { cwd, stdio: ["ignore", "ignore", "inherit"] });
+let browser;
+const pause = timeout => new Promise(resolve => setTimeout(resolve, timeout));
+
+try {
+  for (let attempts = 0;; attempts++) {
+    assert.ok(attempts < 50 && server.exitCode === null, "Disposably hosted Vite must start");
+    if ((await fetch(address, { signal: AbortSignal.timeout(1000) }).catch(() => undefined))?.ok) break;
+    await pause(100);
+  }
+  browser = await chromium.launch();
+  const evidence = process.env.AERIFT_SYNTHETIC_OVERLAY_EVIDENCE;
+  if (evidence) await mkdir(evidence, { recursive: true });
+  for (const [scheme, motion] of [["dark", "no-preference"], ["light", "no-preference"], ["dark", "reduce"]]) {
+    const context = await browser.newContext({
+      viewport: { width: 332, height: 148 },
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36",
+      colorScheme: scheme, reducedMotion: motion,
+    });
+    await context.addInitScript(() => {
+      const calls = [];
+      let subscriber;
+      let counter = 0;
+      window.isTauri = true;
+      window.__TAURI_INTERNALS__ = {
+        transformCallback() { return ++counter; }, unregisterCallback() {},
+        invoke(command, args) {
+          calls.push(command);
+          if (command !== "desktop_transfer_preview") throw Error("Unexpected side-effect IPC");
+          subscriber = args.updates;
+          return Promise.resolve();
+        },
+      };
+      window.fixture = {
+        push(event) { subscriber.onmessage(event); },
+        calls,
+      };
+    });
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(`${address}/?surface=desktop-preview`);
+    const send = frame => page.evaluate(frame => window.fixture.push(frame), frame);
+    await page.waitForFunction(() => window.fixture?.calls.length === 1);
+    assert.equal(await page.getByRole("status").count(), 0, "idle mounts neither overlay nor animator");
+    assert.equal(await page.locator("canvas").count(), 0);
+    await send({ version: 1, interaction: "cafefade", sequence: 1, phase: "hand" });
+    await page.getByText("Ready to pick up").waitFor();
+    await send({ version: 1, interaction: "cafefade", sequence: 2, phase: "context", count: 3 });
+    await page.getByText("3 objects", { exact: true }).waitFor();
+    await send({ version: 1, interaction: "cafefade", sequence: 3, phase: "held" });
+    await page.getByText("Carrying", { exact: true }).waitFor();
+    await page.waitForFunction(() => {
+      const label = document.querySelector(".ae-ambient-label");
+      const svg = document.querySelector(".ae-ambient-liquid");
+      const shape = document.querySelector("#ambient-liquid-shape");
+      if (!label || !svg || !shape) return false;
+      const l = label.getBoundingClientRect(), b = svg.getBoundingClientRect();
+      return [[l.left, l.top], [l.right, l.top], [l.left, l.bottom], [l.right, l.bottom]]
+        .every(([x, y]) => shape.isPointInFill(new DOMPoint((x - b.left) * 144 / b.width, (y - b.top) * 104 / b.height)));
+    });
+    const silhouette = page.locator("#ambient-liquid-shape");
+    const initial = await silhouette.getAttribute("d");
+    await page.waitForTimeout(125);
+    const next = await silhouette.getAttribute("d");
+    assert.equal(next === initial, motion === "reduce", "only reduced motion freezes the silhouette");
+    assert.equal(await page.locator(".ae-ambient-overlay").evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)");
+    assert.equal(await page.locator(".ae-ambient-overlay .ae-surface").count(), 0, "no notification panel");
+    assert.equal(await page.locator(".ae-theme").getAttribute("data-appearance"), scheme);
+    if (motion !== "reduce") {
+      const stats = await page.evaluate(() => new Promise(resolve => {
+        const gaps = [];
+        let last;
+        function sample(now) {
+          if (last !== undefined) gaps.push(now - last);
+          last = now;
+          if (gaps.length < 45) return requestAnimationFrame(sample);
+          gaps.sort((a, b) => a - b);
+          resolve({ frames: gaps.length, medianMs: gaps[22], p95Ms: gaps[42] });
+        }
+        requestAnimationFrame(sample);
+      }));
+      console.log(`Synthetic ${scheme} overlay browser frame intervals: ${JSON.stringify(stats)}`);
+      assert.ok(stats.frames === 45 && stats.medianMs > 0);
+      const clear = await page.screenshot({ omitBackground: true, ...(evidence ? {
+        path: join(evidence, `synthetic-carry-${scheme}.png`),
+      } : {}) });
+      const centerAlpha = await page.evaluate(async encoded => {
+        const bitmap = new Image();
+        bitmap.src = "data:image/png;base64," + encoded;
+        await bitmap.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(bitmap, 0, 0);
+        return context.getImageData(166, 71, 1, 1).data[3];
+      }, clear.toString("base64"));
+      assert.ok(centerAlpha < 48, `expected mostly transparent center, alpha=${centerAlpha}`);
+      if (evidence) {
+        await page.evaluate(() => {
+          const backdrop = document.createElement("div");
+          backdrop.className = "fixture-backdrop";
+          backdrop.textContent = "Natural desk / file selection / Ambient Rift";
+          backdrop.style.cssText = "position:fixed;inset:0;z-index:-1;font:16px monospace;color:#282a37;display:grid;place-items:center;background:repeating-linear-gradient(127deg,#edf0ff 0 13px,#d8def1 13px 26px);";
+          document.body.prepend(backdrop);
+        });
+        await page.screenshot({ path: join(evidence, `synthetic-pattern-${scheme}.png`) });
+      }
+    }
+    await send({ version: 1, interaction: "cafefade", sequence: 4, phase: "receiving", progress: 1 });
+    await page.locator("progress[value='1']").waitFor();
+    await send({ version: 1, interaction: "cafefade", sequence: 5, phase: "completed" });
+    assert.equal(await page.getByText("Delivery verified").count(), 0);
+    await send({ version: 1, interaction: "cafefade", sequence: 6, phase: "completed", verified: true });
+    await page.getByText("Delivery verified").waitFor();
+    await page.getByRole("status").waitFor({ state: "detached" });
+    assert.equal(await page.locator("canvas").count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.fixture.calls), ["desktop_transfer_preview"]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+  const optics = await browser.newPage({ viewport: { width: 240, height: 160 }, reducedMotion: "reduce" });
+  const fixture = fileURLToPath(new URL("./ambient-owned-glass.fixture.tsx", import.meta.url));
+  const markup = await readFile(new URL("../../apps/aerift/ambient-owned-glass.fixture.html", import.meta.url), "utf8");
+  await optics.route("**/synthetic-owned-glass", route => route.fulfill({
+    status: 200, contentType: "text/html", body: markup.replace("__FIXTURE_FILE__", fixture),
+  }));
+  await optics.goto(`${address}/synthetic-owned-glass`);
+  await optics.waitForFunction(() => document.querySelector(".ae-ambient-owned-refraction")
+    ?.getContext("2d").getImageData(0, 0, 1, 1).data[3] === 255);
+  const refraction = await optics.locator(".ae-ambient-owned-refraction").evaluate(canvas => {
+    const layer = canvas.getContext("2d").getImageData(0, 0, 144, 104).data;
+    const source = document.querySelector("#fixture-source").getContext("2d").getImageData(0, 0, 144, 104).data;
+    const near = (a, b) => a.every((value, i) => Math.abs(value - b[i]) <= 1);
+    const palette = [[16, 44, 155], [216, 230, 175]];
+    let moved = 0, unchangedOutside = 0;
+    for (let y = 28; y < 76; y++) for (let x = 48; x < 96; x++) {
+      const i = (y * 144 + x) * 4;
+      const raw = Array.from(source.slice(i, i+3)), rendered = Array.from(layer.slice(i, i+3));
+      // Require crossing the blue-vs-yellow boundary; simple tint/brightness cannot explain it.
+      if (palette.some(c => near(raw, c)) && (raw[0] < 60 ? rendered[0] > 140 : rendered[0] < 95)) moved++;
+    }
+    for (let i = 0; i < 80 * 4; i++) if (source[i] === layer[i]) unchangedOutside++;
+    return { moved, unchangedOutside };
+  });
+  assert.ok(refraction.moved > 50 && refraction.unchangedOutside === 320, JSON.stringify(refraction));
+  console.log(`App-owned exact lens shader proof: ${JSON.stringify(refraction)}`);
+  if (evidence) await optics.screenshot({ path: join(evidence, "synthetic-owned-lens.png") });
+  await optics.close();
+  console.log("Glass overlay: light/dark, active animation, reduced motion, verified terminal, and invisible idle.");
+} finally {
+  if (browser) await browser.close();
+  if (server.exitCode === null) server.kill();
+}

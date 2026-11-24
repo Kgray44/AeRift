@@ -526,3 +526,57 @@ async fn a_changed_first_block_cannot_emit_bytes_after_the_receiver_approves() {
             .exists()
     );
 }
+
+#[tokio::test]
+async fn inbox_acceptance_is_one_shot_and_corrupted_upload_leaves_no_candidate() {
+    use aerift_transfer::ambient_inbox::{FrozenDelivery, Inbox};
+    let (dir, harness) = setup();
+    let inbox_root = dir.path().join("inbox");
+    std::fs::create_dir(&inbox_root).unwrap();
+    let inbox = Arc::new(Inbox::open(&inbox_root).unwrap());
+    let id = Uuid::new_v4();
+    let offer = Offer {
+        id,
+        name: "receive.bin".to_owned(),
+        size_bytes: 3,
+        sha256: format!("{:x}", Sha256::digest(b"abc")),
+    };
+    assert_eq!(
+        raw(
+            &harness,
+            Method::POST,
+            "/v1/transfers",
+            "application/json",
+            serde_json::to_vec(&offer).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let key = harness.receiver.snapshot()[0].key;
+    harness
+        .receiver
+        .respond_to_inbox(key, inbox.clone(), FrozenDelivery::Inbox)
+        .unwrap();
+    assert_eq!(
+        harness.receiver.respond(key, true).unwrap_err().code,
+        ErrorCode::Conflict
+    );
+    assert_eq!(
+        raw(
+            &harness,
+            Method::PUT,
+            &format!("/v1/transfers/{id}/content"),
+            "application/octet-stream",
+            b"bad".to_vec()
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(harness.receiver.status(key).unwrap().state, State::Failed);
+    assert!(harness.receiver.snapshot()[0].saved_path.is_none());
+    assert!(inbox.recovery_candidates("").unwrap().entries.is_empty());
+    assert_eq!(std::fs::read_dir(&inbox_root).unwrap().count(), 0);
+    assert!(inbox.verified_receipt(key).is_err());
+}

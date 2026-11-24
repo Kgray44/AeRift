@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "AeRift Browser Pickup",
+  "version": "0.1.0",
+  "minimum_chrome_version": "106",
+  "description": "Freeze selected text or a public URL reference only when you request it.",
+  "incognito": "not_allowed",
+  "permissions": ["activeTab", "scripting", "contextMenus", "nativeMessaging"],
+  "background": { "service_worker": "worker.mjs", "type": "module" },
+  "action": { "default_title": "Prepare AeRift pickup (does not send)" }
+}

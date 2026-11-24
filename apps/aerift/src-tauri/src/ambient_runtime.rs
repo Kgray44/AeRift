@@ -219,6 +219,16 @@ impl AmbientRuntime {
         Some(cfg.paused)
     }
 
+    pub(crate) fn allows_overlay(&self) -> bool {
+        let Ok(config) = self.0.config.lock() else {
+            return false;
+        };
+        if config.paused || !ambient_context::interactive_session() {
+            return false;
+        }
+        ambient_context::foreground_executable().is_some_and(|id| !config.excludes.contains(&id))
+    }
+
     pub(crate) fn request_pickup(&self) {
         let Ok(mut cfg) = self.0.config.lock() else {
             return;
