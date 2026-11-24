@@ -20,24 +20,28 @@ pub struct PersonId([u8; 32]);
 #[serde(deny_unknown_fields)]
 struct ContactCard(PersonId, PeerId, u64, u64, String);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FriendInvitation {
     nonce: Uuid,
-    issuer: PersonId,
-    issuer_device: PeerId,
-    recipient: PersonId,
-    recipient_device: PeerId,
+    pub(super) issuer: PersonId,
+    pub(super) issuer_device: PeerId,
+    pub(super) recipient: PersonId,
+    pub(super) recipient_device: PeerId,
     issued: u64,
     expires: u64,
     signature: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FriendAcceptance(String);
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FriendApproval(String);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeviceEnrollment {
     pub(super) person: PersonId,
     pub(super) device: PeerId,
@@ -77,6 +81,9 @@ fn valid_time(issued: u64, expires: u64, now: u64) -> bool {
 }
 
 impl FriendInvitation {
+    pub fn id(&self) -> Uuid {
+        self.nonce
+    }
     fn body(&self) -> impl Serialize + '_ {
         (
             self.nonce,
@@ -89,7 +96,7 @@ impl FriendInvitation {
         )
     }
 
-    fn verify(&self, now: u64) -> Result<(), TransferError> {
+    pub(super) fn verify(&self, now: u64) -> Result<(), TransferError> {
         if !valid_time(self.issued, self.expires, now) {
             return Err(ErrorCode::PairingExpired.into());
         }
@@ -109,7 +116,7 @@ impl FriendInvitation {
 }
 
 impl FriendAcceptance {
-    fn verify(&self, invite: &FriendInvitation) -> Result<(), TransferError> {
+    pub(super) fn verify(&self, invite: &FriendInvitation) -> Result<(), TransferError> {
         verify(
             invite.recipient,
             &canonical(("aerift/friends/accept/1", invite.body(), &invite.signature))?,

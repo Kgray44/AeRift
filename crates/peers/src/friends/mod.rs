@@ -11,7 +11,7 @@ pub use authority::{
 };
 pub use book::{
     FriendBook, FriendClaim, FriendControlObject, FriendDecision, FriendIncomingOffer,
-    FriendObjectKind, FriendStore,
+    FriendInviteEndpoint, FriendInviteState, FriendObjectKind, FriendStore,
 };
 
 pub use wire::FriendOfferEndpoint;

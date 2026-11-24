@@ -458,3 +458,164 @@ async fn friends_offer_fanout_retains_real_recipient_consent_and_withdrawal() {
         server.await.unwrap().unwrap();
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn private_invitation_wire_requires_both_approvals_and_exact_tls_recipient() {
+    use aerift_peers::{FriendInviteEndpoint, FriendInviteState, Identity};
+    use tokio::net::TcpListener;
+    use tokio_util::sync::CancellationToken;
+    let a = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let b = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let ap = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let bp = Identity::load_or_create(&Memory::default()).unwrap();
+    let unrelated = Identity::load_or_create(&Memory::default()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let recipient_card = b.contact_card(bp.id(), now).unwrap();
+    let a_data = Arc::new(Memory::default());
+    let a_book = Arc::new(FriendBook::open(a.id(), a_data.clone()).unwrap());
+    let b_data = Arc::new(Memory::default());
+    let b_book = FriendBook::open(b.id(), b_data.clone()).unwrap();
+    let expired_card = b.contact_card(bp.id(), now - 360).unwrap();
+    let expired = FriendInviteEndpoint::issue(&a, &ap, &a_book, &expired_card, now - 360).unwrap();
+    let pending = FriendInviteEndpoint::issue(&a, &ap, &a_book, &recipient_card, now).unwrap();
+    let nonce = pending.id();
+    assert_eq!(
+        FriendInviteEndpoint::local_state(&ap, &a_book, nonce, now).unwrap(),
+        FriendInviteState::AwaitingRecipient
+    );
+    assert!(!a_book.may_receive_from(b.id(), bp.id()).unwrap());
+    assert!(!b_book.may_receive_from(a.id(), ap.id()).unwrap());
+    assert!(FriendInviteEndpoint::approve(&a, &ap, &a_book, nonce, now).is_err());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let routes = [listener.local_addr().unwrap()];
+    let shutdown = CancellationToken::new();
+    let server = {
+        let (ap, a_book, stop) = (ap.clone(), a_book.clone(), shutdown.clone());
+        tokio::spawn(async move { FriendInviteEndpoint::serve(&ap, listener, a_book, stop).await })
+    };
+    assert!(
+        FriendInviteEndpoint::consent(&b, &bp, &b_book, &routes, &expired, now - 360)
+            .await
+            .is_err()
+    );
+    assert!(
+        FriendInviteEndpoint::consent(&b, &unrelated, &b_book, &routes, &pending, now)
+            .await
+            .is_err()
+    );
+    FriendInviteEndpoint::consent(&b, &bp, &b_book, &routes, &pending, now)
+        .await
+        .unwrap();
+    assert!(!a_book.may_receive_from(b.id(), bp.id()).unwrap());
+    assert!(
+        !FriendInviteEndpoint::finish(&b, &bp, &b_book, &routes, &pending, now)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        FriendInviteEndpoint::local_state(&ap, &a_book, nonce, now).unwrap(),
+        FriendInviteState::RecipientConsented
+    );
+    let b_book = FriendBook::open(b.id(), b_data).unwrap();
+    let reopened = FriendBook::open(a.id(), a_data).unwrap();
+    FriendInviteEndpoint::approve(&a, &ap, &reopened, nonce, now).unwrap();
+    assert_eq!(
+        FriendInviteEndpoint::local_state(&ap, &a_book, nonce, now).unwrap(),
+        FriendInviteState::Confirmed
+    );
+    assert!(a_book.may_receive_from(b.id(), bp.id()).unwrap());
+    assert!(
+        FriendInviteEndpoint::finish(&b, &bp, &b_book, &routes, &pending, now)
+            .await
+            .unwrap()
+    );
+    assert!(b_book.may_receive_from(a.id(), ap.id()).unwrap());
+    b_book.remove(a.id()).unwrap();
+    assert!(
+        FriendInviteEndpoint::finish(&b, &bp, &b_book, &routes, &pending, now)
+            .await
+            .is_err()
+    );
+    assert!(!b_book.may_receive_from(a.id(), ap.id()).unwrap());
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn private_roster_enrollment_requires_signed_grant_expected_peer_and_does_not_replay_revoked_device()
+ {
+    use aerift_peers::{FriendInviteEndpoint, Identity};
+    use tokio::net::TcpListener;
+    use tokio_util::sync::CancellationToken;
+
+    let a = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let b = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let receiver = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let existing = Identity::load_or_create(&Memory::default()).unwrap();
+    let additional = Identity::load_or_create(&Memory::default()).unwrap();
+    let wrong = Identity::load_or_create(&Memory::default()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let invite = a.invite(receiver.id(), b.id(), existing.id(), now).unwrap();
+    let consent = b
+        .accept(&invite, receiver.id(), existing.id(), now)
+        .unwrap();
+    let approval = a.confirm(&invite, &consent, existing.id(), now).unwrap();
+    let record = FriendRecord::verify(
+        &invite,
+        &consent,
+        &approval,
+        a.id(),
+        receiver.id(),
+        existing.id(),
+        now,
+    )
+    .unwrap();
+    let relationship = record.relationship();
+    let book = Arc::new(FriendBook::open(a.id(), Arc::new(Memory::default())).unwrap());
+    book.add(record, now).unwrap();
+
+    let grant = b.enroll(relationship, additional.id(), now).unwrap();
+    let ticket = FriendInviteEndpoint::expect_device(&receiver, &book, grant, now).unwrap();
+    assert!(!book.may_receive_from(b.id(), additional.id()).unwrap());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let routes = [listener.local_addr().unwrap()];
+    let shutdown = CancellationToken::new();
+    let server = {
+        let (receiver, book, stop) = (receiver.clone(), book.clone(), shutdown.clone());
+        tokio::spawn(
+            async move { FriendInviteEndpoint::serve(&receiver, listener, book, stop).await },
+        )
+    };
+    assert!(
+        FriendInviteEndpoint::prove_device(&wrong, &routes, receiver.id(), ticket)
+            .await
+            .is_err()
+    );
+    assert!(
+        FriendInviteEndpoint::prove_device(&additional, &routes, receiver.id(), Uuid::new_v4())
+            .await
+            .is_err()
+    );
+    FriendInviteEndpoint::prove_device(&additional, &routes, receiver.id(), ticket)
+        .await
+        .unwrap();
+    assert!(book.may_receive_from(b.id(), additional.id()).unwrap());
+    FriendInviteEndpoint::prove_device(&additional, &routes, receiver.id(), ticket)
+        .await
+        .unwrap();
+    book.revoke_device(b.id(), additional.id()).unwrap();
+    assert!(
+        FriendInviteEndpoint::prove_device(&additional, &routes, receiver.id(), ticket)
+            .await
+            .is_err()
+    );
+    assert!(!book.may_receive_from(b.id(), additional.id()).unwrap());
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}

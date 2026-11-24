@@ -46,47 +46,15 @@ impl FriendOfferEndpoint {
         book: Arc<FriendBook>,
         shutdown: CancellationToken,
     ) -> Result<(), TransferError> {
-        let bound = listener.local_addr().map_err(|_| ErrorCode::NetworkError)?;
-        if !RemotePeerNode::supports_private_endpoint(bound) {
-            return Err(ErrorCode::InvalidRequest.into());
-        }
-        let local = identity.id();
-        let mut config = identity.server_config()?;
-        config.alpn_protocols = vec![ALPN.to_vec()];
-        let tls = TlsAcceptor::from(Arc::new(config));
-        let mut tasks = JoinSet::new();
-        let connections = Arc::new(Semaphore::new(16));
-        loop {
-            tokio::select! {
-                biased;
-                _ = shutdown.cancelled() => break,
-                _ = tasks.join_next(), if !tasks.is_empty() => {},
-                next = listener.accept() => {
-                    let (socket, _) = next.map_err(|_| ErrorCode::NetworkError)?;
-                    let Ok(permit) = connections.clone().try_acquire_owned() else { continue; };
-                    let tls = tls.clone();
-                    let book = book.clone();
-                    tasks.spawn(async move {
-                        let _permit = permit;
-                        let Ok(Ok(stream)) = timeout(BUDGET, tls.accept(socket)).await else { return; };
-                        let session = stream.get_ref().1;
-                        if session.alpn_protocol() != Some(ALPN) { return; }
-                        let Some(leaf) = session.peer_certificates().and_then(|chain| chain.first()) else { return; };
-                        let authenticated = PeerId::from_tls_leaf(leaf.as_ref());
-                        let service = service_fn(|request| {
-                            let book = book.clone();
-                            async move { Ok::<_, Infallible>(dispatch(request, authenticated, local, &book).await) }
-                        });
-                        let _ = hyper::server::conn::http1::Builder::new()
-                            .timer(TokioTimer::new()).header_read_timeout(BUDGET)
-                            .max_buf_size(16 * 1024).keep_alive(false)
-                            .serve_connection(TokioIo::new(stream), service).await;
-                    });
-                }
-            }
-        }
-        tasks.shutdown().await;
-        Ok(())
+        serve_scoped(
+            identity,
+            listener,
+            book,
+            shutdown,
+            ALPN,
+            |request, peer, local, book| async move { dispatch(request, peer, local, &book).await },
+        )
+        .await
     }
 
     /// Contact only the exact, previously enrolled device at a route supplied
@@ -195,6 +163,61 @@ impl FriendOfferEndpoint {
     }
 }
 
+pub(super) async fn serve_scoped<H, F>(
+    identity: &Identity,
+    listener: TcpListener,
+    book: Arc<FriendBook>,
+    shutdown: CancellationToken,
+    alpn: &'static [u8],
+    handler: H,
+) -> Result<(), TransferError>
+where
+    H: Fn(Request<Incoming>, PeerId, PeerId, Arc<FriendBook>) -> F + Copy + Send + Sync + 'static,
+    F: std::future::Future<Output = Response<Full<Bytes>>> + Send + 'static,
+{
+    let bound = listener.local_addr().map_err(|_| ErrorCode::NetworkError)?;
+    if !RemotePeerNode::supports_private_endpoint(bound) {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    let local = identity.id();
+    let mut config = identity.server_config()?;
+    config.alpn_protocols = vec![alpn.to_vec()];
+    let tls = TlsAcceptor::from(Arc::new(config));
+    let mut tasks = JoinSet::new();
+    let connections = Arc::new(Semaphore::new(16));
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => break,
+            _ = tasks.join_next(), if !tasks.is_empty() => {},
+            next = listener.accept() => {
+                let (socket, _) = next.map_err(|_| ErrorCode::NetworkError)?;
+                let Ok(permit) = connections.clone().try_acquire_owned() else { continue; };
+                let tls = tls.clone();
+                let book = book.clone();
+                tasks.spawn(async move {
+                    let _permit = permit;
+                    let Ok(Ok(stream)) = timeout(BUDGET, tls.accept(socket)).await else { return; };
+                    let session = stream.get_ref().1;
+                    if session.alpn_protocol() != Some(alpn) { return; }
+                    let Some(leaf) = session.peer_certificates().and_then(|chain| chain.first()) else { return; };
+                    let authenticated = PeerId::from_tls_leaf(leaf.as_ref());
+                    let service = service_fn(|request| {
+                        let book = book.clone();
+                        async move { Ok::<_, Infallible>(handler(request, authenticated, local, book).await) }
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .timer(TokioTimer::new()).header_read_timeout(BUDGET)
+                        .max_buf_size(16 * 1024).keep_alive(false)
+                        .serve_connection(TokioIo::new(stream), service).await;
+                });
+            }
+        }
+    }
+    tasks.shutdown().await;
+    Ok(())
+}
+
 async fn dispatch(
     request: Request<Incoming>,
     peer: PeerId,
@@ -245,14 +268,14 @@ async fn dispatch(
     }
 }
 
-fn wall_clock() -> Result<u64, TransferError> {
+pub(super) fn wall_clock() -> Result<u64, TransferError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|time| time.as_secs())
         .map_err(|_| ErrorCode::InternalError.into())
 }
 
-fn response<T: Serialize>(result: Result<T, TransferError>) -> Response<Full<Bytes>> {
+pub(super) fn response<T: Serialize>(result: Result<T, TransferError>) -> Response<Full<Bytes>> {
     let status = match &result {
         Ok(_) => 200,
         Err(error) => match error.code {
@@ -278,13 +301,24 @@ async fn client<T: DeserializeOwned>(
     path: &'static str,
     control: impl Serialize,
 ) -> Result<T, TransferError> {
+    scoped_client(identity, routes, issuer, path, control, ALPN).await
+}
+
+pub(super) async fn scoped_client<T: DeserializeOwned>(
+    identity: &Identity,
+    routes: &[SocketAddr],
+    issuer: PeerId,
+    path: &'static str,
+    control: impl Serialize,
+    alpn: &'static [u8],
+) -> Result<T, TransferError> {
     if routes
         .iter()
         .any(|a| !RemotePeerNode::supports_private_endpoint(*a))
     {
         return Err(ErrorCode::InvalidRequest.into());
     }
-    let endpoint = pinned_endpoint(identity, routes, issuer, None, ALPN)?;
+    let endpoint = pinned_endpoint(identity, routes, issuer, None, alpn)?;
     let request = Request::post(path)
         .header(header::HOST, endpoint.authority())
         .header(header::CONNECTION, "close")

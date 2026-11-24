@@ -4,8 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use uuid::{Uuid, Variant, Version};
 
+#[path = "admission.rs"]
+mod admission;
 #[path = "fanout.rs"]
 mod fanout;
+pub use admission::{FriendInviteEndpoint, FriendInviteState};
 pub(super) use fanout::Delivery;
 pub use fanout::{FriendControlObject, FriendIncomingOffer, FriendObjectKind};
 
@@ -52,6 +55,12 @@ struct Data {
     offers: Vec<Offer>,
     #[serde(default)]
     incoming: Vec<FriendIncomingOffer>,
+    #[serde(default)]
+    invites: Vec<admission::PendingInvite>,
+    #[serde(default)]
+    enrollments: Vec<admission::PendingEnrollment>,
+    #[serde(default)]
+    consent_drafts: Vec<admission::RecipientConsent>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -97,6 +106,9 @@ impl FriendBook {
                 friends: Vec::new(),
                 offers: Vec::new(),
                 incoming: Vec::new(),
+                invites: Vec::new(),
+                enrollments: Vec::new(),
+                consent_drafts: Vec::new(),
             });
         };
         if raw.len() > MAX_STORE_BYTES {
@@ -133,32 +145,34 @@ impl FriendBook {
     }
 
     pub fn add(&self, friend: FriendRecord, now: u64) -> Result<(), TransferError> {
-        self.mutate(|state| {
-            if friend.owner != self.owner {
-                return Err(ErrorCode::PeerUntrusted.into());
-            }
-            if now >= friend.expires {
-                return Err(ErrorCode::PairingExpired.into());
-            }
-            if state.used.contains(&friend.nonce)
-                || state.friends.iter().any(|existing| {
-                    existing.person == friend.person || existing.devices.contains(&friend.primary)
-                })
-                || state.friends.len() >= MAX_FRIENDS
-                || state.used.len() >= MAX_USED
-            {
-                return Err(ErrorCode::Conflict.into());
-            }
-            state.used.push(friend.nonce);
-            state.friends.push(Friend {
-                person: friend.person,
-                relationship: friend.nonce,
-                devices: vec![friend.primary],
-                revoked: Vec::new(),
-                receive_allowed: true,
-            });
-            Ok(())
-        })
+        self.mutate(|state| Self::add_record(state, friend, now))
+    }
+
+    fn add_record(state: &mut Data, friend: FriendRecord, now: u64) -> Result<(), TransferError> {
+        if friend.owner != state.owner {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        if now >= friend.expires {
+            return Err(ErrorCode::PairingExpired.into());
+        }
+        if state.used.contains(&friend.nonce)
+            || state.friends.iter().any(|existing| {
+                existing.person == friend.person || existing.devices.contains(&friend.primary)
+            })
+            || state.friends.len() >= MAX_FRIENDS
+            || state.used.len() >= MAX_USED
+        {
+            return Err(ErrorCode::Conflict.into());
+        }
+        state.used.push(friend.nonce);
+        state.friends.push(Friend {
+            person: friend.person,
+            relationship: friend.nonce,
+            devices: vec![friend.primary],
+            revoked: Vec::new(),
+            receive_allowed: true,
+        });
+        Ok(())
     }
 
     /// Admission is a scoped local UI decision in addition to the person-signed
@@ -169,29 +183,36 @@ impl FriendBook {
         authenticated_device: PeerId,
         now: u64,
     ) -> Result<(), TransferError> {
+        self.mutate(|state| Self::enroll_record(state, &enrollment, authenticated_device, now))
+    }
+
+    fn enroll_record(
+        state: &mut Data,
+        enrollment: &DeviceEnrollment,
+        authenticated_device: PeerId,
+        now: u64,
+    ) -> Result<(), TransferError> {
         enrollment.verify(authenticated_device, now)?;
-        self.mutate(|state| {
-            if state
-                .friends
-                .iter()
-                .any(|friend| friend.devices.contains(&enrollment.device))
-            {
-                return Err(ErrorCode::Conflict.into());
-            }
-            let friend = state
-                .friends
-                .iter_mut()
-                .find(|friend| friend.person == enrollment.person)
-                .ok_or(ErrorCode::PeerUntrusted)?;
-            if friend.relationship != enrollment.relationship
-                || friend.revoked.contains(&enrollment.device)
-                || friend.devices.len() + friend.revoked.len() >= MAX_DEVICES
-            {
-                return Err(ErrorCode::PeerUntrusted.into());
-            }
-            friend.devices.push(enrollment.device);
-            Ok(())
-        })
+        if state
+            .friends
+            .iter()
+            .any(|friend| friend.devices.contains(&enrollment.device))
+        {
+            return Err(ErrorCode::Conflict.into());
+        }
+        let friend = state
+            .friends
+            .iter_mut()
+            .find(|friend| friend.person == enrollment.person)
+            .ok_or(ErrorCode::PeerUntrusted)?;
+        if friend.relationship != enrollment.relationship
+            || friend.revoked.contains(&enrollment.device)
+            || friend.devices.len() + friend.revoked.len() >= MAX_DEVICES
+        {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        friend.devices.push(enrollment.device);
+        Ok(())
     }
 
     pub fn revoke_device(&self, person: PersonId, device: PeerId) -> Result<(), TransferError> {
