@@ -54,8 +54,8 @@ pub struct FriendFileWindow {
 struct Outbound {
     manifest: Offer,
     source: PathBuf,
-    recipient: PeerId,
-    route: FriendFileRoute,
+    recipients: Vec<(PeerId, FriendFileRoute)>,
+    notified: usize,
 }
 
 impl Drop for FriendFileWindow {
@@ -161,8 +161,49 @@ impl FriendFileWindow {
         path: PathBuf,
         route: FriendFileRoute,
     ) -> Result<Uuid, TransferError> {
-        let now = self.ensure_open()?;
-        let route = FriendFileRoute::new(route.offers, route.payload)?;
+        self.offer_to_routes(person, Some(device), path, &[(device, route)])
+            .await
+    }
+
+    /// One offer addressed to a verified person. The routes are explicitly
+    /// supplied for that person's individually authorized devices; nothing is
+    /// discovered, and an unlisted device has no delivery ticket or claim.
+    pub async fn offer_person(
+        &self,
+        person: PersonId,
+        path: PathBuf,
+        routes: &[(PeerId, FriendFileRoute)],
+    ) -> Result<Uuid, TransferError> {
+        self.offer_to_routes(person, None, path, routes).await
+    }
+
+    async fn offer_to_routes(
+        &self,
+        person: PersonId,
+        device: Option<PeerId>,
+        path: PathBuf,
+        routes: &[(PeerId, FriendFileRoute)],
+    ) -> Result<Uuid, TransferError> {
+        self.ensure_open()?;
+        if routes.is_empty() || routes.len() > 32 {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        let friend = self
+            .book
+            .contacts()?
+            .into_iter()
+            .find(|f| f.person == person)
+            .ok_or(ErrorCode::PeerUntrusted)?;
+        let mut unique = std::collections::HashSet::new();
+        for (device, route) in routes {
+            if !unique.insert(*device) {
+                return Err(ErrorCode::InvalidRequest.into());
+            }
+            if !friend.devices.contains(device) {
+                return Err(ErrorCode::PeerUntrusted.into());
+            }
+            FriendFileRoute::new(route.offers, route.payload)?;
+        }
         let name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -174,33 +215,60 @@ impl FriendFileWindow {
         let manifest = FriendPayloadEndpoint::stage_file(
             &self.book,
             person,
-            Some(device),
+            device,
             &path,
             name,
             self.expires,
         )
         .await?;
-        let route_list = [route.offers];
-        let delivery = tokio::select! {
-            result = FriendOfferEndpoint::deliver(&self.identity, &self.book, manifest.id, device, &route_list, now) => result,
-            _ = self.stop.cancelled() => Err(ErrorCode::Cancelled.into()),
-        };
-        if let Err(error) = delivery {
-            self.book.withdraw(manifest.id)?;
-            return Err(error);
+        let mut last_error = None;
+        let mut notified = 0;
+        for (device, route) in routes {
+            if !self.is_open() {
+                break;
+            }
+            let now = wall_clock()?;
+            let route_list = [route.offers];
+            let delivery = tokio::select! {
+                result = FriendOfferEndpoint::deliver(&self.identity, &self.book, manifest.id, *device, &route_list, now) => result,
+                _ = self.stop.cancelled() => Err(ErrorCode::Cancelled.into()),
+            };
+            match delivery {
+                Ok(()) => notified += 1,
+                Err(error) => last_error = Some(error),
+            }
         }
         let id = manifest.id;
-        if !self.is_open() {
+        if !self.is_open() || (notified == 0 && self.book.winner(id)?.is_none()) {
             self.book.withdraw(id)?;
-            return Err(ErrorCode::Cancelled.into());
+            return Err(last_error.unwrap_or_else(|| ErrorCode::Cancelled.into()));
         }
         *pending = Some(Outbound {
             manifest,
             source: path,
-            recipient: device,
-            route,
+            recipients: routes.to_vec(),
+            notified,
         });
         Ok(id)
+    }
+
+    /// Poll only the exact known offer over that issuer's pinned control lane.
+    /// Reconciles a losing or withdrawn prompt without requesting an award.
+    pub async fn reconcile(
+        &self,
+        issuer: PeerId,
+        id: Uuid,
+        route: SocketAddr,
+    ) -> Result<FriendDecision, TransferError> {
+        let now = self.ensure_open()?;
+        if !RemotePeerNode::supports_private_endpoint(route) {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        let routes = [route];
+        tokio::select! {
+            result = FriendOfferEndpoint::refresh_received(&self.identity,&self.book,&routes,issuer,id,now) => result,
+            _ = self.stop.cancelled() => Err(ErrorCode::Cancelled.into()),
+        }
     }
 
     pub async fn accept(
@@ -233,16 +301,32 @@ impl FriendFileWindow {
             .map(|_| ())
     }
 
+    // Retain the existing selected-device adapter contract.
     pub fn outgoing(&self) -> Result<Option<(Uuid, PeerId, bool)>, TransferError> {
         let pending = self.pending.try_lock().map_err(|_| ErrorCode::Conflict)?;
         pending
             .as_ref()
+            .filter(|entry| entry.recipients.len() == 1)
             .map(|entry| {
+                let recipient = entry.recipients[0].0;
                 Ok((
                     entry.manifest.id,
-                    entry.recipient,
-                    self.book.winner(entry.manifest.id)? == Some(entry.recipient),
+                    recipient,
+                    self.book.winner(entry.manifest.id)? == Some(recipient),
                 ))
+            })
+            .transpose()
+    }
+
+    /// Returns exact route count reported delivered, and only the current
+    /// committed winner. Does not infer availability for undelivered devices.
+    pub fn outgoing_person(&self) -> Result<Option<(Uuid, usize, Option<PeerId>)>, TransferError> {
+        let pending = self.pending.try_lock().map_err(|_| ErrorCode::Conflict)?;
+        pending
+            .as_ref()
+            .map(|entry| {
+                let id = entry.manifest.id;
+                Ok((id, entry.notified, self.book.winner(id)?))
             })
             .transpose()
     }
@@ -254,13 +338,17 @@ impl FriendFileWindow {
             .as_ref()
             .filter(|entry| entry.manifest.id == id)
             .ok_or(ErrorCode::InvalidRequest)?;
-        if self.book.winner(id)? != Some(entry.recipient) {
-            return Err(ErrorCode::TransferRejected.into());
-        }
+        let winner = self.book.winner(id)?.ok_or(ErrorCode::TransferRejected)?;
+        let route = entry
+            .recipients
+            .iter()
+            .find(|(peer, _)| *peer == winner)
+            .map(|(_, route)| route)
+            .ok_or(ErrorCode::TransferRejected)?;
         let result = FriendPayloadEndpoint::send_file(
             &self.identity,
             self.book.clone(),
-            &[entry.route.payload],
+            &[route.payload],
             &entry.manifest,
             &entry.source,
             self.stop.child_token(),

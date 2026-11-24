@@ -154,3 +154,25 @@ This iteration addresses **one chosen authorized device** rather than
 discovering or fanning out to an unavailable roster. Person-targeted payload
 selection, folders/objects, mobile and hands-free flow require further product
 integration. Native hosted proof and physical/network coverage are separate.
+
+### Selecting a person instead of a device
+
+The shared private file-window interface can target a verified person's roster
+instead of a single device. It requires explicit supplied routes for already
+enrolled device IDs and rejects missing, duplicate or foreign device IDs.
+There is no directory, route scanning, or fallback trust. One immutable offer
+ID and manifest are reused across all reached devices; a transport-scoped
+delivery ticket and an authenticated, explicitly accepted prompt are required
+on each. The sender's protected book commits a single winner. On rechecking
+the original pinned issuer, losers see withdrawal, never the winner identity.
+Revoking the winning device prevents release without selecting a replacement.
+A new transfer requires a new offer. The Windows explicit-device flow keeps
+its existing contract.
+
+The shared adapter is verified with three distinct TLS device key pairs and
+two enrolled recipient endpoints competing for one award. It does not activate
+a second route architecture or add new listener roles. The product still needs
+native multi-device enrollment/provisioning and a page for supplying all
+verified routes and reconciling withdrawn prompts, plus appropriate protected
+person storage on mobile and install/device qualification. No app claims to
+offer start-to-finish person targeting on this change alone.
