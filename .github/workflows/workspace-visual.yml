@@ -1,0 +1,50 @@
+name: AeRift Workspace browser qualification
+
+on:
+  pull_request:
+    paths:
+      - 'apps/aerift/src/**'
+      - 'packages/ui/**'
+      - 'tests/ui/**'
+      - '.github/workflows/workspace-visual.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Synthetic desktop, iOS and Android UI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Install fixture browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/aerift-browser" --ignore-scripts --no-save playwright@1.57.0
+          node "$RUNNER_TEMP/aerift-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Build fixture and exercise real UI in Chromium
+        run: |
+          npm run test:ui
+          ./node_modules/.bin/vite preview --config tests/ui/vite.config.mts --host 127.0.0.1 --port 4175 > "$RUNNER_TEMP/aerift-vite.log" 2>&1 &
+          for attempt in {1..25}; do
+            curl --fail --silent localhost:4175/mobile.html -o /dev/null && break
+            sleep 1
+          done
+          AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            AERIFT_WORKSPACE_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
+            node tests/ui/workspace-browser.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: workspace-browser-evidence
+          path: ${{ runner.temp }}/aerift-workspace-evidence
+          if-no-files-found: ignore
+          retention-days: 7

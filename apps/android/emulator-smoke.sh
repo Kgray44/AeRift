@@ -100,6 +100,7 @@ tap_label() {
 # These assertions use public accessibility labels on the production WebView.
 await_ui 'Your portable workspace' >/dev/null
 tap_label 'Open Workspace'
+tap_label 'File Browser'
 tap_label 'Choose for Rift'
 if ! await_ui "$fixture_name" 2 >/dev/null; then
   if ! tap_label 'Show roots' 2; then tap_label 'Open navigation drawer' 2; fi
