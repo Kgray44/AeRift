@@ -13,7 +13,7 @@ use crate::{
     windows_storage::storage_failed,
 };
 
-async fn session(window: &tauri::WebviewWindow) -> Result<Arc<Session>, TransferError> {
+pub(crate) async fn session(window: &tauri::WebviewWindow) -> Result<Arc<Session>, TransferError> {
     require_main(window)?;
     let root = window.path().app_local_data_dir().map_err(storage_failed)?;
     window.state::<AppRuntime>().session(root).await

@@ -140,6 +140,17 @@ impl Inbox {
         key: TransferKey,
         selected: &Path,
     ) -> Result<(), TransferError> {
+        self.save_verified_copy_guarded(key, selected, || true)
+    }
+
+    /// Contextual adapters supply a final fail-closed native authorization
+    /// check. A refused guard must never publish the verified staged bytes.
+    pub fn save_verified_copy_guarded(
+        &self,
+        key: TransferKey,
+        selected: &Path,
+        authorize_commit: impl FnOnce() -> bool,
+    ) -> Result<(), TransferError> {
         let _job = self
             .verification
             .try_lock()
@@ -165,6 +176,9 @@ impl Inbox {
             .map_err(storage)?;
         stream_verified_payload(&source.join(CONTENT), &record.offer, &mut stage)?;
         stage.as_file().sync_all().map_err(storage)?;
+        if !authorize_commit() {
+            return Err(ErrorCode::Cancelled.into());
+        }
         stage.persist_noclobber(destination).map_err(|err| {
             if err.error.kind() == io::ErrorKind::AlreadyExists {
                 ErrorCode::Conflict.into()
@@ -524,6 +538,15 @@ mod inbox_export_tests {
         let selected = destination.path().join("chosen.txt");
         inbox.save_verified_copy(key, &selected).unwrap();
         assert_eq!(fs::read(&selected).unwrap(), payload);
+        let revoked = destination.path().join("revoked");
+        assert_eq!(
+            inbox
+                .save_verified_copy_guarded(key, &revoked, || false)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert!(!revoked.exists());
         fs::write(&selected, b"existing").unwrap();
         assert!(inbox.save_verified_copy(key, &selected).is_err());
         assert_eq!(fs::read(&selected).unwrap(), b"existing");

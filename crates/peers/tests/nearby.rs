@@ -151,3 +151,96 @@ async fn unobserved_sources_and_different_certificates_cannot_initiate() {
     stop.cancel();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn ambient_mount_requires_native_scope_and_never_changes_ordinary_transfer_route() {
+    use aerift_peers::TrustStore;
+    use aerift_transfer::{
+        ErrorCode,
+        ambient::{Candidate, CaptureContext, CaptureLimits, freeze, nearby_drop::NearbyDrop},
+    };
+    use std::{
+        sync::atomic::{AtomicBool, Ordering},
+        time::{Duration, Instant},
+    };
+
+    let a_dir = tempfile::tempdir().unwrap();
+    let b_dir = tempfile::tempdir().unwrap();
+    let a_store = Arc::new(Store::default());
+    let b_store = Arc::new(Store::default());
+    let a_seed = node("fixture A", &a_store, a_dir.path());
+    let b_seed = node("fixture B", &b_store, b_dir.path());
+    a_store.put(&b_seed.pairing().device()).unwrap();
+    b_store.put(&a_seed.pairing().device()).unwrap();
+    let a = node("fixture A", &a_store, a_dir.path());
+    let b = node("fixture B", &b_store, b_dir.path());
+    let a_id = a.pairing().device().id;
+    let b_id = b.pairing().device().id;
+
+    let file = b_dir.path().join("selected");
+    std::fs::write(&file, b"fixture").unwrap();
+    let capture = freeze(
+        CaptureContext {
+            explicit_selection: vec![Candidate::path(file)],
+            ..Default::default()
+        },
+        CaptureLimits::default(),
+    )
+    .unwrap();
+    let pickup = Arc::new(NearbyDrop::open(capture, Instant::now()).unwrap());
+    let enabled = Arc::new(AtomicBool::new(false));
+    let nearby = Arc::new(AtomicBool::new(true));
+    let generation = CancellationToken::new();
+    let stop = CancellationToken::new();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let serving = tokio::spawn({
+        let (enabled, nearby, generation, stop) = (
+            enabled.clone(),
+            nearby.clone(),
+            generation.clone(),
+            stop.clone(),
+        );
+        async move {
+            b.serve_with_nearby_ambient(
+                listener,
+                stop,
+                move |peer, addr| {
+                    peer == a_id && addr.ip().is_loopback() && nearby.load(Ordering::SeqCst)
+                },
+                Arc::new(move || {
+                    enabled
+                        .load(Ordering::SeqCst)
+                        .then(|| (Some(pickup.clone()), generation.clone()))
+                }),
+            )
+            .await
+            .unwrap();
+        }
+    });
+
+    let client = a
+        .sender(addr, b_id, Duration::from_secs(4), Duration::from_secs(4))
+        .unwrap();
+    assert_eq!(
+        client.nearby_drop_challenge().await.unwrap_err().code,
+        ErrorCode::UnsupportedVersion
+    );
+    assert!(!client.receiver_ready().await.unwrap());
+    enabled.store(true, Ordering::SeqCst);
+    let challenge = client.nearby_drop_challenge().await.unwrap().unwrap();
+    nearby.store(false, Ordering::SeqCst);
+    assert_eq!(
+        client.record_nearby_drop(challenge).await.unwrap_err().code,
+        ErrorCode::PeerUntrusted
+    );
+    assert!(!client.receiver_ready().await.unwrap());
+    nearby.store(true, Ordering::SeqCst);
+    generation.cancel();
+    assert_eq!(
+        client.record_nearby_drop(challenge).await.unwrap_err().code,
+        ErrorCode::PeerUntrusted
+    );
+    stop.cancel();
+    serving.await.unwrap();
+}

@@ -243,6 +243,39 @@ impl<C: Connector> Sender<C> {
             .and_then(validate_status)
     }
 
+    pub async fn nearby_drop_challenge(&self) -> Result<Option<Uuid>, TransferError> {
+        use crate::ambient::nearby_drop::{Availability, PATH};
+        let revoked = self.connector.trust_revoked().unwrap_or_default();
+        let reply = tokio::select! {
+            biased;
+            _ = revoked.cancelled() => return Err(ErrorCode::PeerUntrusted.into()),
+            result = self.control::<Availability>(Method::GET, PATH, Vec::new()) => result?,
+        };
+        reply
+            .challenge
+            .map(|raw| crate::parse_id(&raw).ok_or(ErrorCode::InvalidRequest.into()))
+            .transpose()
+    }
+
+    /// Called only in response to an explicit recipient drop, using the pinned Nearby connector.
+    pub async fn record_nearby_drop(&self, interaction: Uuid) -> Result<(), TransferError> {
+        use crate::ambient::nearby_drop::{Claim, PATH, Recorded};
+        let body = serde_json::to_vec(&Claim {
+            interaction: interaction.to_string(),
+        })
+        .map_err(|_| ErrorCode::InternalError)?;
+        let revoked = self.connector.trust_revoked().unwrap_or_default();
+        let reply = tokio::select! {
+            biased;
+            _ = revoked.cancelled() => return Err(ErrorCode::PeerUntrusted.into()),
+            result = self.control::<Recorded>(Method::POST, PATH, body) => result?,
+        };
+        if !reply.recorded {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        Ok(())
+    }
+
     /// Read the peer's optional availability signal without sending file metadata.
     pub async fn receiver_ready(&self) -> Result<bool, TransferError> {
         let revoked = self.connector.trust_revoked().unwrap_or_default();

@@ -471,7 +471,7 @@ async fn receive(
     }
 }
 
-fn error(failure: TransferError) -> Reply {
+pub(crate) fn error(failure: TransferError) -> Reply {
     let status = match failure.code {
         ErrorCode::InvalidRequest | ErrorCode::UnsupportedVersion => StatusCode::BAD_REQUEST,
         ErrorCode::PeerUntrusted | ErrorCode::PairingRejected => StatusCode::FORBIDDEN,
@@ -488,7 +488,7 @@ fn error(failure: TransferError) -> Reply {
     json(status, &failure)
 }
 
-fn json(status: StatusCode, data: &impl serde::Serialize) -> Reply {
+pub(crate) fn json(status: StatusCode, data: &impl serde::Serialize) -> Reply {
     let body = serde_json::to_vec(data).expect("serializable v1 response");
     Response::builder()
         .status(status)

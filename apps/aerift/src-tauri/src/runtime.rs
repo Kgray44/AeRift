@@ -141,7 +141,9 @@ pub(crate) struct TransferView {
 pub(crate) struct AmbientTransferProjection {
     version: u8,
     interaction: Uuid,
-    sequence: u16,
+    sequence: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    count: Option<usize>,
     phase: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     progress: Option<f64>,
@@ -182,13 +184,14 @@ impl AmbientTransferProjection {
         let sequence = match phase {
             "offering" => 1000,
             "awaiting-acceptance" => 2000,
-            "transferring" | "receiving" => 3000 + (progress.unwrap_or(0.0) * 999.0) as u16,
+            "transferring" | "receiving" => 3000 + (progress.unwrap_or(0.0) * 999.0) as u32,
             _ => 4000,
         };
         Some(Self {
             version: 1,
             interaction: transfer.interaction_id,
             sequence,
+            count: None,
             phase,
             progress,
             verified: verified.then_some(true),
@@ -337,6 +340,10 @@ pub(crate) struct Session {
     _profile_lock: File,
     #[cfg(windows)]
     inbox: Option<Arc<Inbox>>,
+    #[cfg(windows)]
+    a4_ambient: Mutex<Option<crate::ambient_runtime::AmbientRuntime>>,
+    #[cfg(windows)]
+    a4_projection: watch::Sender<Option<AmbientTransferProjection>>,
     #[cfg(any(target_os = "ios", target_os = "android"))]
     discovery_start: tokio::sync::Mutex<()>,
     #[cfg(target_os = "ios")]
@@ -444,7 +451,13 @@ impl AppRuntime {
         &self,
         interaction: Option<Uuid>,
     ) -> Option<AmbientTransferProjection> {
-        self.session.get()?.ambient_projection(interaction)
+        let session = self.session.get()?;
+        let source = session.a4_projection.borrow();
+        source
+            .as_ref()
+            .filter(|f| interaction.is_none_or(|id| f.interaction == id))
+            .cloned()
+            .or_else(|| session.ambient_projection(interaction))
     }
 
     #[cfg(windows)]
@@ -470,8 +483,11 @@ impl AppRuntime {
         });
         let mut changed = session.changes.subscribe();
         let mut incoming = session.receiver.subscribe();
+        let mut a4 = session.a4_projection.subscribe();
         tauri::async_runtime::spawn(async move {
-            let mut previous = session.ambient_projection(None);
+            let initial_a4 = a4.borrow_and_update().clone();
+            let a4_epoch = initial_a4.as_ref().map(|frame| frame.interaction);
+            let mut previous = initial_a4.or_else(|| session.ambient_projection(None));
             if updates.send(previous.clone()).is_err() || previous.is_none() {
                 if !stop.is_cancelled() {
                     let _ = window.destroy();
@@ -485,20 +501,39 @@ impl AppRuntime {
                     _ = stop.cancelled() => break,
                     result = changed.changed() => if result.is_err() { break },
                     result = incoming.changed() => if result.is_err() { break },
+                    result = a4.changed(), if a4_epoch.is_some() => if result.is_err() { break },
                 }
                 // Coalesce transport chunks without polling or delaying the transfer.
                 tokio::time::sleep(Duration::from_millis(80)).await;
                 if stop.is_cancelled() {
                     break;
                 }
-                let current = session.ambient_projection(interaction);
+                let current = if let Some(epoch) = a4_epoch {
+                    a4.borrow_and_update()
+                        .as_ref()
+                        .filter(|f| f.interaction == epoch)
+                        .cloned()
+                } else {
+                    session.ambient_projection(interaction)
+                };
                 if current == previous {
                     continue;
                 }
                 if updates.send(current.clone()).is_err() {
                     break;
                 }
-                let terminal = current.as_ref().is_none_or(|f| f.sequence == 4000);
+                let terminal = current.as_ref().is_none_or(|f| {
+                    matches!(
+                        f.phase,
+                        "completed"
+                            | "cancelled"
+                            | "expired"
+                            | "rejected"
+                            | "disconnected"
+                            | "interrupted"
+                            | "failed"
+                    )
+                });
                 if terminal {
                     // This tail is visual only. Nothing waits for the observer.
                     tokio::select! {
@@ -595,6 +630,10 @@ impl Session {
             inbox,
             peer,
             receiver,
+            #[cfg(windows)]
+            a4_ambient: Mutex::new(None),
+            #[cfg(windows)]
+            a4_projection: watch::channel(None).0,
             receive_approvals: Mutex::new(()),
             nearby_initiation: tokio::sync::Mutex::new(()),
             state: Mutex::new(LiveState {
@@ -618,10 +657,31 @@ impl Session {
                 }
             };
             let discovery_scope = Arc::downgrade(&active);
+            let is_nearby = move |id, source| {
+                discovery_scope
+                    .upgrade()
+                    .is_some_and(|session| session.nearby_source(id, source))
+            };
+            #[cfg(windows)]
+            let serving = {
+                let ambient_scope = Arc::downgrade(&active);
+                active.peer.serve_with_nearby_ambient(
+                    listener,
+                    active.stop.clone(),
+                    is_nearby,
+                    Arc::new(move || {
+                        let session = ambient_scope.upgrade()?;
+                        let runtime = lock(&session.a4_ambient).clone()?;
+                        runtime.a4_for_nearby().ok()?.source()
+                    }),
+                )
+            };
+            #[cfg(not(windows))]
+            let serving = active
+                .peer
+                .serve_with_nearby(listener, active.stop.clone(), is_nearby);
             tokio::select! {
-                _ = active.peer.serve_with_nearby(listener, active.stop.clone(), move |id, source| {
-                    discovery_scope.upgrade().is_some_and(|session| session.nearby_source(id, source))
-                }) => {},
+                _ = serving => {},
                 _ = browse => {},
             }
             lock(&active.state).peers.clear();
@@ -747,6 +807,140 @@ impl Session {
                         .iter()
                         .any(|endpoint| endpoint.ip() == source.ip())
             })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn publish_a4_projection(&self, frame: aerift_transfer::ambient::session::Frame) {
+        let (interaction, sequence, phase, count, progress, verified) = frame.projection();
+        self.a4_projection.send_if_modified(|current| {
+            if sequence != 1
+                && current
+                    .as_ref()
+                    .is_none_or(|f| f.interaction != interaction || f.sequence >= sequence)
+            {
+                return false;
+            }
+            *current = Some(AmbientTransferProjection {
+                version: 1,
+                interaction,
+                sequence,
+                count: Some(count),
+                phase,
+                progress,
+                verified,
+            });
+            true
+        });
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn clear_a4_projection(&self, interaction: Uuid) {
+        self.a4_projection.send_if_modified(|current| {
+            if current
+                .as_ref()
+                .is_some_and(|frame| frame.interaction == interaction)
+            {
+                *current = None;
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    #[cfg(windows)]
+    pub(crate) async fn send_a4(
+        self: &Arc<Self>,
+        dispatch: aerift_transfer::ambient::nearby_runtime::NativeDispatch,
+    ) -> Result<Status, TransferError> {
+        let (interaction_id, device_id, name, size_bytes) = dispatch.receipt_source();
+        let id = interaction_id.to_string();
+        let view = TransferView {
+            id: id.clone(),
+            interaction_id,
+            device_id,
+            direction: Direction::Outgoing,
+            file: FileView { name, size_bytes },
+            status: Status {
+                state: State::Pending,
+                bytes_transferred: 0,
+                error: None,
+            },
+        };
+        {
+            let mut state = lock(&self.state);
+            if state.outgoing.len() >= MAX_RECEIPTS {
+                let oldest = state
+                    .outgoing
+                    .iter()
+                    .position(|entry| entry.view.status.state.is_terminal())
+                    .ok_or(ErrorCode::Conflict)?;
+                state.outgoing.remove(oldest);
+            }
+            state.outgoing.push(Outgoing {
+                view,
+                cancel: dispatch.cancellation(),
+            });
+        }
+        self.changed();
+        let visual = self.clone();
+        let receipt = self.clone();
+        let receipt_id = id.clone();
+        let result = dispatch
+            .send_observed(
+                self.as_ref(),
+                |peer, _| self.a4_sender(peer).ok(),
+                move |frame| visual.publish_a4_projection(frame),
+                move |_, status| receipt.outgoing_update(&receipt_id, Ok(status)),
+            )
+            .await;
+        self.outgoing_update(&id, result);
+        result
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn attach_a4(&self, runtime: crate::ambient_runtime::AmbientRuntime) {
+        *lock(&self.a4_ambient) = Some(runtime);
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn a4_sender(
+        &self,
+        peer: PeerId,
+    ) -> Result<aerift_transfer::Sender<aerift_peers::PinnedEndpoint>, TransferError> {
+        self.peer
+            .sender(self.endpoint(peer)?, peer, DECISION_TIMEOUT, UPLOAD_TIMEOUT)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn a4_roster(
+        &self,
+    ) -> Result<
+        Vec<(
+            PeerId,
+            aerift_transfer::Sender<aerift_peers::PinnedEndpoint>,
+        )>,
+        TransferError,
+    > {
+        let identities: std::collections::BTreeSet<_> = lock(&self.state)
+            .peers
+            .iter()
+            .filter(|entry| entry.endpoints.iter().any(|addr| addr.is_ipv4()))
+            .map(|entry| entry.device.id.to_string())
+            .collect();
+        let mut roster = Vec::new();
+        for identity in identities {
+            let peer = identity.parse()?;
+            match self.a4_sender(peer) {
+                Ok(sender) => roster.push((peer, sender)),
+                Err(err) if err.code == ErrorCode::PeerUntrusted => continue,
+                Err(err) => return Err(err),
+            }
+            if roster.len() > 16 {
+                return Err(ErrorCode::Conflict.into());
+            }
+        }
+        Ok(roster)
     }
 
     fn paired_view(&self, device: Device) -> PairResult {
@@ -1697,5 +1891,12 @@ mod tests {
             left_storage.close().unwrap();
             right_storage.close().unwrap();
         });
+    }
+}
+
+#[cfg(windows)]
+impl aerift_transfer::ambient::session::DropAuthority for Session {
+    fn permits(&self, peer: PeerId, lane: aerift_transfer::ambient::session::Lane) -> bool {
+        lane == aerift_transfer::ambient::session::Lane::Nearby && self.a4_sender(peer).is_ok()
     }
 }

@@ -24,6 +24,8 @@ use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATU
 
 use crate::ambient_context::{self, ContextError, ExplorerContext};
 
+mod nearby_actions;
+
 #[derive(Clone, Serialize)]
 #[serde(
     tag = "state",
@@ -54,6 +56,8 @@ struct Slot {
 #[derive(Default)]
 struct Config {
     enabled: bool,
+    a4_opt_in: bool,
+    receive_shortcut_registered: bool,
     paused: bool,
     excludes: BTreeSet<String>,
     watcher: Option<Channel<CaptureView>>,
@@ -63,6 +67,7 @@ struct Config {
 #[derive(Default)]
 struct Supervisor {
     config: Mutex<Config>,
+    a4: aerift_transfer::ambient::nearby_runtime::NearbyRuntime,
     generation: AtomicU64,
     working: AtomicBool,
 }
@@ -168,22 +173,32 @@ impl AmbientRuntime {
         if cfg.enabled != enabled {
             let shortcut = capture_shortcut();
             if enabled {
-                app.global_shortcut()
-                    .register(shortcut)
-                    .map_err(|_| ErrorCode::Conflict)?;
+                let global = app.global_shortcut();
+                global.register(shortcut).map_err(|_| ErrorCode::Conflict)?;
+                cfg.receive_shortcut_registered =
+                    global.register(crate::explorer_receive::shortcut()).is_ok();
             } else {
                 // Revoke in-process authority even if OS cleanup fails.
                 cfg.enabled = false;
+                cfg.a4_opt_in = false;
+                self.0.a4.set_policy(false, false, false);
                 cfg.paused = false;
                 cfg.slot = None;
                 self.0.generation.fetch_add(1, Ordering::AcqRel);
                 emit(&cfg, CaptureView::Idle);
-                if app.global_shortcut().unregister(shortcut).is_err() {
+                let global = app.global_shortcut();
+                let source = global.unregister(shortcut);
+                let receive_error = std::mem::take(&mut cfg.receive_shortcut_registered)
+                    && global
+                        .unregister(crate::explorer_receive::shortcut())
+                        .is_err();
+                if source.is_err() || receive_error {
                     return Err(ErrorCode::InternalError.into());
                 }
             }
         }
         if cfg.enabled != enabled || cfg.excludes != excluded_apps {
+            self.0.a4.cancel();
             self.0.generation.fetch_add(1, Ordering::AcqRel);
             cfg.enabled = enabled;
             cfg.excludes = excluded_apps;
@@ -206,6 +221,7 @@ impl AmbientRuntime {
             return None;
         }
         cfg.paused = !cfg.paused;
+        self.sync_a4_policy(&cfg);
         cfg.slot = None;
         self.0.generation.fetch_add(1, Ordering::AcqRel);
         emit(
@@ -217,6 +233,16 @@ impl AmbientRuntime {
             },
         );
         Some(cfg.paused)
+    }
+
+    pub(crate) fn allows_explorer_receive(&self) -> bool {
+        self.0.config.lock().is_ok_and(|cfg| {
+            cfg.enabled
+                && cfg.receive_shortcut_registered
+                && !cfg.paused
+                && !cfg.excludes.contains("explorer.exe")
+                && ambient_context::interactive_session()
+        })
     }
 
     pub(crate) fn allows_overlay(&self) -> bool {
@@ -397,6 +423,7 @@ impl AmbientRuntime {
                     continue;
                 }
                 let locked = !ambient_context::interactive_session();
+                runtime.sync_a4_policy(&config);
                 if locked && !was_paused_by_session {
                     runtime.0.generation.fetch_add(1, Ordering::AcqRel);
                     config.slot = None;
