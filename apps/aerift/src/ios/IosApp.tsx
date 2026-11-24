@@ -5,7 +5,7 @@ import {
 } from "@aerift/ui";
 import type { AppPort, AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift/app-contract/experience";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { IosGestureCamera, iosCameraPermission, type IosCameraPermission } from "./IosGestureCamera";
@@ -15,7 +15,8 @@ import { nativeMobileMedia, type MobileMediaPort } from "./mobile-media";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, persistMobileObjects, readMobileObjects, removeMobileObject, type MobileObject } from "./local-objects";
 import { decodeMobileHistory, historyStorageKey, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
-import { mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
+import { mobileDestinations, mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
+import { mobileMotionDirection, observeMobileMotionSuppression, type MobileMotionDirection } from "./mobile-motion";
 import "./ios.css";
 
 type BonjourState = "disabled" | "starting" | "ready" | "suspended" | "unavailable";
@@ -109,7 +110,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmClearPins, setConfirmClearPins] = useState(false);
   const [settingsError, setSettingsError] = useState(false);
-  const [destination, setDestination] = useState<MobileDestination>("home");
+  const [route, setRoute] = useState<{ destination: MobileDestination; motion?: MobileMotionDirection }>({ destination: "home" });
+  const { destination } = route;
   const [discoveryError, setDiscoveryError] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
@@ -120,7 +122,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
   const cameraPermissionPending = useRef(false);
   const [discovering, setDiscovering] = useState(false);
   const destinationHeading = useRef<HTMLHeadingElement>(null);
-  const navigationRequested = useRef(false);
+  const lastPlacedRoute = useRef(route);
+  const lastFocusedRoute = useRef<MobileDestination>(destination);
   const summary = summarizeMobile(snapshot);
   const liveTransfers = snapshot?.transfers;
   const recentTransfers = withArchivedTransfers(liveTransfers ?? [], history);
@@ -165,9 +168,17 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     setConfirmClearHistory(false);
   }
 
+  useLayoutEffect(() => { lastPlacedRoute.current = route; }, [route]);
+
+  const clearRouteMotion = (placed: typeof route) =>
+    setRoute(current => current === placed && current.motion ? { destination: current.destination } : current);
   useEffect(() => {
-    if (!navigationRequested.current || settingsOpen) return;
-    navigationRequested.current = false;
+    if (route.motion) return observeMobileMotionSuppression(appearance.motion === "reduce", () => clearRouteMotion(route));
+  }, [route, appearance.motion]);
+
+  useEffect(() => {
+    if (settingsOpen || lastFocusedRoute.current === destination) return;
+    lastFocusedRoute.current = destination;
     destinationHeading.current?.focus({ preventScroll: true });
     window.scrollTo(0, 0);
   }, [destination, settingsOpen]);
@@ -191,10 +202,14 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
   }, []);
 
   function navigate(next: MobileDestination) {
-    const change = createNavigationChange(mobileNavigation, destination, next, "user");
-    if (!change || change.to === "settings") return;
-    navigationRequested.current = true;
-    setDestination(change.to);
+    const placed = lastPlacedRoute.current;
+    const from = placed.destination;
+    setRoute(current => {
+      const change = createNavigationChange(mobileNavigation, current.destination, next, "user");
+      if (!change || change.to === "settings") return current;
+      if (from === change.to) return placed;
+      return { destination: change.to, motion: mobileMotionDirection(mobileDestinations, from, change.to) };
+    });
   }
 
   function retryConnection() {
@@ -267,7 +282,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     }
   }
 
-  return <div className="aerift-ios" data-keyboard={keyboardOpen ? "open" : undefined}>
+  return <div className="aerift-ios" data-keyboard={keyboardOpen ? "open" : undefined} data-ios-route-motion={route.motion}>
     <ThemeProvider {...appearance}>
       <AppShell hideToolbar>
         <TransferWorkspace
@@ -302,7 +317,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
             view: destination === "rift" || destination === "activity" ? destination : "supplement",
             openRift: () => navigate("rift"),
             openActivity: () => navigate("activity"),
-            render: regions => <div key={destination} className="ios-page" data-destination={destination}>
+            render: regions => <div key={destination} className="ios-page" data-destination={destination} data-ae-route-enter={route.motion}
+              onAnimationEnd={event => { if (event.target === event.currentTarget && event.animationName.startsWith("ae-route-")) clearRouteMotion(route); }}>
               {summary.pairRequests > 0 && destination !== "devices" &&
                 <Button className="ios-pair-notice" variant="quiet" onClick={() => navigate("devices")}>
                   <SpatialIcon name="pair" size={17} />Review pairing requests ({summary.pairRequests})
@@ -339,7 +355,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
                   {preferences.gestures ? "Camera gestures are enabled in Rift." : "Camera gestures are off."}</p>
               </>}
               {destination === "workspace" && <>
-                <MobileWorkspace regions={regions} modules={preferences}
+                <MobileWorkspace regions={regions} modules={preferences} reducedMotion={appearance.motion === "reduce"}
                   pick={pick} media={library} received={summary.received} openRift={() => navigate("rift")}
                   objects={objects} save={saveObjects} clipboardSharing={canShareClipboard}
                   markClipboardSelection={id => { clipboardSelections.current.add(id); }} />

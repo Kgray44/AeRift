@@ -44,12 +44,23 @@
   --ae-radius-content: 1rem;
   --ae-radius-panel: 1.5rem;
   --ae-target: 2.75rem;
-  --ae-press-scale: .98;
+  --ae-press-scale: .967;
   --ae-enter-distance: .5rem;
-  --ae-duration-quick: 130ms;
-  --ae-duration-enter: 200ms;
-  --ae-duration-progress: 240ms;
-  --ae-ease: cubic-bezier(.2, .72, .28, 1);
+  --ae-motion-press: 130ms;
+  --ae-motion-content: 180ms;
+  --ae-motion-route: 200ms;
+  --ae-motion-overlay: 240ms;
+  --ae-motion-progress: 240ms;
+  --ae-motion-orbit-open: 340ms;
+  --ae-motion-orbit-close: 260ms;
+  --ae-motion-orbit-morph: 460ms;
+  --ae-motion-expressive: 460ms;
+  --ae-motion-out: cubic-bezier(.2, .72, .28, 1);
+  --ae-motion-in: cubic-bezier(.43, 0, .78, .29);
+  --ae-duration-quick: var(--ae-motion-press);
+  --ae-duration-enter: var(--ae-motion-content);
+  --ae-duration-progress: var(--ae-motion-progress);
+  --ae-ease: var(--ae-motion-out);
   --ae-blur-chrome: 14px;
   --ae-blur-overlay: 12px;
   --ae-saturation: 1.18;
@@ -103,9 +114,15 @@
 }
 
 .ae-theme[data-motion="reduce"] {
-  --ae-duration-quick: 0ms;
-  --ae-duration-enter: 0ms;
-  --ae-duration-progress: 0ms;
+  --ae-motion-press: 0ms;
+  --ae-motion-content: 0ms;
+  --ae-motion-route: 0ms;
+  --ae-motion-overlay: 0ms;
+  --ae-motion-progress: 0ms;
+  --ae-motion-orbit-open: 0ms;
+  --ae-motion-orbit-close: 0ms;
+  --ae-motion-orbit-morph: 0ms;
+  --ae-motion-expressive: 0ms;
   --ae-enter-distance: 0px;
   --ae-press-scale: 1;
 }
@@ -124,9 +141,15 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ae-theme {
-    --ae-duration-quick: 0ms;
-    --ae-duration-enter: 0ms;
-    --ae-duration-progress: 0ms;
+    --ae-motion-press: 0ms;
+    --ae-motion-content: 0ms;
+    --ae-motion-route: 0ms;
+    --ae-motion-overlay: 0ms;
+    --ae-motion-progress: 0ms;
+    --ae-motion-orbit-open: 0ms;
+    --ae-motion-orbit-close: 0ms;
+    --ae-motion-orbit-morph: 0ms;
+    --ae-motion-expressive: 0ms;
     --ae-enter-distance: 0px;
     --ae-press-scale: 1;
   }

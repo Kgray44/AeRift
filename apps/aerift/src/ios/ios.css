@@ -35,7 +35,6 @@
   display: grid;
   gap: 1.25rem;
   min-width: 0;
-  animation: ae-enter var(--ae-duration-enter) var(--ae-ease) both;
 }
 
 .ios-overview {
@@ -115,7 +114,6 @@
   font-weight: 650;
   line-height: 1.25;
   cursor: pointer;
-  transition: transform var(--ae-duration-quick) var(--ae-ease);
 }
 
 .aerift-ios .ios-dock nav button > svg { display: block; }
@@ -236,5 +234,40 @@
   .aerift-ios .ios-overview .ae-button { grid-column: 2; justify-self: start; }
   .aerift-ios .ios-dock nav button.ae-button[data-variant] { font-size: .71rem; letter-spacing: -.025em; }
 }
-@media (prefers-reduced-motion: reduce) { .aerift-ios .ios-page { animation: none; } }
-.ae-theme[data-motion="reduce"] .ios-page { animation: none; }
+/* These bodies remain mounted for transfer lifecycle continuity. The actual
+   visible section re-enters on each route change without rekeying the camera,
+   watch, offer, or progress controllers. */
+.aerift-ios[data-ios-route-motion="forward"] { --ios-transfer-entry: ae-route-forward; }
+.aerift-ios[data-ios-route-motion="back"] { --ios-transfer-entry: ae-route-back; }
+.aerift-ios:dir(rtl)[data-ios-route-motion="forward"] { --ios-transfer-entry: ae-route-back; }
+.aerift-ios:dir(rtl)[data-ios-route-motion="back"] { --ios-transfer-entry: ae-route-forward; }
+.aerift-ios[data-ios-route-motion] :is(.ae-transfer-space[data-mobile-view="rift"] .ae-workspace-view,
+  .ae-transfer-space[data-mobile-view="activity"] .ae-activity):not([hidden]) {
+  animation: var(--ios-transfer-entry) var(--ae-motion-route) var(--ae-motion-out);
+}
+.ios-module-moment {
+  min-inline-size: 0;
+  display: grid;
+  gap: 1.05rem;
+}
+.aerift-ios .ios-dock .ae-nav-indicator {
+  transition: translate var(--ae-motion-route) var(--ae-motion-out);
+}
+.aerift-ios .ios-dock .ae-button > svg {
+  transition: translate var(--ae-motion-route) var(--ae-motion-out);
+}
+.aerift-ios .ios-dock .ae-button[aria-current] > svg { translate: 0 -1px; }
+.ios-object-composer[open] > .ios-object-form,
+.ios-object-list details[open] > .ios-list {
+  animation: ae-route-neutral var(--ae-motion-route) var(--ae-motion-out);
+}
+.aerift-ios[data-ios-route-motion] [data-motion="reduce"] .ae-transfer-space[data-mobile-view] :is(.ae-workspace-view, .ae-activity):not([hidden]),
+.aerift-ios [data-motion="reduce"] :is(.ios-object-form, .ios-object-list details > .ios-list) { animation: none; }
+.aerift-ios [data-motion="reduce"] .ios-dock :is(.ae-nav-indicator, .ae-button > svg) { transition: none; }
+.aerift-ios [data-motion="reduce"] .ios-dock .ae-button > svg { translate: none; }
+@media (prefers-reduced-motion: reduce) {
+  .aerift-ios[data-ios-route-motion] .ae-transfer-space[data-mobile-view] :is(.ae-workspace-view, .ae-activity):not([hidden]),
+  .aerift-ios :is(.ios-object-form, .ios-object-list details > .ios-list) { animation: none; }
+  .aerift-ios .ios-dock :is(.ae-nav-indicator, .ae-button > svg) { transition: none; }
+  .aerift-ios .ios-dock .ae-button > svg { translate: none; }
+}

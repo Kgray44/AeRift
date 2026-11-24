@@ -10,7 +10,11 @@ export function Sheet({ open, title, onClose, children }: {
   const drag = useRef<{ pointer: number; startY: number } | null>(null);
   useEffect(() => {
     const node = dialog.current;
-    if (open && node && !node.open) node.showModal();
+    if (open && node && !node.open) {
+      node.removeAttribute("data-swipe-dismiss");
+      node.style.removeProperty("--ae-sheet-swipe");
+      node.showModal();
+    }
     if (!open && node?.open) node.close();
   }, [open]);
 
@@ -27,8 +31,10 @@ export function Sheet({ open, title, onClose, children }: {
     if (state?.pointer !== event.pointerId) return;
     drag.current = null;
     dialog.current?.removeAttribute("data-dragging");
-    dialog.current?.style.removeProperty("--ae-sheet-swipe");
-    if (dismissed && event.clientY - state.startY > 72) onClose();
+    if (dismissed && event.clientY - state.startY > 72) {
+      dialog.current?.setAttribute("data-swipe-dismiss", "");
+      onClose();
+    } else dialog.current?.style.removeProperty("--ae-sheet-swipe");
   }
   return (
     <dialog ref={dialog} className="ae-sheet ae-surface" data-material="overlay" aria-labelledby={titleId}
@@ -115,6 +121,7 @@ export function Popover({ label, actions }: {
         const below = clientHeight - rect.bottom;
         const above = rect.top;
         const openBelow = below >= Math.min(256, above);
+        panel.current.dataset.anchorSide = openBelow ? "below" : "above";
         panel.current.style.transformOrigin = openBelow ? "top right" : "bottom right";
         panel.current.style.top = openBelow ? `${rect.bottom + 8}px` : "auto";
         panel.current.style.bottom = openBelow ? "auto" : `${clientHeight - rect.top + 8}px`;

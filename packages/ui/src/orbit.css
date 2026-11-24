@@ -53,7 +53,7 @@
   color: var(--ae-text);
   box-shadow: inset 0 -2px 6px var(--ae-optical-cool, var(--ae-edge)), inset 0 1px 1px var(--ae-highlight),
     0 4px 13px var(--ae-optical-shade, transparent);
-  transition: scale 140ms var(--ae-ease), translate 140ms var(--ae-ease);
+  transition: scale var(--ae-motion-press) var(--ae-ease), translate var(--ae-motion-press) var(--ae-ease);
   pointer-events: none;
 }
 .ae-orbit :is(button:hover, button:focus-visible) .ae-orbit-orb {
@@ -76,7 +76,7 @@
   inset: 0;
   background: color-mix(in srgb, var(--ae-base) 24%, transparent);
   opacity: 0;
-  transition: opacity 260ms var(--ae-ease);
+  transition: opacity var(--ae-motion-orbit-close) var(--ae-ease);
   pointer-events: none;
 }
 .ae-orbit[data-open="true"] .ae-orbit-veil { opacity: 1; }
@@ -91,7 +91,7 @@
   stroke-width: 1;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 260ms var(--ae-ease);
+  transition: opacity var(--ae-motion-orbit-close) var(--ae-ease);
 }
 .ae-orbit[data-open="true"] .ae-orbit-guide { opacity: .33; }
 .ae-orbit[data-radial="true"] .ae-orbit-choice {
@@ -105,12 +105,12 @@
   border-radius: 50%;
   opacity: 0;
   transform: rotate(-18deg) translate(0px, 0px) rotate(18deg) scale(.74);
-  transition: transform 260ms var(--ae-ease), opacity 180ms var(--ae-ease);
+  transition: transform var(--ae-motion-orbit-close) var(--ae-ease), opacity var(--ae-motion-content) var(--ae-ease);
 }
 .ae-orbit[data-radial="true"][data-open="true"] .ae-orbit-choice {
   opacity: 1;
   transform: rotate(0deg) translate(var(--orbit-x), var(--orbit-y)) rotate(0deg) scale(1);
-  transition: transform 340ms var(--orbit-spring) var(--orbit-delay), opacity 150ms var(--ae-ease) var(--orbit-delay);
+  transition: transform var(--ae-motion-orbit-open) var(--orbit-spring) var(--orbit-delay), opacity var(--ae-motion-press) var(--ae-ease) var(--orbit-delay);
 }
 .ae-orbit[data-radial="true"] .ae-orbit-label {
   position: absolute;

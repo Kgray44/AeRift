@@ -3,6 +3,7 @@ import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@a
 import { Button, Popover, SpatialIcon } from "@aerift/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
+import { useDesktopContentEnter } from "./desktopContentMotion";
 import { applyWorkspaceChanges, loadWorkspace, type WorkspaceEntry } from "./workspaceStore";
 
 function newObject(name: string) {
@@ -43,6 +44,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const modules = getVisibleModules(preferences);
   const [moduleId, setModuleId] = useState<ModuleId>("files");
   const current = modules.find(module => module.id === moduleId) ?? modules[0];
+  const itemsRef = useRef<HTMLElement>(null);
+  useDesktopContentEnter(current?.id, itemsRef);
   const [entries, setEntries] = useState<WorkspaceEntry[]>();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>();
@@ -221,7 +224,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
           <div><Button type="submit" disabled={disabled || !selected.length}>Create collection</Button></div>
         </form></details>}
       </div>
-      <section aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
+      <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
         {entries && current && visible.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>A space for your {current.id === "photos" ? "media" : current.label.toLowerCase()}</h4><p>No saved {current.id === "photos" ? "media" : "items"} here yet. Add an object to keep it on this device.</p></div>}
         {selectedVisible.length > 0 && <div>
           <Button variant="quiet" disabled={disabled} onClick={() => removeObjects(selectedVisible)}>

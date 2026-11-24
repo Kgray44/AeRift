@@ -40,7 +40,7 @@ try {
   await target.evaluate(button => {
     const orb = button.querySelector(".ae-orbit-orb");
     window.orbitOrigin = orb.getBoundingClientRect().toJSON();
-    button.click();
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
     queueMicrotask(() => {
       const section = document.querySelector(".ae-orbit-surface");
       for (const animation of section.getAnimations({ subtree: true })) animation.pause();
@@ -89,6 +89,7 @@ try {
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   await expectRoute("Settings");
+  assert.equal(await surface.getAttribute("data-morphing"), null);
   await page.keyboard.press("Alt+o");
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowDown");

@@ -136,7 +136,12 @@
 .aerift-workspace-items > ol { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
 .aerift-workspace-items > ol > li { margin: 0; }
 .aerift-workspace-object { border: 1px solid var(--ae-control-edge); border-radius: 1.25rem; background: var(--ae-field); padding: 1.25rem; min-width: 0; }
-.aerift-workspace-object[data-selected="true"] { outline: 2px solid var(--ae-text); outline-offset: -2px; }
+.aerift-workspace-object { outline: 2px solid transparent; outline-offset: -2px; transition: outline-color var(--ae-duration-quick) var(--ae-ease), background-color var(--ae-duration-quick) var(--ae-ease); }
+.aerift-workspace-object[data-selected="true"] { outline-color: var(--ae-focus); background: color-mix(in srgb, var(--ae-field) 92%, var(--ae-accent)); }
+@media (forced-colors: active) {
+  .aerift-workspace-object:not([data-selected="true"]) { outline: none; }
+  .aerift-workspace-object[data-selected="true"] { outline-color: Highlight; }
+}
 .aerift-workspace-object > div { gap: .85rem; }
 .aerift-object-kind { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ae-muted); }
 .aerift-workspace-object .aerift-check { font-weight: 550; min-height: 2rem; line-height: 1.5; overflow-wrap: anywhere; }
@@ -160,3 +165,13 @@
 .aerift-workspace input[type="file"] { font: inherit; color: var(--ae-muted); }
 .aerift-workspace input[type="file"]::file-selector-button { min-height: 2.75rem; padding: .6rem 1rem; margin-inline-end: .75rem; border: 1px solid var(--ae-control-edge); border-radius: var(--ae-radius-control, .8rem); color: var(--ae-text); background: var(--ae-field); font: inherit; cursor: pointer; }
 .aerift-workspace input[type="file"]:disabled::file-selector-button { opacity: .55; cursor: not-allowed; }
+
+/* Native <details> keeps the same editor and tab order. Only the revealed
+ * form eases in; the browser owns its open state and immediate close. */
+.aerift-workspace-create[open] > form {
+  animation: ae-desktop-disclosure-in var(--ae-duration-enter) var(--ae-ease) both;
+}
+.aerift-workspace-create > form:focus-within { animation: none; }
+@keyframes ae-desktop-disclosure-in {
+  from { opacity: .72; translate: 0 -.2rem; }
+}

@@ -87,7 +87,10 @@ test("the compact Rift marks actual byte progress and confirms arrival separatel
   });
   const receiving = renderCompact({});
   assert.match(receiving, /class="ae-rift-inline"[^>]*aria-hidden="true"/);
-  assert.match(receiving, /inset-inline-start:75%/);
+  assert.match(receiving, /class="ae-rift-inline-carrier" style="--ae-rift-travel:75%"/);
+  assert.doesNotMatch(receiving, /style="inset-inline-start/);
+  const styles = readFileSync(new URL("../../packages/ui/src/motion.css", import.meta.url), "utf8");
+  assert.match(styles, /\.ae-rift-inline-carrier \{[^}]+transition: transform var\(--ae-motion-progress\)/);
   assert.doesNotMatch(renderCompact({ bytesTransferred: 1024 }), /data-arrived="true"/);
   assert.match(renderCompact({ state: "completed" }), /data-arrived="true"/);
 });

@@ -116,6 +116,7 @@
   --ae-inline-ink: var(--ae-accent);
   --ae-inline-origin: left;
   --ae-inline-center: -50%;
+  --ae-inline-direction: 1;
   position: relative;
   display: grid;
   align-items: center;
@@ -127,6 +128,7 @@
 .ae-rift-inline[data-direction="incoming"] {
   --ae-inline-origin: right;
   --ae-inline-center: 50%;
+  --ae-inline-direction: -1;
   direction: rtl;
 }
 .ae-rift-inline-track {
@@ -156,8 +158,15 @@
   transform-origin: var(--ae-inline-origin) center;
   transition: transform var(--ae-duration-progress) var(--ae-motion-travel);
 }
+.ae-rift-inline-carrier {
+  position: absolute;
+  inset: 0;
+  transform: translateX(calc(var(--ae-rift-travel, 0%) * var(--ae-inline-direction)));
+  transition: transform var(--ae-motion-progress) var(--ae-motion-travel);
+}
 .ae-rift-inline-object {
   position: absolute;
+  inset-inline-start: 0;
   z-index: 1;
   inset-block-start: 50%;
   translate: var(--ae-inline-center) -50%;
@@ -169,7 +178,6 @@
   border-radius: 50%;
   color: var(--ae-inline-ink);
   background: var(--ae-content);
-  transition: inset-inline-start var(--ae-duration-progress) var(--ae-motion-travel);
 }
 .ae-rift-inline-object svg { inline-size: .9rem; block-size: .9rem; }
 .ae-rift-inline[data-arrived="true"] { --ae-inline-ink: var(--ae-success); }
@@ -317,4 +325,78 @@
   .ae-object-icon, .ae-rift-payload { border: 1px solid CanvasText; }
   .ae-rift-link { --ae-rift-color: Highlight; }
   .ae-rift-flow, .ae-rift-sparks { display: none; }
+}
+
+/* Routine transitions share timing with the controls, not the signature Rift
+   passage. Labels and focused controls are never visually absent on entry. */
+.ae-theme [data-ae-route-enter] {
+  animation: ae-route-neutral var(--ae-motion-route) var(--ae-motion-out) both;
+}
+.ae-theme [data-ae-route-enter="forward"] { animation-name: ae-route-forward; }
+.ae-theme [data-ae-route-enter="back"] { animation-name: ae-route-back; }
+@keyframes ae-route-neutral { from { opacity: .86; } }
+@keyframes ae-route-forward { from { opacity: .86; translate: .42rem 0; } }
+@keyframes ae-route-back { from { opacity: .86; translate: -.42rem 0; } }
+.ae-theme:dir(rtl) [data-ae-route-enter="forward"] { animation-name: ae-route-back; }
+.ae-theme:dir(rtl) [data-ae-route-enter="back"] { animation-name: ae-route-forward; }
+
+/* Native show/close, light dismiss and focus restoration remain immediate.
+   Supporting WebViews can retain just the old visual in the top layer while
+   the real dialog/popover is already closed. Older engines enter via keyframes. */
+.ae-theme :is(.ae-sheet[open], .ae-popover:popover-open) {
+  animation: ae-overlay-enter var(--ae-motion-overlay) var(--ae-motion-out) both;
+}
+.ae-sheet { --ae-overlay-y: .7rem; --ae-overlay-start-scale: .986; }
+.ae-popover { --ae-overlay-y: .22rem; --ae-overlay-start-scale: .96; }
+.ae-popover[data-anchor-side="above"] { --ae-overlay-y: -.22rem; }
+@media (max-width: 42rem) {
+  .ae-theme .ae-sheet { --ae-overlay-y: 1.4rem; --ae-overlay-start-scale: 1; transition: translate var(--ae-motion-content) var(--ae-motion-out); }
+}
+@keyframes ae-overlay-enter {
+  from { opacity: .55; transform: translateY(var(--ae-overlay-y)) scale(var(--ae-overlay-start-scale)); }
+}
+@supports (transition-behavior: allow-discrete) and (overlay: auto) {
+  .ae-theme :is(.ae-sheet, .ae-popover) {
+    opacity: 0;
+    transform: translateY(var(--ae-overlay-y)) scale(var(--ae-overlay-start-scale));
+    transition: opacity var(--ae-motion-overlay) var(--ae-motion-in),
+      transform var(--ae-motion-overlay) var(--ae-motion-in),
+      translate var(--ae-motion-content) var(--ae-motion-out),
+      display var(--ae-motion-overlay) allow-discrete,
+      overlay var(--ae-motion-overlay) allow-discrete;
+  }
+  .ae-theme :is(.ae-sheet[open], .ae-popover:popover-open) {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    transition-timing-function: var(--ae-motion-out);
+  }
+  .ae-theme .ae-sheet:not([open]), .ae-theme .ae-popover:not(:popover-open) {
+    pointer-events: none;
+  }
+  .ae-theme .ae-sheet::backdrop {
+    opacity: 0;
+    transition: opacity var(--ae-motion-overlay) var(--ae-motion-out),
+      display var(--ae-motion-overlay) allow-discrete,
+      overlay var(--ae-motion-overlay) allow-discrete;
+  }
+  .ae-theme .ae-sheet[open]::backdrop { opacity: 1; }
+  @starting-style {
+    .ae-theme :is(.ae-sheet[open], .ae-popover:popover-open) {
+      opacity: .55;
+      transform: translateY(var(--ae-overlay-y)) scale(var(--ae-overlay-start-scale));
+    }
+    .ae-theme .ae-sheet[open]::backdrop { opacity: 0; }
+  }
+  @media (max-width: 42rem) {
+    .ae-theme .ae-sheet[data-swipe-dismiss]:not([open]) { --ae-overlay-y: min(48vh, 18rem); }
+  }
+}
+
+.ae-theme .ae-toast { animation: ae-overlay-enter var(--ae-motion-content) var(--ae-motion-out) both; --ae-overlay-y: .35rem; --ae-overlay-start-scale: .985; }
+.ae-theme[data-motion="reduce"] :is([data-ae-route-enter], .ae-toast, .ae-camera-light, .ae-gesture-guide, .ae-spinner) { animation: none; }
+.ae-theme[data-motion="reduce"] :is(.ae-sheet, .ae-popover) { animation: none; transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ae-theme :is([data-ae-route-enter], .ae-toast, .ae-camera-light, .ae-gesture-guide, .ae-spinner) { animation: none; }
+  .ae-theme :is(.ae-sheet, .ae-popover) { animation: none; transition: none; }
 }

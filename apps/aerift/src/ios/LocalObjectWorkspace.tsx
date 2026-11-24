@@ -49,6 +49,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const [previewing, setPreviewing] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [justAdded, setJustAdded] = useState<string>();
   const [confirmRemoval, setConfirmRemoval] = useState<string>();
   const [composerOpen, setComposerOpen] = useState(false);
   const notes = module === "notes";
@@ -156,6 +157,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
         : { ...base, kind: "text", format: "plain", text: draft };
     }
     if (upsert(object)) {
+      if (!selected) setJustAdded(object.id);
       if (collections) edit(object);
       else reset();
       setFeedback("Saved on this iPhone.");
@@ -318,7 +320,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     </div>}
     {feedback && <p role="status">{feedback}</p>}
     {entries.length > 0 && <ul className="ios-object-list">
-      {entries.map(object => <li key={object.id}>
+      {entries.map(object => <li key={object.id} data-ae-route-enter={justAdded === object.id ? "neutral" : undefined}>
         <strong>{object.name}</strong>
         {object.kind === "collection" ? <small>{object.itemIds.length} saved items</small> :
           object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
@@ -350,7 +352,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
             </Button>}
           {object.kind === "url" && <Button variant="quiet" disabled={browsing} onClick={() => void browse(object.url)}>Open</Button>}
           <Button variant="quiet" onClick={() => edit(object)}>Edit</Button>
-          {confirmRemoval === object.id ? <>
+          {confirmRemoval === object.id ? <div className="ae-actions" data-ae-route-enter="neutral">
             <Button variant="danger" onClick={() => {
               if (save(removeMobileObject(objects, object.id))) {
                 if (editing === object.id) reset();
@@ -359,7 +361,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
               }
             }}>Remove {object.name}</Button>
             <Button variant="quiet" onClick={() => setConfirmRemoval(undefined)}>Keep</Button>
-          </> : <Button variant="quiet" onClick={() => setConfirmRemoval(object.id)}>Remove</Button>}
+          </div> : <Button variant="quiet" onClick={() => setConfirmRemoval(object.id)}>Remove</Button>}
         </div>
       </li>)}
     </ul>}
