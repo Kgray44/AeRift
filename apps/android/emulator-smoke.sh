@@ -33,10 +33,13 @@ emulator="$ANDROID_HOME/emulator/emulator"
 export ANDROID_AVD_HOME="$tmp/avd"
 mkdir -p "$ANDROID_AVD_HOME"
 printf 'no\n' | "$avdmanager" create avd --force --name "$avd" --package "$cpu_image" --device pixel_6
+if [[ -w /dev/kvm ]]; then accel=on; else accel=off; fi
 "$emulator" -avd "$avd" -port 5580 -no-window -no-audio -no-boot-anim -no-snapshot \
-  -gpu swiftshader_indirect -accel on -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
+  -gpu swiftshader_indirect -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
 pid=$!
-deadline=$((SECONDS + 220))
+boot_budget=220
+[[ "$accel" == on ]] || boot_budget=650
+deadline=$((SECONDS + boot_budget))
 while (( SECONDS < deadline )); do
   kill -0 "$pid"
   [[ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null || true)" == 1 ]] && break

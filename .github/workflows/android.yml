@@ -31,22 +31,13 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
       - name: Prepare pinned Android and Rust toolchains
         shell: bash
-        run: |
-          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
-          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
-          export JAVA_HOME="$JAVA_HOME_17_X64"
-          export PATH="$JAVA_HOME/bin:$PATH"
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" \
-            "ndk;$ANDROID_NDK_VERSION" "system-images;android-36;google_apis;x86_64"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target x86_64-linux-android
-          test -e /dev/kvm
-          sudo chmod a+rw /dev/kvm
+        run: bash apps/android/bootstrap-ci-tools.sh
       - name: Validate shared UI and Android build scripts
         run: |
           npm ci
@@ -72,4 +63,10 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "${apks[0]}"
           printf 'APK_PATH=%s\n' "${apks[0]}" >> "$GITHUB_ENV"
       - name: Install and test synthetic Files selection in the SDK emulator
-        run: bash apps/android/emulator-smoke.sh "$APK_PATH"
+        run: |
+          sdkmanager --sdk_root="$ANDROID_HOME" --install emulator "system-images;android-36;google_apis;x86_64"
+          if [[ -e /dev/kvm && ! -w /dev/kvm ]]; then
+            sudo chgrp "$(id -gn)" /dev/kvm
+            sudo chmod g+rw /dev/kvm
+          fi
+          bash apps/android/emulator-smoke.sh "$APK_PATH"
