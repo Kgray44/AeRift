@@ -70,6 +70,20 @@ pub struct Offer {
 }
 
 impl Offer {
+    /// Cross-layer v1 single-file manifest digest, including exact display
+    /// name, size, stable transfer ID and byte SHA-256. Never authorizes by itself.
+    pub fn manifest_digest(&self) -> Result<[u8; 32], TransferError> {
+        self.validate()?;
+        let mut hash = Sha256::new();
+        hash.update(b"aerift/file-manifest/v1\0");
+        hash.update(self.id.as_bytes());
+        hash.update((self.name.len() as u64).to_be_bytes());
+        hash.update(self.name.as_bytes());
+        hash.update(self.size_bytes.to_be_bytes());
+        hash.update(self.sha256.as_bytes());
+        Ok(hash.finalize().into())
+    }
+
     pub fn validate(&self) -> Result<(), TransferError> {
         let valid_digest = self.sha256.len() == 64
             && self

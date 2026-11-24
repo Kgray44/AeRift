@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/v1.ts",
     "./digital-objects": "./src/digital-objects.ts",
-    "./experience": "./src/experience.ts"
+    "./experience": "./src/experience.ts",
+    "./friends": "./src/friends.ts"
   }
 }

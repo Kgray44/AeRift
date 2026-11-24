@@ -1,6 +1,7 @@
 use std::{
     fs::{self, File},
     io::{self, Read, Write},
+    os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     slice,
@@ -12,6 +13,7 @@ use windows_sys::Win32::{
     Security::Cryptography::{
         CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     },
+    Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
 };
 
 const MAX_PLAINTEXT: usize = 1024 * 1024;
@@ -59,6 +61,33 @@ impl ProtectedFile {
     pub(crate) fn replace(&self, bytes: &[u8]) -> io::Result<()> {
         let (staged, destination) = self.stage(bytes)?;
         staged.persist(destination).map_err(|error| error.error)?;
+        Ok(())
+    }
+
+    /// Stage the encrypted file beside its destination and flush it before
+    /// writing through the replacement. A Friends award is sent only after this succeeds.
+    pub(crate) fn replace_write_through(&self, bytes: &[u8]) -> io::Result<()> {
+        let (staged, destination) = self.stage(bytes)?;
+        let path = staged.into_temp_path();
+        let directory = fs::canonicalize(&self.directory)?;
+        let source = directory.join(path.file_name().ok_or(io::ErrorKind::InvalidInput)?);
+        let destination =
+            directory.join(destination.file_name().ok_or(io::ErrorKind::InvalidInput)?);
+        let wide = |p: &Path| p.as_os_str().encode_wide().chain([0]).collect::<Vec<_>>();
+        let source = wide(&source);
+        let destination = wide(&destination);
+        // Both NUL-terminated paths point into live owned buffers for the call.
+        // The source and destination have the same parent, so no cross-volume copy is allowed.
+        if unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
         Ok(())
     }
 

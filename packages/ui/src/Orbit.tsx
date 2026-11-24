@@ -27,7 +27,7 @@ export interface OrbitProps<Id extends string> {
 }
 
 function DestinationIcon({ id }: { id: string }) {
-  const name = id === "home" || id === "rift" || id === "devices" || id === "activity" || id === "settings"
+  const name = id === "home" || id === "rift" || id === "devices" || id === "friends" || id === "activity" || id === "settings"
     ? id : "workspace";
   return <SpatialIcon name={name} size={23} />;
 }

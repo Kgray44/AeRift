@@ -414,3 +414,115 @@ async fn metadata_retries_are_scoped_and_digest_mismatch_never_publishes() {
         assert_eq!(std::fs::read_dir(dir.path().join(name)).unwrap().count(), 0);
     }
 }
+
+#[tokio::test]
+async fn frozen_object_send_reuses_v1_consent_and_refuses_changed_source_before_offer() {
+    use aerift_transfer::ambient::{Candidate, CaptureContext, CaptureLimits, freeze};
+    let (temp, harness) = setup();
+    let source = temp.path().join("ambient-source.bin");
+    std::fs::write(&source, b"selected bytes").unwrap();
+    let capture = Arc::new(
+        freeze(
+            CaptureContext {
+                explicit_selection: vec![Candidate::path(source.clone())],
+                ..Default::default()
+            },
+            CaptureLimits::default(),
+        )
+        .unwrap(),
+    );
+    let receiver = harness.receiver.clone();
+    let sender = Sender::new(harness, Duration::from_secs(4), Duration::from_secs(5));
+    let accepted = tokio::spawn(approve(receiver.clone()));
+    let receipt = sender
+        .send_frozen_file_with_id(
+            Uuid::new_v4(),
+            capture.clone(),
+            CancellationToken::new(),
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt.state, State::Completed);
+    accepted.await.unwrap();
+    assert_eq!(
+        std::fs::read(temp.path().join("received/ambient-source.bin")).unwrap(),
+        b"selected bytes"
+    );
+    std::fs::write(source, b"changed, not selected").unwrap();
+    let error = sender
+        .send_frozen_file_with_id(Uuid::new_v4(), capture, CancellationToken::new(), |_, _| {})
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::IntegrityFailed);
+    assert_eq!(receiver.snapshot().len(), 1);
+}
+
+#[tokio::test]
+async fn a_changed_first_block_cannot_emit_bytes_after_the_receiver_approves() {
+    use aerift_transfer::ambient::{Candidate, CaptureContext, CaptureLimits, freeze};
+    let (temp, harness) = setup();
+    let source = temp.path().join("freeze-before-offer.bin");
+    std::fs::write(&source, vec![1u8; 1024 * 1024 + 1]).unwrap();
+    let capture = Arc::new(
+        freeze(
+            CaptureContext {
+                explicit_selection: vec![Candidate::path(source.clone())],
+                ..Default::default()
+            },
+            CaptureLimits::default(),
+        )
+        .unwrap(),
+    );
+    let receiver = harness.receiver.clone();
+    let sender = Sender::new(harness, Duration::from_secs(4), Duration::from_secs(5));
+    let receiver_task = receiver.clone();
+    let modifier = tokio::spawn(async move {
+        let mut events = receiver_task.subscribe();
+        loop {
+            if let Some(offer) = receiver_task
+                .snapshot()
+                .into_iter()
+                .find(|offer| offer.status.state == State::Pending)
+            {
+                // Retain the same path, length and inode, forcing per-block verification
+                // to catch a mutation after the sender has opened the file.
+                use std::io::Write;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&source)
+                    .unwrap()
+                    .write_all(&[2])
+                    .unwrap();
+                receiver_task.respond(offer.key, true).unwrap();
+                break;
+            }
+            events.changed().await.unwrap();
+        }
+    });
+    let progress = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let measured = progress.clone();
+    let error = sender
+        .send_frozen_file_with_id(
+            Uuid::new_v4(),
+            capture,
+            CancellationToken::new(),
+            move |_, status| {
+                measured.fetch_max(
+                    status.bytes_transferred,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::IntegrityFailed);
+    modifier.await.unwrap();
+    assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(
+        !temp
+            .path()
+            .join("received/freeze-before-offer.bin")
+            .exists()
+    );
+}

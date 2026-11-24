@@ -16,9 +16,11 @@ test("the startup canvas honors explicit settings before mounting React", () => 
   const entries = {
     "aerift.settings.v1": JSON.stringify({ appearance: { scheme: "dark" } }),
     "aerift.ios.appearance.v1": JSON.stringify({ scheme: "light" }),
+    "aerift.android.appearance.v1": JSON.stringify({ scheme: "light" }),
   };
   assert.equal(startup({ userAgent: "Windows" }, entries), "dark");
   assert.equal(startup({ userAgent: "iPhone" }, entries), "light");
+  assert.equal(startup({ userAgent: "Android 16; Linux; wv" }, entries), "light");
   assert.equal(startup({ userAgent: "Macintosh", maxTouchPoints: 4 }, entries), "light");
 });
 

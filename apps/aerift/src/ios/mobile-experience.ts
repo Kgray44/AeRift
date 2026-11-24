@@ -3,8 +3,11 @@ import type { AppSnapshot } from "@aerift/app-contract";
 import { getNavigation, restorePreferences, type DestinationId } from "@aerift/app-contract/experience";
 
 export type MobileDestination = Exclude<DestinationId, "settings">;
-export const mobileNavigation = getNavigation("mobile", restorePreferences(undefined),
-  { ambient: "unsupported", camera: "unknown" });
+export function getMobileNavigation(friendsAvailable: boolean) {
+  return getNavigation("mobile", restorePreferences(undefined),
+    { ambient: "unsupported", camera: "unknown", friends: friendsAvailable ? "available" : "unsupported" });
+}
+export const mobileNavigation = getMobileNavigation(false);
 export const mobileDestinations = mobileNavigation.primary.map(({ id }) => id)
   .filter((id): id is MobileDestination => id !== "settings");
 

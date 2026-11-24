@@ -64,3 +64,5 @@ Coordinate edits to the same package exports, root manifests, lockfile, shared e
 2. Land the isolated Orbit renderer and shell adapters with typed fixtures and accessible fallbacks. Wire each shell to the existing AppPort and long-lived native subscriptions. Migrate preferences without disturbing transfer history or trust.
 3. Introduce platform-backed object repositories and permissions module by module. Qualify the unchanged v1 media path before any new network format. Wire Ambient through the native capability boundary independently of desktop window mode.
 4. Qualify each exact commit, then repeat the integrated native gates in the [validation strategy](validation/strategy.md). Keep physical receipts tied to both build SHAs and record the host, device, OS, result and local evidence location.
+
+- [Ambient A1–A3 architecture and validation](ambient-a1-a3.md): process-owned context capture, frozen objects, and trust boundaries.

@@ -1,4 +1,7 @@
-use crate::runtime::{AppRuntime, TransferView};
+use crate::{
+    ambient_runtime::{self, AmbientRuntime},
+    runtime::{AppRuntime, TransferView},
+};
 use aerift_transfer::{ErrorCode, TransferError};
 use std::{
     os::windows::ffi::OsStrExt,
@@ -32,6 +35,7 @@ const RUN_VALUE: &str = "AeRift";
 struct Ambient {
     tray: TrayIcon,
     status: MenuItem<Wry>,
+    capture_pause: MenuItem<Wry>,
     enabled: AtomicBool,
     route: Mutex<Option<Channel<&'static str>>>,
     shortcut: Mutex<Option<Shortcut>>,
@@ -73,6 +77,13 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let capture_pause = MenuItem::with_id(
+        app,
+        "aerift-capture-pause",
+        "Pause Ambient capture",
+        true,
+        None::<&str>,
+    )?;
     let divider = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(
         app,
@@ -83,7 +94,16 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
     )?;
     let menu = Menu::with_items(
         app,
-        &[&show, &rift, &activity, &preview, &status, &divider, &quit],
+        &[
+            &show,
+            &rift,
+            &activity,
+            &preview,
+            &capture_pause,
+            &status,
+            &divider,
+            &quit,
+        ],
     )?;
     let mut builder = TrayIconBuilder::with_id("aerift-desktop")
         .menu(&menu)
@@ -98,6 +118,7 @@ pub(crate) fn install_tray(app: &App) -> tauri::Result<()> {
     app.manage(Ambient {
         tray,
         status,
+        capture_pause,
         enabled: AtomicBool::new(false),
         route: Mutex::new(None),
         shortcut: Mutex::new(None),
@@ -115,6 +136,18 @@ fn handle_menu(app: &AppHandle, event: tauri::menu::MenuEvent) {
             tauri::async_runtime::spawn(async move {
                 let _ = show_transfer_preview(&app);
             });
+            return;
+        }
+        "aerift-capture-pause" => {
+            if let Some(paused) = app.state::<AmbientRuntime>().toggle_paused() {
+                if let Some(ambient) = app.try_state::<Ambient>() {
+                    let _ = ambient.capture_pause.set_text(if paused {
+                        "Resume Ambient capture"
+                    } else {
+                        "Pause Ambient capture"
+                    });
+                }
+            }
             return;
         }
         "aerift-ambient-quit" => {
@@ -178,10 +211,25 @@ pub(crate) fn set_desktop_ambient(app: AppHandle, enabled: bool) -> Result<(), T
         .set_visible(enabled)
         .map_err(|_| ErrorCode::InternalError)?;
     ambient.enabled.store(enabled, Ordering::Release);
+    if enabled {
+        // Native discovery and transport are not owned by a webview subscription.
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Ok(root) = app.path().app_local_data_dir() {
+                let _ = app.state::<AppRuntime>().session(root).await;
+            }
+        });
+    }
     Ok(())
 }
 
-pub(crate) fn handle_shortcut(app: &AppHandle, state: ShortcutState) {
+pub(crate) fn handle_shortcut(app: &AppHandle, key: &Shortcut, state: ShortcutState) {
+    if key == &ambient_runtime::capture_shortcut() {
+        if state == ShortcutState::Pressed {
+            app.state::<AmbientRuntime>().request_pickup();
+        }
+        return;
+    }
     if state == ShortcutState::Pressed
         && app
             .try_state::<Ambient>()

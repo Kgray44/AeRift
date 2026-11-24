@@ -1,3 +1,4 @@
+import type { FriendsPort } from "@aerift/app-contract/friends";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   ERROR_CODES,
@@ -25,7 +26,15 @@ export async function command<T>(name: string, args?: Record<string, unknown>): 
   }
 }
 
+const nativeFriends: FriendsPort = {
+  createContactCard: () => command("friends_create_contact_card"),
+  createInvitation: recipientCard => command("friends_create_invitation", { recipientCard }),
+  pickObject: kind => command("friends_pick_object", { kind }),
+  apply: request => command("friends_apply", { request }),
+};
+
 export const nativeAppPort: AppPort = {
+  friends: nativeFriends,
   async watch(listener) {
     const updates = new Channel<AppSnapshot>(listener);
     const subscribed = await command<string>("watch_app", { updates });

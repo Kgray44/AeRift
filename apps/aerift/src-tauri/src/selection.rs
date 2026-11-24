@@ -1,9 +1,11 @@
 use std::{path::PathBuf, sync::Mutex};
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 use std::sync::Arc;
 #[cfg(windows)]
 use std::{fs, path::Path};
+#[cfg(target_os = "android")]
+use tauri_plugin_aerift_android::StagedSelection;
 #[cfg(target_os = "ios")]
 use tauri_plugin_aerift_ios::StagedSelection;
 
@@ -29,7 +31,7 @@ struct SelectedFile {
 #[derive(Clone)]
 pub(crate) struct SelectionSource {
     pub(crate) path: PathBuf,
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     _staging: Arc<StagedSelection>,
 }
 
@@ -67,7 +69,7 @@ impl State {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 impl SelectionSource {
     pub(crate) fn staged_selection(&self) -> &StagedSelection {
         &self._staging
@@ -118,7 +120,7 @@ impl SelectionRegistry {
         Ok(Some(details))
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     pub(crate) fn select_staged(
         &self,
         revision: u64,
@@ -127,7 +129,7 @@ impl SelectionRegistry {
         self.select_shared_staged(revision, Arc::new(staged))
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     pub(crate) fn select_shared_staged(
         &self,
         revision: u64,

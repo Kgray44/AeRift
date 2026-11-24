@@ -1,18 +1,26 @@
 //! AeRift v1 file transport on a peer-authenticated HTTP/1.1 stream.
 
+pub mod ambient;
+pub mod ambient_camera;
+mod checkpoint;
 mod client;
+#[cfg(unix)]
+mod journal;
 mod model;
 mod receiver;
 mod server;
 
-pub use client::{Connector, Sender};
+pub use client::{Connector, Sender, inspect_file_offer};
 pub use model::{ErrorCode, Offer, PeerId, State, Status, TransferError};
 pub use receiver::{IncomingTransfer, ReceiveLimits, Receiver, TransferKey};
-pub use server::{serve, serve_request};
+pub use server::{TransferScope, serve, serve_request, serve_scoped_request};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Limited};
 use hyper::body::Incoming;
+
+pub(crate) const RESUMABLE_ROUTE: &str = "/v2/resumable/transfers";
+pub(crate) const RESUMABLE_CHUNK_SIZE: usize = 1024 * 1024;
 
 const RECEIVER_READY_ROUTE: &str = "/v1/receiver-ready";
 

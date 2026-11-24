@@ -1,0 +1,57 @@
+name: Ambient Windows model qualification
+on:
+  pull_request:
+    paths:
+      - 'apps/aerift/src-tauri/src/ambient_native_model.rs'
+      - 'scripts/ambient/**'
+      - '.github/workflows/ambient-windows-model.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  headless-inference:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Download immutable upstream qualification inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'ambient-model-fixtures'
+          New-Item -ItemType Directory -Path $fixture | Out-Null
+          curl.exe --fail --show-error --location --proto '=https' --max-time 120 'https://files.pythonhosted.org/packages/fe/63/c9172142521fc334fa891be9ef6259a3790502041b395127d63755cb3f0b/mediapipe-0.10.32-py3-none-win_amd64.whl' --output "$fixture\windows.whl"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          curl.exe --fail --show-error --location --proto '=https' --max-time 120 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task' --output "$fixture\hand_landmarker.task"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          curl.exe --fail --show-error --location --proto '=https' --max-time 120 'https://storage.googleapis.com/mediapipe-assets/thumb_up.jpg' --output "$fixture\thumb_up.jpg"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Run pinned Windows inference without sensor access
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ambient-windows-probe-target
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'ambient-model-fixtures'
+          python -B scripts/ambient/test_stage_windows_landmarker.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -B scripts/ambient/stage_windows_landmarker.py --wheel "$fixture\windows.whl" --model "$fixture\hand_landmarker.task" --output "$fixture\staged"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo run --locked --manifest-path scripts/ambient/windows-model-probe/Cargo.toml -- "$fixture\staged"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $altered = Join-Path $fixture 'tampered'
+          Copy-Item -Path "$fixture\staged" -Destination $altered -Recurse
+          $changed = Join-Path $altered 'libmediapipe.dll'
+          $append = [System.IO.File]::Open($changed, [System.IO.FileMode]::Append)
+          try { $append.WriteByte(0) } finally { $append.Dispose() }
+          cargo run --locked --manifest-path scripts/ambient/windows-model-probe/Cargo.toml -- "$altered" --must-refuse
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -B scripts/ambient/verify_native_landmarker.py --wheel "$fixture\windows.whl" --model "$fixture\hand_landmarker.task" --fixture "$fixture\thumb_up.jpg"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

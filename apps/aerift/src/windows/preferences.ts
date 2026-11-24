@@ -16,6 +16,8 @@ export interface DesktopPreferences {
   clipboard: boolean;
   ambientNotifications: boolean;
   ambientShortcut: AmbientShortcut;
+  ambientContextEnabled: boolean;
+  ambientExclusions: string;
 }
 
 export function parseDesktopPreferences(value: unknown): DesktopPreferences {
@@ -25,7 +27,7 @@ export function parseDesktopPreferences(value: unknown): DesktopPreferences {
   return {
     experience: restorePreferences(input.experience ?? { ...appearance, version: 1 }),
     route: route === "workspace" || route === "rift" || route === "activity" ||
-      route === "devices" || route === "settings" ? route : "home",
+      route === "devices" || route === "friends" || route === "settings" ? route : "home",
     orbitShortcut: input.orbitShortcut === "off" || input.orbitShortcut === "alt-shift-o" ? input.orbitShortcut : "alt-o",
     gestures: (input.gestures ?? input.gesturesEnabled) === true,
     cameraShortcut: input.cameraShortcut === "off" || input.cameraShortcut === "v" ? input.cameraShortcut : "c",
@@ -33,6 +35,8 @@ export function parseDesktopPreferences(value: unknown): DesktopPreferences {
       typeof input.cameraDeviceId === "string" ? input.cameraDeviceId : "",
     clipboard: input.clipboard === true,
     ambientNotifications: input.ambientNotifications === true,
+    ambientContextEnabled: input.ambientContextEnabled === true,
+    ambientExclusions: typeof input.ambientExclusions === "string" ? input.ambientExclusions.slice(0, 8192) : "",
     ambientShortcut: input.ambientShortcut === "alt-shift-r" || input.ambientShortcut === "ctrl-alt-r"
       ? input.ambientShortcut : "off",
   };
@@ -44,4 +48,14 @@ export function readDesktopPreferences(): DesktopPreferences {
   } catch {
     return parseDesktopPreferences(null);
   }
+}
+
+// Only a process basename crosses the IPC boundary, never a path or window title.
+export function ambientExcludedApps(value: string): string[] {
+  const seen = new Set<string>();
+  for (const raw of value.split(/[,\n]/)) {
+    const executable = raw.trim().toLowerCase();
+    if (executable) seen.add(executable);
+  }
+  return [...seen];
 }

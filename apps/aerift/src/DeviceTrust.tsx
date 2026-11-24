@@ -1,6 +1,7 @@
 import { Button, ConnectionStatus, SpatialIcon } from "@aerift/ui";
 import { useState } from "react";
 import type { AppPort, AppSnapshot } from "@aerift/app-contract";
+import { partitionDevices } from "@aerift/app-contract/friends";
 import { nativeAppPort } from "./nativeAppPort";
 
 const devicePlatform = {
@@ -12,7 +13,7 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
   const [selected, setSelected] = useState<string>();
   const [revoking, setRevoking] = useState(false);
   const [feedback, setFeedback] = useState<{ message: string; error: boolean }>();
-  const devices = snapshot?.devices ?? [];
+  const { personal, nearby: devices } = partitionDevices(snapshot?.devices ?? [], snapshot?.friends, snapshot?.personalDeviceIds);
 
   async function revoke(deviceId: string) {
     setRevoking(true);
@@ -32,6 +33,15 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
 
   return (
     <section className="aerift-device-trust" aria-label="Nearby and trusted devices">
+      {snapshot?.personalDeviceIds && <section aria-label="My Devices">
+        <h3>My Devices</h3>
+        {personal.length ? <ul className="aerift-devices">{personal.map(device => <li key={device.id}>
+          <div className="aerift-device-id"><SpatialIcon name={devicePlatform[device.platform][1]} size={22} />
+            <div><strong>{device.name}</strong><small>{devicePlatform[device.platform][0]}</small></div></div>
+          <ConnectionStatus state={device.online ? "connected" : "offline"} label={device.online ? "Online" : "Offline"} />
+        </li>)}</ul> : <p>No authorized personal devices.</p>}
+      </section>}
+      <h3>Nearby Devices</h3>
       {devices.length ? (
         <ul className="aerift-devices">
           {devices.map((device) => (

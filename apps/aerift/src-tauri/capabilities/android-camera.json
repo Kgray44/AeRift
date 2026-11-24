@@ -1,0 +1,14 @@
+{
+  "identifier": "android-camera",
+  "description": "Allow foreground hand capture controls in the local Android main WebView.",
+  "local": true,
+  "platforms": ["android"],
+  "webviews": ["main"],
+  "permissions": [
+    "aerift-android:allow-camera-permission",
+    "aerift-android:allow-camera-clock",
+    "aerift-android:allow-register-camera-events",
+    "aerift-android:allow-start-camera",
+    "aerift-android:allow-stop-camera"
+  ]
+}

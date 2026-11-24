@@ -5,7 +5,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 use crate::{
     ErrorCode, Offer, RECEIVER_READY_ROUTE, ReceiverReady, State, Status, TransferError,
+    ambient::{CONTENT_BLOCK, CaptureError, FrozenCapture, ReceiverCapabilities},
     model::{BUFFER_SIZE, MAX_SAFE_SIZE},
     read_control,
 };
@@ -36,6 +37,9 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const READY_QUERY_TIMEOUT: Duration = Duration::from_millis(1200);
 type RequestBody = UnsyncBoxBody<Bytes, io::Error>;
 type Progress = Arc<dyn Fn(Uuid, Status) + Send + Sync>;
+type AuthorityCheck = Arc<dyn Fn() -> Result<(), TransferError> + Send + Sync>;
+type FrozenBlocks = Arc<[[u8; 32]]>;
+type PreparedFile = (Offer, tokio::fs::File, Option<FrozenBlocks>);
 
 /// Supply a fresh stream with authenticated TLS 1.3 and HTTP/1.1 ALPN.
 /// Pin the chosen destination leaf and present the local device certificate.
@@ -90,6 +94,77 @@ impl<C: Connector> Sender<C> {
         cancel: CancellationToken,
         progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
     ) -> Result<Status, TransferError> {
+        self.send_prepared(id, cancel, progress, None, async {
+            let (offer, file) = prepare(id, path, name).await?;
+            Ok((offer, file, None))
+        })
+        .await
+    }
+
+    /// For independently authorized transport lanes. Recheck authority before
+    /// metadata and again before exposing any file frame to the connection.
+    pub async fn send_file_guarded(
+        &self,
+        id: Uuid,
+        path: &Path,
+        name: &str,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+        check: impl Fn() -> Result<(), TransferError> + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
+        self.send_prepared(id, cancel, progress, Some(Arc::new(check)), async {
+            let (offer, file) = prepare(id, path, name).await?;
+            Ok((offer, file, None))
+        })
+        .await
+    }
+
+    /// Reuse the v1 receiver and its existing explicit consent flow. The
+    /// connector is still responsible for the original pinned trust scope.
+    pub async fn send_frozen_file_with_id(
+        &self,
+        id: Uuid,
+        capture: Arc<FrozenCapture>,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
+        use crate::ambient::Representation;
+        self.send_prepared(id, cancel, progress, None, async move {
+            if capture.negotiate(ReceiverCapabilities::V1) != Ok(Representation::SingleRawFile) {
+                return Err(ErrorCode::InvalidRequest.into());
+            }
+            tokio::task::spawn_blocking(move || {
+                let entry = capture.entries().first().ok_or(ErrorCode::InvalidRequest)?;
+                let metadata = entry.manifest();
+                let offer = Offer {
+                    id,
+                    name: metadata.title.clone(),
+                    size_bytes: metadata.size,
+                    sha256: metadata.sha256.clone().ok_or(ErrorCode::InvalidRequest)?,
+                };
+                offer.validate()?;
+                let (file, blocks) = entry.open_frozen_file().map_err(|error| match error {
+                    CaptureError::SourceChanged
+                    | CaptureError::SourceUnavailable
+                    | CaptureError::UnsupportedRepresentation => ErrorCode::IntegrityFailed,
+                    _ => ErrorCode::StorageFailed,
+                })?;
+                Ok((offer, tokio::fs::File::from_std(file), Some(blocks)))
+            })
+            .await
+            .map_err(|_| ErrorCode::InternalError)?
+        })
+        .await
+    }
+
+    async fn send_prepared(
+        &self,
+        id: Uuid,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+        check: Option<AuthorityCheck>,
+        prepare: impl Future<Output = Result<PreparedFile, TransferError>>,
+    ) -> Result<Status, TransferError> {
         if id.get_version() != Some(uuid::Version::Random)
             || id.get_variant() != uuid::Variant::RFC4122
         {
@@ -103,10 +178,10 @@ impl<C: Connector> Sender<C> {
             }
         };
         tokio::pin!(stop);
-        let (offer, file) = tokio::select! {
+        let (offer, file, frozen) = tokio::select! {
             biased;
             _ = &mut stop => return Err(ErrorCode::Cancelled.into()),
-            result = prepare(id, path, name) => result?,
+            result = prepare => result?,
         };
         let sent = Arc::new(AtomicU64::new(0));
         let measured = Arc::clone(&sent);
@@ -115,7 +190,7 @@ impl<C: Connector> Sender<C> {
             progress(id, status);
         });
         let result = {
-            let run = self.run(offer.clone(), file, Arc::clone(&progress));
+            let run = self.run(offer.clone(), file, frozen, Arc::clone(&progress), check);
             tokio::pin!(run);
             tokio::select! {
                 biased;
@@ -188,8 +263,13 @@ impl<C: Connector> Sender<C> {
         &self,
         offer: Offer,
         file: tokio::fs::File,
+        frozen: Option<FrozenBlocks>,
         progress: Progress,
+        check: Option<AuthorityCheck>,
     ) -> Result<Status, TransferError> {
+        if let Some(allowed) = &check {
+            allowed()?;
+        }
         let id = offer.id;
         let encoded = serde_json::to_vec(&offer).map_err(|_| ErrorCode::InvalidRequest)?;
         let mut status =
@@ -216,13 +296,31 @@ impl<C: Connector> Sender<C> {
             return Err(ErrorCode::Conflict.into());
         }
 
+        if let Some(allowed) = &check {
+            allowed()?;
+        }
+        let source_changed = Arc::new(AtomicBool::new(false));
         let body = FileBody {
             file,
             id,
             remaining: offer.size_bytes,
             sent: 0,
             progress,
-            buffer: vec![0; BUFFER_SIZE],
+            check,
+            buffer: vec![
+                0;
+                if frozen.is_some() {
+                    CONTENT_BLOCK
+                } else {
+                    BUFFER_SIZE
+                }
+            ],
+            frozen: frozen.map(|expected| BlockAuth {
+                expected,
+                index: 0,
+                buffered: 0,
+                source_changed: Arc::clone(&source_changed),
+            }),
         };
         let path = format!("/v1/transfers/{id}/content");
         let result = self
@@ -236,6 +334,9 @@ impl<C: Connector> Sender<C> {
             )
             .await
             .and_then(validate_status);
+        if source_changed.load(Ordering::Acquire) {
+            return Err(ErrorCode::IntegrityFailed.into());
+        }
         match result {
             Ok(status) if status.state == State::Completed => Ok(status),
             Ok(_) => Err(ErrorCode::Conflict.into()),
@@ -359,6 +460,13 @@ fn validate_progress(status: Status, offered_bytes: u64) -> Result<(), TransferE
     Ok(())
 }
 
+/// Compute the same file metadata and content hash used by the sender.
+pub async fn inspect_file_offer(id: Uuid, path: &Path, name: &str) -> Result<Offer, TransferError> {
+    let (offer, _) = prepare(id, path, name).await?;
+    offer.validate()?;
+    Ok(offer)
+}
+
 async fn prepare(
     id: Uuid,
     path: &Path,
@@ -411,7 +519,15 @@ struct FileBody {
     remaining: u64,
     sent: u64,
     progress: Progress,
+    check: Option<AuthorityCheck>,
     buffer: Vec<u8>,
+    frozen: Option<BlockAuth>,
+}
+struct BlockAuth {
+    expected: FrozenBlocks,
+    index: usize,
+    buffered: usize,
+    source_changed: Arc<AtomicBool>,
 }
 
 impl Body for FileBody {
@@ -426,6 +542,42 @@ impl Body for FileBody {
         if this.remaining == 0 {
             return Poll::Ready(None);
         }
+        if let Some(block) = &mut this.frozen {
+            let limit = this.remaining.min(CONTENT_BLOCK as u64) as usize;
+            // A transport frame may not contain any bytes from a block until
+            // the complete frozen block has authenticated against its digest.
+            while block.buffered < limit {
+                let mut buffer = ReadBuf::new(&mut this.buffer[block.buffered..limit]);
+                match std::task::ready!(Pin::new(&mut this.file).poll_read(cx, &mut buffer)) {
+                    Ok(()) if !buffer.filled().is_empty() => {
+                        block.buffered += buffer.filled().len()
+                    }
+                    _ => {
+                        block.source_changed.store(true, Ordering::Release);
+                        return Poll::Ready(Some(Err(io::ErrorKind::InvalidData.into())));
+                    }
+                }
+            }
+            let digest: [u8; 32] = Sha256::digest(&this.buffer[..limit]).into();
+            if block.expected.get(block.index) != Some(&digest) {
+                block.source_changed.store(true, Ordering::Release);
+                return Poll::Ready(Some(Err(io::ErrorKind::InvalidData.into())));
+            }
+            block.index += 1;
+            block.buffered = 0;
+            let data = Bytes::copy_from_slice(&this.buffer[..limit]);
+            this.remaining -= limit as u64;
+            this.sent += limit as u64;
+            (this.progress)(
+                this.id,
+                Status {
+                    state: State::Transferring,
+                    bytes_transferred: this.sent,
+                    error: None,
+                },
+            );
+            return Poll::Ready(Some(Ok(Frame::data(data))));
+        }
         let limit = this.remaining.min(BUFFER_SIZE as u64) as usize;
         let mut buffer = ReadBuf::new(&mut this.buffer[..limit]);
         match std::task::ready!(Pin::new(&mut this.file).poll_read(cx, &mut buffer)) {
@@ -434,6 +586,13 @@ impl Body for FileBody {
                 Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())))
             }
             Ok(()) => {
+                if this
+                    .check
+                    .as_ref()
+                    .is_some_and(|allowed| allowed().is_err())
+                {
+                    return Poll::Ready(Some(Err(io::ErrorKind::PermissionDenied.into())));
+                }
                 let data = Bytes::copy_from_slice(buffer.filled());
                 this.remaining -= data.len() as u64;
                 this.sent += data.len() as u64;
@@ -458,3 +617,5 @@ impl Body for FileBody {
         self.remaining == 0
     }
 }
+
+mod resume;

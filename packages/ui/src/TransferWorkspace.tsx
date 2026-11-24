@@ -31,7 +31,7 @@ function messageFor(code: ErrorCode) {
   return errors[code] ?? "The operation could not be completed. Try again.";
 }
 
-type Operation = "file" | "send" | "accept" | "decline" | "cancel" | "create" | "redeem" | "approve" | "deny" | "readiness";
+type Operation = "file" | "send" | "accept" | "decline" | "cancel" | "create" | "redeem" | "start_nearby" | "approve" | "deny" | "readiness";
 const composerKey = "composer";
 const transferKey = (id: string) => `transfer:${id}`;
 const pairingKey = (id: string) => `pairing:${id}`;
@@ -195,6 +195,11 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           if (terminal) setAftermath({ id: terminal.id, expiresAt: Date.now() + 2800 });
           const current = { ...next, transfers };
           session.snapshot = current;
+          const pairedNearby = previous?.nearbyPairingIncoming;
+          if (pairedNearby && !current.nearbyPairingIncoming
+            && current.devices.some(device => device.id === pairedNearby.device.id && device.paired)) {
+            setPairStatus(`Paired with ${pairedNearby.device.name}`);
+          }
           setSnapshot(current);
           notifyConnection?.({ state: "ready", snapshot: current });
         });
@@ -427,8 +432,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   function pair(request: PairingAction) {
     setPairError(undefined);
     setPairStatus(undefined);
-    const key = request.action === "confirm" ? pairingKey(request.requestId) : "pairing";
-    const operation = request.action === "confirm" ? request.accept ? "approve" : "deny" : request.action;
+    const key = request.action === "confirm" || request.action === "confirm_nearby" ? pairingKey(request.requestId) : "pairing";
+    const operation = request.action === "confirm" || request.action === "confirm_nearby" ? request.accept ? "approve" : "deny" : request.action;
     return run(key, operation, session => {
       if (request.action === "confirm") {
         const pending = session.snapshot?.pendingPairing.find(item => item.requestId === request.requestId);
@@ -436,19 +441,30 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           return Promise.resolve({ ok: false, error: { code: "pairing_expired" } });
         }
       }
+      if (request.action === "confirm_nearby") {
+        const pending = request.outgoing ? session.snapshot?.nearbyPairingOutgoing : session.snapshot?.nearbyPairingIncoming;
+        if (!pending || pending.requestId !== request.requestId || Date.parse(pending.expiresAt) <= Date.now()) {
+          return Promise.resolve({ ok: false, error: { code: "pairing_expired" } });
+        }
+      }
       return port.pair(request);
     }, result => {
       if (result.state === "invitation") {
         setInvitation(result.invitation);
+      } else if (result.state === "nearby_started") {
+        setPairStatus("Compare the verification code on both devices.");
+      } else if (result.state === "nearby_waiting") {
+        setPairStatus("You approved. Waiting for the other device.");
       } else {
         if (request.action === "confirm") setInvitation(undefined);
         setPairStatus(result.state === "paired" ? `Paired with ${result.device.name}` : "Pairing declined");
       }
-    }, setPairError);
+    }, error => setPairError(request.action === "start_nearby" ? "Nearby pairing could not start. Check that both devices have a compatible version and are visible to each other." : error));
   }
 
   const retry = connection?.retry ?? (() => setWatchAttempt(attempt => attempt + 1));
-  const pairingLabel = pendingPairs.length ? `Review pairing (${pendingPairs.length})` : "Pair a device";
+  const pairingCount = pendingPairs.length + Number(!!snapshot?.nearbyPairingIncoming) + Number(!!snapshot?.nearbyPairingOutgoing);
+  const pairingLabel = pairingCount ? `Review pairing (${pairingCount})` : "Pair a device";
   const stageDiscovery = watchError ? "interrupted" : discovery ??
     (!snapshot ? "connecting" : devices.some(device => device.online) ? "available" : "empty");
   const ready = readinessMatches(readiness, gestureFeedback, intent, Date.now());
@@ -695,7 +711,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     </div>
     <Sheet open={pairingOpen} title="Pair a device" onClose={() => setPairingOpen(false)}>
       {pairingOpen && <PairingPanel invitation={invitation} requests={pendingPairs} disabled={pairingDisabled}
-        busy={pairingBusy === "create" || pairingBusy === "redeem" ? pairingBusy : undefined}
+        busy={pairingBusy === "create" || pairingBusy === "redeem" || pairingBusy === "start_nearby" ? pairingBusy : undefined}
+        nearby={snapshot?.nearbyVerification ? { candidates: devices.filter(device => device.online && !device.paired),
+          incoming: snapshot.nearbyPairingIncoming, outgoing: snapshot.nearbyPairingOutgoing } : undefined}
         requestBusy={id => {
           const current = operations.get(pairingKey(id));
           return current === "approve" || current === "deny" ? current : undefined;

@@ -4,19 +4,20 @@ import type { CSSProperties } from "react";
 import { mobileDestinations, type MobileDestination } from "./mobile-experience";
 
 const icons = {
-  home: "home", workspace: "workspace", rift: "send", devices: "desktop", activity: "activity",
+  friends: "friends", home: "home", workspace: "workspace", rift: "send", devices: "desktop", activity: "activity",
 } as const;
 
-export function MobileNavigation({ destination, navigate, attention }: {
+export function MobileNavigation({ destination, navigate, attention, destinations = mobileDestinations }: {
   destination: MobileDestination;
+  destinations?: readonly MobileDestination[];
   navigate: (destination: MobileDestination) => void;
   attention: { devices: boolean; activity: boolean };
 }) {
-  const position = { "--ios-route": mobileDestinations.indexOf(destination) } as CSSProperties;
+  const position = { "--ios-route": destinations.indexOf(destination), "--ios-route-count": destinations.length } as CSSProperties;
   return <GlassSurface material="chrome" className="ae-nav-destinations ios-dock" style={position}>
     <nav aria-label="AeRift destinations">
       <span className="ae-nav-indicator" aria-hidden="true" />
-      {mobileDestinations.map(item => <Button key={item} variant="quiet"
+      {destinations.map(item => <Button key={item} variant="quiet"
         aria-current={destination === item ? "page" : undefined}
         onClick={() => navigate(item)}>
         <SpatialIcon name={icons[item]} size={19} />

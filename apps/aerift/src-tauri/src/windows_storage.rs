@@ -1,10 +1,10 @@
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
-use aerift_peers::{Device, SecretStore, TrustStore};
+use aerift_peers::{Device, FriendAuthority, FriendBook, FriendStore, SecretStore, TrustStore};
 use aerift_transfer::{ErrorCode, PeerId, TransferError};
 
 use crate::protected_store::ProtectedFile;
@@ -117,3 +117,139 @@ impl ReceiveFolder {
 pub(crate) fn storage_failed(_: impl Sized) -> TransferError {
     ErrorCode::StorageFailed.into()
 }
+
+/// Opt-in native Friends persistence; no UI or background listener is started.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn open_friends(
+    directory: &Path,
+) -> Result<(FriendAuthority, Arc<FriendBook>), TransferError> {
+    let profile = directory.join("friends-v1");
+    let store = Arc::new(WindowsFriendStore::new(&profile)?);
+    let identity = WindowsIdentity(ProtectedFile::new(&profile, "person.dpapi"));
+    if store.load()?.is_some() && identity.load()?.is_none() {
+        return Err(ErrorCode::StorageFailed.into());
+    }
+    let authority = FriendAuthority::load_or_create(&identity)?;
+    let book = Arc::new(FriendBook::open(authority.id(), store)?);
+    Ok((authority, book))
+}
+
+/// Keep the OS-held lock alive until every reference to the book is dropped.
+struct WindowsFriendStore {
+    _profile_lock: File,
+    ledger: ProtectedFile,
+    transaction: Mutex<()>,
+}
+
+impl WindowsFriendStore {
+    fn new(profile: &Path) -> Result<Self, TransferError> {
+        Ok(Self {
+            _profile_lock: lock_profile(profile)?,
+            ledger: ProtectedFile::new(profile, "book.dpapi"),
+            transaction: Mutex::new(()),
+        })
+    }
+}
+
+impl FriendStore for WindowsFriendStore {
+    fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
+        let _guard = self.transaction.lock().map_err(storage_failed)?;
+        self.ledger.load().map_err(storage_failed)
+    }
+    fn replace(&self, expected: Option<&[u8]>, data: &[u8]) -> Result<(), TransferError> {
+        let _guard = self.transaction.lock().map_err(storage_failed)?;
+        if self.ledger.load().map_err(storage_failed)?.as_deref() != expected {
+            return Err(ErrorCode::Conflict.into());
+        }
+        self.ledger
+            .replace_write_through(data)
+            .map_err(storage_failed)
+    }
+}
+
+#[cfg(test)]
+mod friends_tests {
+    use super::*;
+    use aerift_peers::{FriendClaim, FriendRecord};
+
+    #[test]
+    fn friend_award_survives_profile_reopen_and_does_not_share_local_trust() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote = tempfile::tempdir().unwrap();
+        let (authority, book) = open_friends(dir.path()).unwrap();
+        let (remote_authority, _remote_book) = open_friends(remote.path()).unwrap();
+        assert!(
+            open_friends(dir.path()).is_err(),
+            "one process owns a sender profile"
+        );
+        let a = PeerId::from_tls_leaf(b"synthetic-a");
+        let b = PeerId::from_tls_leaf(b"synthetic-b");
+        let other = PeerId::from_tls_leaf(b"synthetic-other");
+        let invite = authority.invite(a, remote_authority.id(), b, 10).unwrap();
+        let accept = remote_authority.accept(&invite, a, b, 11).unwrap();
+        let approval = authority.confirm(&invite, &accept, b, 12).unwrap();
+        let record =
+            FriendRecord::verify(&invite, &accept, &approval, authority.id(), a, b, 13).unwrap();
+        let relationship = record.relationship();
+        book.add(record, 13).unwrap();
+        book.enroll(
+            remote_authority.enroll(relationship, other, 14).unwrap(),
+            other,
+            15,
+        )
+        .unwrap();
+        let offer = uuid::Uuid::new_v4();
+        book.offer(offer, remote_authority.id(), None, [16; 32])
+            .unwrap();
+        assert_eq!(
+            book.claim(offer, b, [16; 32]).unwrap(),
+            FriendClaim::Awarded
+        );
+        book.begin_payload(offer, b, [16; 32]).unwrap();
+        assert!(TrustStore::load(&WindowsTrust::new(dir.path()))
+            .unwrap()
+            .is_empty());
+        assert!(SecretStore::load(&WindowsIdentity::new(dir.path()))
+            .unwrap()
+            .is_none());
+        let original = authority.id();
+        drop(book);
+        drop(authority);
+        let (authority, book) = open_friends(dir.path()).unwrap();
+        assert_eq!(authority.id(), original);
+        assert_eq!(book.winner(offer).unwrap(), Some(b));
+        assert!(book.claim(offer, other, [16; 32]).is_err());
+        assert!(book.begin_payload(offer, b, [16; 32]).is_err());
+        drop(book);
+        let profile = dir.path().join("friends-v1");
+        let stored = fs::read(profile.join("book.dpapi")).unwrap();
+        let offer_string = offer.to_string();
+        assert!(!stored
+            .windows(offer_string.len())
+            .any(|part| part == offer_string.as_bytes()));
+        fs::remove_file(profile.join("person.dpapi")).unwrap();
+        assert!(
+            open_friends(dir.path()).is_err(),
+            "never replace a missing authority for an existing ledger"
+        );
+    }
+
+    #[test]
+    fn compare_and_swap_does_not_commit_a_stale_snapshot() {
+        let profile = tempfile::tempdir().unwrap();
+        let store = WindowsFriendStore::new(profile.path()).unwrap();
+        assert_eq!(store.load().unwrap(), None);
+        store.replace(None, b"original").unwrap();
+        let stale = store.load().unwrap();
+        store.replace(stale.as_deref(), b"winner").unwrap();
+        assert_eq!(
+            store.replace(stale.as_deref(), b"loser").unwrap_err().code,
+            ErrorCode::Conflict
+        );
+        assert_eq!(store.load().unwrap().as_deref(), Some(b"winner".as_slice()));
+    }
+}
+
+#[cfg(test)]
+#[path = "windows_storage/friends_qualification.rs"]
+mod friends_qualification;

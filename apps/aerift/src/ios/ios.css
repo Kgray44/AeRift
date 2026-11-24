@@ -99,8 +99,8 @@
 }
 
 .aerift-ios[data-keyboard="open"] .ios-dock { display: none; }
-.aerift-ios .ios-dock nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); inline-size: 100%; }
-.aerift-ios .ios-dock .ae-nav-indicator { inline-size: 20%; translate: calc(100% * var(--ios-route)) 0; }
+.aerift-ios .ios-dock nav { display: grid; grid-template-columns: repeat(var(--ios-route-count, 5), minmax(0, 1fr)); inline-size: 100%; }
+.aerift-ios .ios-dock .ae-nav-indicator { inline-size: calc(100% / var(--ios-route-count, 5)); translate: calc(100% * var(--ios-route)) 0; }
 .aerift-ios .ios-dock nav button.ae-button[data-variant] {
   position: relative;
   display: grid;

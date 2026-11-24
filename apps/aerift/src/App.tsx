@@ -1,7 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { AppShell, ThemeProvider } from "@aerift/ui";
 import "@aerift/ui/styles.css";
-import { IosApp } from "./ios/IosApp";
+import { AndroidApp, IosApp } from "./ios/IosApp";
 import { DesktopApp } from "./windows/DesktopApp";
 import { DesktopTransferPreview } from "./windows/DesktopTransferPreview";
 
@@ -11,6 +11,7 @@ export function App() {
       const surface = new URLSearchParams(location.search).get("surface");
       return surface === "desktop-preview" ? <DesktopTransferPreview /> : <DesktopApp />;
     }
+    if (/Android/.test(navigator.userAgent)) return <AndroidApp />;
     if (/iPhone|iPad|iPod/.test(navigator.userAgent) ||
       (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) return <IosApp />;
   }

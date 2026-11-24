@@ -15,17 +15,35 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "aerift"
 path = "src/main.rs"
 
+[features]
+ambient-native-model-qualification = ["dep:sha2", "windows-sys/Win32_System_LibraryLoader"]
+ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "dep:windows-core"]
+private-remote-host = []
+private-remote-app = ["tauri/custom-protocol"]
+
+[[example]]
+name = "private_remote_host"
+path = "examples/private_remote_host.rs"
+required-features = ["private-remote-host"]
+
 [build-dependencies]
-tauri-build = "2"
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = "2"
+tauri = { version = "2", features = [] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-aerift-ios = { path = "src/platform/ios" }
 libc = "0.2"
 
-[target.'cfg(any(windows, target_os = "ios"))'.dependencies]
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-aerift-android = { path = "src/platform/android" }
+libc = "0.2"
+serde_json = "1"
+sha2 = "0.10"
+url = "2"
+
+[target.'cfg(any(windows, target_os = "ios", target_os = "android"))'.dependencies]
 aerift-peers = { path = "../../../crates/peers" }
 aerift-transfer = { path = "../../../crates/transfer" }
 serde = { version = "1", features = ["derive"] }
@@ -39,7 +57,13 @@ tauri = { version = "2", features = ["tray-icon"] }
 serde_json = "1"
 tauri-plugin-dialog = "2"
 tempfile = "3"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_System_Power", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 tauri-plugin-notification = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Ole", "Win32_System_StationsAndDesktops", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+
+windows-core = { version = "0.62.2", optional = true }
+
+sha2 = { version = "0.10.9", optional = true }
