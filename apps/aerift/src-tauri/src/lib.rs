@@ -35,6 +35,10 @@ mod selection;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
+mod windows_friends;
+#[cfg(windows)]
+mod windows_friends_files;
+#[cfg(windows)]
 mod windows_storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -128,6 +132,7 @@ pub fn run() {
         .manage(runtime::AppRuntime::default())
         .manage(ambient_runtime::AmbientRuntime::default())
         .manage(private_remote_app::RemoteRuntime::default())
+        .manage(windows_friends::WindowsFriends::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             private_remote_app::windows_remote_mode,
@@ -139,6 +144,16 @@ pub fn run() {
             private_remote_app::windows_redeem_remote,
             private_remote_app::windows_send_remote_file,
             windows::watch_app,
+            windows_friends::friends_setup_view,
+            windows_friends::friends_setup_card,
+            windows_friends::friends_setup_issue,
+            windows_friends::friends_setup_review,
+            windows_friends::friends_setup_consent,
+            windows_friends::friends_setup_finish,
+            windows_friends::friends_setup_answer,
+            windows_friends::friends_setup_contact,
+            windows_friends_files::friends_files_view,
+            windows_friends_files::friends_files_action,
             ambient_runtime::watch_ambient_capture,
             ambient_runtime::set_ambient_capture,
             ambient_runtime::send_ambient_file,

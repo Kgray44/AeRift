@@ -218,3 +218,68 @@ async fn friends_native_profiles_qualify_private_invitation_offer_and_verified_p
     join(b_payloads).await;
     join(b_offers).await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn friends_product_file_window_delivers_to_verified_windows_profile_after_explicit_acceptance(
+) {
+    use aerift_peers::{FriendFileWindow, FriendRecord};
+    use std::net::Ipv4Addr;
+    let a_dir = tempfile::tempdir().unwrap();
+    let b_dir = tempfile::tempdir().unwrap();
+    let destination_a = tempfile::tempdir().unwrap();
+    let destination_b = tempfile::tempdir().unwrap();
+    let (authority_a, book_a) = open_friends(a_dir.path()).unwrap();
+    let (authority_b, book_b) = open_friends(b_dir.path()).unwrap();
+    let a = Arc::new(Identity::load_or_create(&WindowsIdentity::new(a_dir.path())).unwrap());
+    let b = Arc::new(Identity::load_or_create(&WindowsIdentity::new(b_dir.path())).unwrap());
+    let (ap, bp) = (a.id(), b.id());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let invite = authority_a.invite(ap, authority_b.id(), bp, now).unwrap();
+    let acceptance = authority_b.accept(&invite, ap, bp, now).unwrap();
+    let answer = authority_a.confirm(&invite, &acceptance, bp, now).unwrap();
+    book_a
+        .add(
+            FriendRecord::verify(&invite, &acceptance, &answer, authority_a.id(), ap, bp, now)
+                .unwrap(),
+            now,
+        )
+        .unwrap();
+    book_b
+        .add(
+            FriendRecord::verify(&invite, &acceptance, &answer, authority_b.id(), bp, ap, now)
+                .unwrap(),
+            now,
+        )
+        .unwrap();
+    let window_a = FriendFileWindow::open(a, book_a, destination_a.path(), Ipv4Addr::LOCALHOST)
+        .await
+        .unwrap();
+    let window_b = FriendFileWindow::open(b, book_b, destination_b.path(), Ipv4Addr::LOCALHOST)
+        .await
+        .unwrap();
+    let picked = a_dir.path().join("fixture.bin");
+    let data: Vec<_> = (0..197_654).map(|i| (i % 251) as u8).collect();
+    fs::write(&picked, &data).unwrap();
+    let id = window_a
+        .offer(authority_b.id(), bp, picked, window_b.route())
+        .await
+        .unwrap();
+    assert!(window_a.send(id).await.is_err());
+    assert!(window_b.receipts().is_empty());
+    window_b
+        .accept(ap, id, window_a.route().offers)
+        .await
+        .unwrap();
+    let result = window_a.send(id).await.unwrap();
+    assert_eq!(result.state, State::Completed);
+    assert_eq!(window_b.receipts(), [(ap, id, result)]);
+    assert_eq!(
+        fs::read(destination_b.path().join("fixture.bin")).unwrap(),
+        data
+    );
+    window_a.stop();
+    window_b.stop();
+}

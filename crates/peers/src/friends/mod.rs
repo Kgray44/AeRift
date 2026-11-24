@@ -3,6 +3,7 @@
 
 mod authority;
 mod book;
+mod file_window;
 mod payload;
 mod wire;
 
@@ -11,9 +12,11 @@ pub use authority::{
     FriendRecord, PersonId,
 };
 pub use book::{
-    FriendBook, FriendClaim, FriendControlObject, FriendDecision, FriendIncomingOffer,
-    FriendInviteEndpoint, FriendInviteState, FriendObjectKind, FriendStore,
+    FriendBook, FriendClaim, FriendContactView, FriendControlObject, FriendDecision,
+    FriendIncomingOffer, FriendInviteEndpoint, FriendInviteState, FriendObjectKind, FriendStore,
 };
 
 pub use payload::FriendPayloadEndpoint;
 pub use wire::FriendOfferEndpoint;
+
+pub use file_window::{FriendFileRoute, FriendFileWindow};
