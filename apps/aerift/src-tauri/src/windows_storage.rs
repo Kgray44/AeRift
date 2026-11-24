@@ -251,4 +251,5 @@ mod friends_tests {
 }
 
 #[cfg(test)]
+#[path = "windows_storage/friends_qualification.rs"]
 mod friends_qualification;
