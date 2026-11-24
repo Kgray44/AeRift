@@ -43,6 +43,7 @@ jobs:
           npm ci
           for script in apps/android/*.sh; do bash -n "$script"; done
           python3 apps/android/test-stage-host.py
+          python3 scripts/branding/test-app-icons.py
           source_root=apps/aerift/src-tauri/src/platform/android/android/src
           work="$(mktemp -d "$RUNNER_TEMP/aerift-camera-clock.XXXXXX")"
           javac -d "$work" \
