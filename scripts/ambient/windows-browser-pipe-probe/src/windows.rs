@@ -31,7 +31,7 @@ use windows_sys::Win32::{
     },
     System::{
         Pipes::{
-            ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
+            ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId,
             GetNamedPipeServerProcessId, PIPE_REJECT_REMOTE_CLIENTS,
         },
         Threading::{GetCurrentProcess, OpenProcessToken},
@@ -233,20 +233,25 @@ fn child() -> io::Result<()> {
 }
 
 fn fixture() -> io::Result<()> {
+    // Isolate the negative case on its own first-instance pipe. Reusing its
+    // server HANDLE can leave the now-disconnected instance busy until the
+    // kernel retires the unpinned client's connection (Win32 231).
+    {
+        let unpinned_name = pipe_name(Uuid::new_v4());
+        let unpinned_server = server(&unpinned_name)?;
+        let unrelated = client(&unpinned_name).at("open unpinned fixture endpoint")?;
+        connected(&unpinned_server).at("connect preopened endpoint")?;
+        check(client_pid(&unpinned_server).at("read fixture client PID")? == std::process::id())
+            .at("match fixture client PID")?;
+        check(verify_client(&unpinned_server, u32::MAX).is_err())
+            .at("refuse unpinned fixture endpoint")?;
+        drop(unrelated);
+        drop(unpinned_server);
+    }
+
     let id = Uuid::new_v4();
     let name = pipe_name(id);
     let mut pipe = server(&name)?;
-    // Even an authorized-logon peer is refused without the pinned spawned PID.
-    let unrelated = client(&name).at("open unpinned fixture endpoint")?;
-    connected(&pipe).at("connect preopened endpoint")?;
-    check(client_pid(&pipe).at("read fixture client PID")? == std::process::id())
-        .at("match fixture client PID")?;
-    check(verify_client(&pipe, u32::MAX).is_err()).at("refuse unpinned fixture endpoint")?;
-    if unsafe { DisconnectNamedPipe(pipe.as_raw_handle()) } == 0 {
-        return Err(io::Error::last_os_error()).at("disconnect unpinned fixture endpoint");
-    }
-    drop(unrelated);
-
     let mut child = Command::new(std::env::current_exe()?)
         .arg("--qualification-child")
         .stdin(Stdio::piped())
