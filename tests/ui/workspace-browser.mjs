@@ -76,7 +76,8 @@ try {
     assert.equal(await dock.getByRole("button", { name: "Rift", exact: true }).getAttribute("aria-current"), "page");
     const manual = page.getByRole("region", { name: "Manual transfer" });
     await manual.getByRole("heading", { name: "Send manually" }).waitFor();
-    await button(manual, "Choose file").click();
+    // The fixture opens Rift with an existing incoming offer.
+    await button(manual, "Choose another file").click();
     await manual.getByText("Harbor survey.pdf", { exact: true }).waitFor();
     assert.equal(await button(manual, "Send file").count(), 0, "sending needs a recipient");
     await page.locator("label.ae-spatial-peer").filter({ hasText: "Studio PC" }).click();
