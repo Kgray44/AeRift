@@ -105,6 +105,39 @@ pub async fn serve_scoped_request(
     dispatch(request, peer, receiver, trust, Some(scope)).await
 }
 
+// v2 has its own generic peer consent/checkpoint flow. A scoped caller
+// (currently Friends v1) must never enter that flow without a scoped v2 contract.
+fn resumable_route(path: &str, scoped: bool) -> Result<bool, TransferError> {
+    let is_resumable = path == RESUMABLE_ROUTE
+        || path
+            .strip_prefix(RESUMABLE_ROUTE)
+            .is_some_and(|suffix| suffix.starts_with('/'));
+    if is_resumable && scoped {
+        return Err(ErrorCode::UnsupportedVersion.into());
+    }
+    Ok(is_resumable)
+}
+
+#[cfg(test)]
+mod protocol_policy_tests {
+    use super::*;
+
+    #[test]
+    fn scoped_v1_never_dispatches_to_the_generic_resume_protocol() {
+        for path in [
+            RESUMABLE_ROUTE.to_owned(),
+            format!("{RESUMABLE_ROUTE}/item/content"),
+        ] {
+            assert_eq!(
+                resumable_route(&path, true).unwrap_err().code,
+                ErrorCode::UnsupportedVersion
+            );
+            assert!(resumable_route(&path, false).unwrap());
+        }
+        assert!(!resumable_route("/v1/transfers", true).unwrap());
+    }
+}
+
 async fn dispatch(
     request: Request<Incoming>,
     peer: PeerId,
@@ -119,12 +152,10 @@ async fn dispatch(
     if request.uri().query().is_some() || request.version() != hyper::Version::HTTP_11 {
         return error(ErrorCode::InvalidRequest.into());
     }
-    if path == RESUMABLE_ROUTE
-        || path
-            .strip_prefix(RESUMABLE_ROUTE)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-    {
-        return resumable(request, peer, receiver, trust).await;
+    match resumable_route(path, scope.is_some()) {
+        Ok(true) => return resumable(request, peer, receiver, trust).await,
+        Ok(false) => {}
+        Err(failure) => return error(failure),
     }
     if !path.starts_with("/v1/") {
         return error(ErrorCode::UnsupportedVersion.into());
