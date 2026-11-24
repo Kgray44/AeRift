@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [features]
 private-remote-host = []
+private-remote-app = ["tauri/custom-protocol"]
 
 [[example]]
 name = "private_remote_host"

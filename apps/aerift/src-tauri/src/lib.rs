@@ -4,6 +4,10 @@ mod desktop;
 mod desktop_explorer;
 #[cfg(target_os = "ios")]
 mod ios;
+#[cfg(all(windows, feature = "private-remote-app"))]
+mod private_remote_app;
+#[cfg(all(windows, feature = "private-remote-app"))]
+mod private_remote_profile;
 #[cfg(windows)]
 mod protected_store;
 #[cfg(any(windows, target_os = "ios"))]
@@ -17,6 +21,22 @@ mod windows_storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    {
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        if args.iter().any(|arg| arg == "--private-remote-dev") {
+            #[cfg(feature = "private-remote-app")]
+            match private_remote_app::launch_endpoint(args) {
+                Ok(Some(endpoint)) => {
+                    private_remote_app::run(endpoint, tauri::generate_context!());
+                }
+                _ => eprintln!("Invalid private Remote developer launch. No listener was started."),
+            }
+            #[cfg(not(feature = "private-remote-app"))]
+            eprintln!("Private Remote developer feature is not included. No listener was started.");
+            return;
+        }
+    }
     let builder = tauri::Builder::default();
 
     #[cfg(target_os = "ios")]
