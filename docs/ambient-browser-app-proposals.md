@@ -55,3 +55,7 @@ transfer journey. Do not log proposal content, arm IDs or credentials.
 
 This change implements the native review control, not the installer or the
 Chrome/Edge extension release. It intentionally refuses production arming.
+
+### Installed app review consumer
+
+Windows Settings → **Browser pickup** reads only native status. It displays inert exact text for a broker-authorized proposal and lets the user retain the corresponding frozen RiftObject in a single, expiring in-memory slot or discard it. Review text is hidden when the surface loses focus. Neither the renderer nor the commands can attach a companion, supply an origin or frame, obtain a pickup capability, open a link, persist a preview, or send an object. The installed app has no authorized production attachment until approved Chrome/Edge IDs and a trusted companion are available, so it accurately displays the unavailable state and manual Workspace link capture remains a fallback. Attach/arm routing, lock/disconnect lifecycle wiring, and end-to-end transfer of non-file RiftObjects remain explicit gates; this consumer is not an active browser-to-app experience.

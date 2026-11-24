@@ -17,6 +17,8 @@ mod android;
 #[cfg(target_os = "android")]
 mod android_received;
 #[cfg(windows)]
+mod browser_review;
+#[cfg(windows)]
 mod desktop;
 #[cfg(windows)]
 mod desktop_explorer;
@@ -127,6 +129,7 @@ pub fn run() {
         )
         .manage(runtime::AppRuntime::default())
         .manage(ambient_runtime::AmbientRuntime::default())
+        .manage(browser_review::BrowserReviewRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             windows::watch_app,
@@ -154,6 +157,9 @@ pub fn run() {
             desktop::set_desktop_startup,
             desktop::open_workspace_url,
             desktop::desktop_transfer_preview,
+            browser_review::browser_review_status,
+            browser_review::retain_browser_review,
+            browser_review::clear_browser_review,
             desktop::notify_desktop_incoming,
             desktop_explorer::desktop_explorer_enabled,
             desktop_explorer::set_desktop_explorer,
