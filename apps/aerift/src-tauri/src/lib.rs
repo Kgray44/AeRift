@@ -169,7 +169,7 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             app.state::<ambient_runtime::AmbientRuntime>()
-                .start_lifecycle_watch();
+                .start_lifecycle_watch(app.handle().clone());
             let args = std::env::args_os().skip(1).collect::<Vec<_>>();
             desktop_explorer::stage_launch_file(
                 app.handle(),
@@ -189,6 +189,9 @@ pub fn run() {
             #[cfg(any(windows, target_os = "ios", target_os = "android"))]
             if matches!(_event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
+                #[cfg(windows)]
+                _app.state::<browser_review::BrowserReviewRuntime>()
+                    .revoke_session();
                 _app.state::<runtime::AppRuntime>().shutdown();
             }
         });

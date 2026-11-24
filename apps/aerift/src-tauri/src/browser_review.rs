@@ -47,6 +47,24 @@ impl State {
         self.held = None;
     }
 
+    fn needs_session_sample(&mut self, now: Instant) -> bool {
+        let connected = !matches!(self.broker.status(now), ProposalStatus::Unavailable);
+        if !connected
+            || self
+                .held
+                .as_ref()
+                .is_some_and(|(expires, _)| now >= *expires)
+        {
+            self.held = None;
+        }
+        connected
+    }
+
+    fn revoke_session(&mut self) {
+        // An unlock must not restore a previously trusted attached channel.
+        *self = Self::default();
+    }
+
     fn view(&mut self, now: Instant) -> View {
         let proposal = self.broker.status(now);
         if matches!(proposal, ProposalStatus::Unavailable) {
@@ -89,6 +107,17 @@ impl State {
 }
 
 impl BrowserReviewRuntime {
+    pub(crate) fn needs_session_sample(&self, now: Instant) -> bool {
+        self.state()
+            .is_ok_and(|mut state| state.needs_session_sample(now))
+    }
+
+    pub(crate) fn revoke_session(&self) {
+        if let Ok(mut state) = self.state() {
+            state.revoke_session();
+        }
+    }
+
     fn state(&self) -> Result<MutexGuard<'_, State>, TransferError> {
         self.0.lock().map_err(|_| ErrorCode::InternalError.into())
     }
@@ -107,7 +136,7 @@ pub(crate) fn browser_review_status(
         window.label(),
         crate::ambient_context::interactive_session(),
     ) {
-        state.clear();
+        state.revoke_session();
         return Ok(View::Unavailable);
     }
     if window.is_focused().ok() != Some(true) {
@@ -130,7 +159,7 @@ pub(crate) fn retain_browser_review(
         window.label(),
         crate::ambient_context::interactive_session(),
     ) {
-        state.clear();
+        state.revoke_session();
         return Err(ErrorCode::InvalidRequest.into());
     }
     if window.is_focused().ok() != Some(true) {
@@ -167,6 +196,49 @@ mod tests {
             ErrorCode::InvalidRequest
         );
         assert!(state.held.is_none());
+    }
+
+    #[test]
+    fn unavailable_controller_skips_native_session_sampling() {
+        let controller = BrowserReviewRuntime::default();
+        assert!(!controller.needs_session_sample(Instant::now()));
+        controller.revoke_session();
+        assert!(matches!(
+            controller.state().unwrap().view(Instant::now()),
+            View::Unavailable
+        ));
+    }
+
+    #[test]
+    fn session_revocation_releases_the_in_memory_frozen_object() {
+        use aerift_transfer::ambient::{freeze, Candidate, CaptureContext, CaptureLimits};
+        let now = Instant::now();
+        let capture = freeze(
+            CaptureContext {
+                explicit_selection: vec![Candidate::inline(
+                    RiftObjectKind::PlainText,
+                    "Browser selection",
+                    b"synthetic local-only browser review".to_vec(),
+                    "text/plain",
+                )],
+                ..CaptureContext::default()
+            },
+            CaptureLimits {
+                entries: 1,
+                depth: 1,
+                inline_bytes: 64,
+                total_bytes: 64,
+            },
+        )
+        .expect("synthetic native payload should freeze");
+        let mut state = State {
+            held: Some((now + Duration::from_secs(45), capture)),
+            ..State::default()
+        };
+        state.revoke_session();
+        assert!(state.held.is_none());
+        assert!(matches!(state.view(now), View::Unavailable));
+        assert!(state.retain(Uuid::new_v4(), now).is_err());
     }
 
     #[test]
