@@ -580,3 +580,99 @@ async fn inbox_acceptance_is_one_shot_and_corrupted_upload_leaves_no_candidate()
     assert_eq!(std::fs::read_dir(&inbox_root).unwrap().count(), 0);
     assert!(inbox.verified_receipt(key).is_err());
 }
+
+#[tokio::test]
+async fn ambient_dispatch_requires_receiver_consent_and_emits_one_verified_completion() {
+    use aerift_transfer::ambient::{
+        Candidate, CaptureContext, CaptureLimits, freeze,
+        session::{DropAuthority, HeldSession, Lane},
+    };
+    use std::time::Instant;
+    struct Only(PeerId);
+    impl DropAuthority for Only {
+        fn permits(&self, peer: PeerId, lane: Lane) -> bool {
+            peer == self.0 && lane == Lane::MyDevices
+        }
+    }
+    let (temp, harness) = setup();
+    let source = temp.path().join("selected.bin");
+    std::fs::write(&source, b"held contents").unwrap();
+    let capture = freeze(
+        CaptureContext {
+            explicit_selection: vec![Candidate::path(source)],
+            ..Default::default()
+        },
+        CaptureLimits::default(),
+    )
+    .unwrap();
+    let peer = PeerId::from_tls_leaf(b"fixture destination");
+    let auth = Only(peer);
+    let now = Instant::now();
+    let mut held = HeldSession::pickup(capture, Lane::MyDevices, now).unwrap();
+    let id = held.id();
+    held.drop_claim(id, peer, Lane::MyDevices, now, &auth)
+        .unwrap();
+    let dispatch = held
+        .resolve(now + Duration::from_millis(500), &auth)
+        .unwrap();
+    let receiver = harness.receiver.clone();
+    let sender = Sender::new(harness, Duration::from_secs(4), Duration::from_secs(5));
+    let frames = Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+    let observe = frames.clone();
+    let recorder = frames.clone();
+    let observer = tokio::spawn(async move {
+        let mut events = receiver.subscribe();
+        let pending = loop {
+            if let Some(pending) = receiver
+                .snapshot()
+                .into_iter()
+                .find(|o| o.status.state == State::Pending)
+            {
+                break pending;
+            }
+            events.changed().await.unwrap();
+        };
+        assert!(
+            observe
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|event| event.get("verified").is_none())
+        );
+        receiver.respond(pending.key, true).unwrap();
+    });
+    assert_eq!(
+        dispatch
+            .send(
+                &auth,
+                |p, lane| {
+                    assert_eq!((p, lane), (peer, Lane::MyDevices));
+                    Some(sender)
+                },
+                CancellationToken::new(),
+                move |frame| {
+                    recorder
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::to_value(frame).unwrap())
+                }
+            )
+            .await
+            .unwrap()
+            .state,
+        State::Completed
+    );
+    observer.await.unwrap();
+    let frames = frames.lock().unwrap();
+    let verified = frames
+        .iter()
+        .filter(|event| event.get("verified").is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(verified.len(), 1);
+    assert_eq!(verified[0]["phase"], "completed");
+    assert_eq!(verified[0]["interaction"], id.to_string());
+    assert_eq!(
+        std::fs::read(temp.path().join("received/selected.bin")).unwrap(),
+        b"held contents"
+    );
+}
