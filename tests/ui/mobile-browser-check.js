@@ -38,6 +38,11 @@ async (page) => {
   await page.getByRole("region", { name: "Nearby and trusted devices" }).getByText("Studio PC", { exact: true }).waitFor();
   await go("Rift");
   await page.locator(".ae-dock-file").getByText("Coastline.heic", { exact: true }).waitFor();
+  const manual = page.getByRole("region", { name: "Manual transfer" });
+  await manual.getByRole("heading", { name: "Send manually" }).waitFor();
+  await manual.getByText("Choose a paired device above, then send.").waitFor();
+  check(await manual.getByRole("button", { name: "Send file" }).count() === 0,
+    "the manual dock explains what is needed before offering");
   await page.locator("label.ae-spatial-peer").filter({ hasText: "Studio PC" }).click();
   await page.getByRole("button", { name: "Send file" }).click();
   await screenshot("light-rift-390");
@@ -47,6 +52,13 @@ async (page) => {
   const history = page.getByRole("region", { name: "Transfer history" });
   check(await history.evaluate(region => !!(document.querySelector(".ae-rift-board")
     .compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING)), "incoming consent is first in reading order");
+  const filter = history.getByRole("combobox", { name: /^Show/ });
+  await filter.selectOption("finished");
+  await history.getByText("Harbor survey.pdf", { exact: true }).waitFor();
+  check(await history.getByText("Awaiting confirmation", { exact: true }).count() === 0,
+    "the history filter hides active history but not the incoming offer");
+  await page.getByRole("heading", { name: "Incoming offers", exact: true }).waitFor();
+  await filter.selectOption("all");
   await history.getByText("Awaiting confirmation", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await history.getByRole("button", { name: "Cancel transfer", exact: true }).click();
