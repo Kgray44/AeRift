@@ -1,5 +1,8 @@
 #[cfg(windows)]
 mod ambient_context;
+#[cfg(all(windows, feature = "ambient-media-qualification"))]
+#[allow(dead_code)]
+mod ambient_media_foundation;
 #[cfg(windows)]
 mod ambient_runtime;
 #[cfg(windows)]

@@ -24,3 +24,22 @@ The verifier checks artifact digests before loading, uses only its two qualifica
 The first viable OS adapter is a video-only [Media Foundation](https://learn.microsoft.com/en-us/windows/win32/medfound/audio-video-capture-in-media-foundation) device ingress with bounded async Source Reader and explicit shutdown. Choose an explicitly authorized device; do not bypass OS camera privacy, steal a camera from another app, or open a permission dialog from a hidden worker. Pair it with a pinned, locally staged, licensed Windows C-ABI library and model; qualify the final packaging trust and runtime dependencies rather than loading anything from an arbitrary user/system search path. Keep camera frames within native memory, never in logs, network or general IPC. Bind the standalone supervisor to native lock status, priority app exclusions, battery saver and a real tray/OS camera indicator before opt-in.
 
 Remaining validation is physical: Windows C-ABI execution, camera permissions and single-reader exclusivity, driver release on lock/pause/quit, live hand continuity with main window destroyed, frame cadence under power changes, and end-to-end capture from real Explorer without focus or network scope changes. Do not make an always-on or production gestures claim before these pass. Windows setup must continue shipping with this worker unregistered until then.
+
+## Windows Media Foundation ingress qualification slice
+
+The follow-on code is gated by the Windows-only `ambient-media-qualification` feature and has no Tauri command, global activation, default capture device, or installer UI. The existing focused camera remains the only app-wired camera. The Windows adapter implements the supervisor's provider contract for a deliberately selected native device plus an independent, refreshable OS permission/session predicate. An injected, native visible indicator and locally staged model must both preflight successfully before sensor acquisition. A future trusted chooser, native indicator, and pinned Windows inference adapter still have to supply concrete implementations.
+
+Media Foundation video-only input uses one outstanding asynchronous source read and one non-blocking callback slot. It does not capture audio. Frames older than the supervisor freshness window are discarded instead of being retimestamped; a stalled driver produces an unavailable status rather than increasing the queue. It requests bounded RGB32 modes, validates dimensions/stride/length, reverses bottom-up rows, drops padding and converts BGRx to RGB for the local model. No frame or driver identifier is logged, written to disk, sent through app IPC or transmitted. Sample deadlines are held by the supervised provider path. On shutdown, the lease closes the callback gate, flushes/releases the reader, and shuts down the source before COM/MF and the indicator are released. The source activation and shutdown APIs can still be delayed by some physical drivers. Exact release deadlines, mode support and permission behavior are Windows hardware qualification gates, not implied by cross-checks.
+
+Portable regression tests include padded and bottom-up frames, malformed/oversized input, and stale or duplicate read suppression. The Linux native proof exercises a **synthetic** padded bottom-up MF-style frame through the actual Rust decoder, then the pinned model C ABI (zero landmarks), as well as the separate upstream positive fixture (21 landmarks):
+
+```sh
+cargo run -q --locked -p aerift-transfer --example ambient_blank_frame > /tmp/synthetic-aerift.rgb
+python3 -I -B scripts/ambient/verify_native_landmarker.py \
+  --wheel /path/to/upstream-platform-wheel.whl --model /path/to/hand_landmarker.task \
+  --fixture /path/to/pinned-upstream-thumb_up.jpg --decoded-rgb /tmp/synthetic-aerift.rgb
+```
+
+For an authorized Windows build/test environment, opt into compiling the native adapter with
+`cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --lib --features ambient-media-qualification`.
+The checked-in native unit tests exercise device-grant rejection only; they never call the Windows camera, even on a physical Windows machine.

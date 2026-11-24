@@ -1,6 +1,10 @@
 //! Process-owned Ambient recognition lifecycle. No windows, camera pixels, filesystem,
 //! transfer destinations, or network permissions are part of this interface.
 
+#[path = "ambient_camera_pixels.rs"]
+mod pixels;
+pub use pixels::{DriverReadGate, MAX_RGB32_BYTES, Rgb32Layout, RgbFrame, RgbLandmarker};
+
 use crate::ambient::{AmbientPolicy, CameraMode};
 use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard},

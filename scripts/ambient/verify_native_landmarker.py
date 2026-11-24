@@ -72,7 +72,7 @@ class HandResult(c.Structure):
     ]
 
 
-def detect(library, model, fixture):
+def detect(library, model, fixture, decoded_rgb):
     # Argument contracts pinned to the v0.10.32 MediaPipe C headers.
     def api(name, result, *args):
         fun = getattr(library, name)
@@ -97,12 +97,20 @@ def detect(library, model, fixture):
     if create(c.byref(options), c.byref(handle), None) or not handle:
         raise RuntimeError("Native CPU hand landmarker initialization failed")
     try:
-        for label, expected_count in [("blank synthetic RGB", 0), ("pinned upstream hand fixture", 1)]:
+        blank_label = "synthetic MF decode to RGB" if decoded_rgb is not None else "blank synthetic RGB"
+        for label, expected_count in [(blank_label, 0), ("pinned upstream hand fixture", 1)]:
             image = pointer()
             if expected_count:
                 result = load_fixture(os.fsencode(fixture), c.byref(image), None)
             else:
-                black = (c.c_ubyte * (256 * 256 * 3))()
+                expected_size = 256 * 256 * 3
+                black = (c.c_ubyte * expected_size)()
+                if decoded_rgb is not None:
+                    with decoded_rgb.open("rb") as source:
+                        data = source.read(expected_size + 1)
+                    if data != bytes(expected_size):
+                        raise RuntimeError("Decoded fixture must match the known generated blank RGB")
+                    black = type(black).from_buffer_copy(data)
                 result = create_rgb(1, 256, 256, black, len(black), c.byref(image), None)
             if result or not image:
                 raise RuntimeError("Native input construction failed")
@@ -131,6 +139,7 @@ def main():
     p.add_argument("--wheel", required=True, type=Path)
     p.add_argument("--model", required=True, type=Path)
     p.add_argument("--fixture", required=True, type=Path)
+    p.add_argument("--decoded-rgb", type=Path, help="optional synthetic blank fixture from ambient_blank_frame")
     args = p.parse_args()
     host = platform.system()
     if host not in TARGETS or platform.machine().lower() not in {"x86_64", "amd64"}:
@@ -146,7 +155,7 @@ def main():
         check_digest(output, binary_sha)
         library = c.CDLL(str(output))
         try:
-            detect(library, args.model, args.fixture.resolve())
+            detect(library, args.model, args.fixture.resolve(), args.decoded_rgb)
         finally:
             # A loaded DLL cannot be unlinked on Windows; unload after releasing all
             # C objects. This qualification process performs only one load.
