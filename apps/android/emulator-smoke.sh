@@ -55,8 +55,19 @@ printf 'AeRift Android CI: synthetic local-only selection fixture.\n' >"$tmp/$fi
 adb -s "$serial" push "$tmp/$fixture_name" "/sdcard/Download/$fixture_name"
 component="$(adb -s "$serial" shell cmd package resolve-activity --brief "$identity" | tail -n1)"
 [[ "$component" == "$identity/"* ]]
+perf="${AERIFT_PERF_OBSERVE:-0}"
+monotonic_ms() { python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'; }
+if [[ "$perf" == 1 ]]; then
+  observe_started="$(monotonic_ms)"
+fi
 launch="$(adb -s "$serial" shell am start -W -n "$component" | tr -d '\r')"
 grep -Fx 'Status: ok' <<<"$launch"
+if [[ "$perf" == 1 ]]; then
+  activity_time="$(awk '/^TotalTime: [0-9]+$/ { print $2 }' <<<"$launch")"
+  if [[ "$activity_time" =~ ^[0-9]+$ ]]; then
+    printf 'AERIFT_PERF startup.android.activity-manager-total=%s\n' "$activity_time"
+  fi
+fi
 
 dump_ui() {
   timeout 12s adb -s "$serial" shell uiautomator dump /sdcard/aerift-ci-window.xml >/dev/null 2>&1 &&
@@ -99,6 +110,9 @@ tap_label() {
 # No pairing, permission overrides, real devices, camera or file offer here.
 # These assertions use public accessibility labels on the production WebView.
 await_ui 'Your portable workspace' >/dev/null
+if [[ "$perf" == 1 ]]; then
+  printf 'AERIFT_PERF startup.android.workspace-observed=%d\n' "$(( $(monotonic_ms) - observe_started ))"
+fi
 tap_label 'Open Workspace'
 tap_label 'File Browser'
 tap_label 'Choose for Rift'
@@ -112,3 +126,13 @@ await_ui "$fixture_name" >/dev/null
 adb -s "$serial" shell pidof "$identity" >/dev/null
 printf 'Android API %s: production workspace launched; system Files picker staged synthetic fixture; no send issued.\n' \
   "$(adb -s "$serial" shell getprop ro.build.version.sdk)"
+
+if [[ "$perf" == 1 ]]; then
+  # Our own verified SDK emulator only. Forced app exit is not graceful
+  # teardown or evidence of camera, WebView, listener, or process pairs.
+  exit_started="$(monotonic_ms)"
+  if timeout 5s adb -s "$serial" shell am force-stop "$identity" &&
+    [[ "$(timeout 5s adb -s "$serial" shell "pidof $identity || echo absent")" == absent ]]; then
+    printf 'AERIFT_PERF teardown.android.force-stopped-app-exit-observed=%d\n' "$(( $(monotonic_ms) - exit_started ))"
+  fi
+fi

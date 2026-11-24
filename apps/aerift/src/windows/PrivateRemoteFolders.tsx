@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
 import { invoke } from "@tauri-apps/api/core";
 
 type FolderItem = {
@@ -18,24 +19,20 @@ export function PrivateRemoteFolders({ peers, endpoint }: {
   const [message, setMessage] = useState("");
   const command = (action: Record<string, string>) =>
     invoke<Reply>("windows_remote_folder_command", { action });
-  useEffect(() => {
-    let live = true;
-    const poll = () => {
-      void command({ action: "inspect" })
-        .then((reply) => { if (live) setIncoming(reply.incoming); })
-        .catch(() => { if (live) setIncoming([]); });
-    };
-    poll();
-    const timer = window.setInterval(poll, 1000);
-    return () => { live = false; window.clearInterval(timer); };
-  }, []);
+  const refresh = useVisibleNativeRefresh("windows_remote_folder_command:inspect", 1000,
+    () => command({ action: "inspect" }),
+    reply => setIncoming(reply.incoming),
+    () => setIncoming([]),
+    () => setIncoming([]),
+  );
 
   function run(action: Record<string, string>) {
     if (busy) return;
     setBusy(true);
     setMessage(action.action === "pick_send" ? "Choose a folder and wait for the other device to accept." : "");
     void command(action).then((reply) => {
-      setIncoming(reply.incoming);
+      // A mutation result never races an earlier Inspect onto the screen.
+      refresh();
       if (reply.outgoingReceipt) {
         setMessage(reply.outgoingReceipt.state === "completed"
           ? "The recipient verified the folder data. This is not confirmation that it was saved to their chosen location."

@@ -73,6 +73,9 @@ $listener.Start()
 $port = $listener.LocalEndpoint.Port
 $listener.Stop()
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port --remote-debugging-address=127.0.0.1"
+# Optional runner-owned observations; no app sampling outside this smoke.
+$perf = $env:AERIFT_PERF_OBSERVE -eq '1'
+$launchClock = if ($perf) { [Diagnostics.Stopwatch]::StartNew() } else { $null }
 $process = Start-Process -FilePath (Join-Path $installDirectory 'aerift.exe') -PassThru -WindowStyle Hidden
 $socket = [Net.WebSockets.ClientWebSocket]::new()
 $deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(110))
@@ -101,6 +104,19 @@ document.querySelector('#aerift-desktop-destination')?.textContent === 'Home' &&
 !!document.querySelector('.ae-orbit-trigger')
 '@
     Wait-AppCondition $socket ([ref]$id) $homeCheck $deadline.Token 'AeRift did not render Simplified Home with Orbit.'
+
+    if ($perf) {
+        Write-Host ('AERIFT_PERF startup.windows.home-observed=' + $launchClock.ElapsedMilliseconds)
+        try {
+            $fcp = Invoke-AppExpression $socket ([ref]$id) "performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? null" $deadline.Token
+            if ($null -ne $fcp -and [double]$fcp -ge 0 -and [double]::IsFinite([double]$fcp)) {
+                $encodedFcp = ([double]$fcp).ToString('0.###', [Globalization.CultureInfo]::InvariantCulture)
+                Write-Host ('AERIFT_PERF startup.windows.webview-fcp=' + $encodedFcp)
+            }
+        } catch {
+            Write-Warning 'WebView first-contentful-paint unavailable in this smoke.'
+        }
+    }
 
     $id += 1
     $image = Invoke-Cdp $socket $id 'Page.captureScreenshot' @{ format = 'png'; fromSurface = $true } $deadline.Token
@@ -213,6 +229,12 @@ document.querySelector('.ae-dock-file')?.textContent.includes('AeRift Explorer t
     if ($forwarded -and -not $forwarded.HasExited) { Stop-Process -Id $forwarded.Id }
     $socket.Dispose()
     $deadline.Dispose()
-    if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+    if (-not $process.HasExited) {
+        $exitClock = if ($perf) { [Diagnostics.Stopwatch]::StartNew() } else { $null }
+        Stop-Process -Id $process.Id
+        if ($perf -and $process.WaitForExit(5000)) {
+            Write-Host ('AERIFT_PERF teardown.windows.forced-app-exit-observed=' + $exitClock.ElapsedMilliseconds)
+        }
+    }
     Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
 }

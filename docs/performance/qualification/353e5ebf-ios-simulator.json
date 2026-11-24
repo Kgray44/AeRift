@@ -1,0 +1,95 @@
+{
+  "schema": "aerift.performance/v1",
+  "capturedAt": "2026-11-24T20:17:20Z",
+  "source": {
+    "commit": "353e5ebfc57acf50037ee81217042508bb481a81",
+    "tree": "8679c8035439628f777e44468f2ab602df43de95",
+    "clean": true
+  },
+  "environment": {
+    "platform": "ios",
+    "arch": "arm64",
+    "context": "runner-owned iOS simulator"
+  },
+  "scenario": {
+    "id": "hosted.ios.shell-qualification",
+    "profile": "ios-iphone-simulator",
+    "conditions": {
+      "hosted": true,
+      "physicalDevice": false,
+      "cameraUsed": false,
+      "workflowRunId": "45474678208",
+      "workflowJobId": "138731618818",
+      "sampling": "one process per workflow smoke; no repeated timing distribution or budget gate",
+      "observation": "positive sampled shell state is an upper bound with host probe latency, not first paint",
+      "teardown": "forced app PID exit only, not graceful quit or native resource release"
+    }
+  },
+  "metrics": [
+    {
+      "id": "hosted.shell-visible-checks",
+      "unit": "count",
+      "direction": "informational",
+      "status": "measured",
+      "samples": [
+        1
+      ],
+      "summary": {
+        "min": 1,
+        "count": 1,
+        "p50": 1,
+        "p95": 1,
+        "max": 1
+      }
+    },
+    {
+      "id": "startup.ios.workspace-observed",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "Historical hosted smoke verified shell visibility without an elapsed marker."
+    },
+    {
+      "id": "startup.windows.webview-fcp",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No runner-owned WebView first-contentful-paint timing for this receipt."
+    },
+    {
+      "id": "startup.receiver.ready",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No explicit native receive-ready acknowledgement and authenticated paired observation measured."
+    },
+    {
+      "id": "teardown.camera.released",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "Camera was not started; no device/driver release trace."
+    },
+    {
+      "id": "teardown.native.resources-released",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "Host smoke does not measure idle leases, listener lifetime, or graceful resource release."
+    },
+    {
+      "id": "app.navigation.frame-p95",
+      "unit": "ms/frame",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No frame timestamps/paint trace; screenshot and launch time do not provide frame pacing."
+    },
+    {
+      "id": "gesture.edge-to-paint",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No real landmark/physical gesture event and corresponding paint trace."
+    }
+  ]
+}

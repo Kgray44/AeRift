@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
 import { PrivateRemoteFolders } from "./PrivateRemoteFolders";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -21,6 +22,8 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
   const [peerId, setPeerId] = useState("");
   const [invite, setInvite] = useState("");
   const [notice, setNotice] = useState("");
+  const [snapshotUnavailable, setSnapshotUnavailable] = useState(false);
+  const [fresh, setFresh] = useState(false);
   const [targetEndpoint, setTargetEndpoint] = useState("");
   const [issuer, setIssuer] = useState("");
   const [receivedCode, setReceivedCode] = useState("");
@@ -29,25 +32,24 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
   const [outgoingMessage, setOutgoingMessage] = useState("");
   const [revoke, setRevoke] = useState("");
 
-  useEffect(() => {
-    let mounted = true;
-    const poll = () => {
-      void invoke<Snapshot>("private_remote_snapshot")
-        .then((change) => { if (mounted) setSnapshot(change); })
-        .catch(() => { if (mounted) setNotice("Private Remote native capability is unavailable."); });
-    };
-    poll();
-    const timer = window.setInterval(poll, 750);
-    return () => { mounted = false; window.clearInterval(timer); };
-  }, []);
+  const refresh = useVisibleNativeRefresh("private_remote_snapshot", 750,
+    () => invoke<Snapshot>("private_remote_snapshot"),
+    (value) => { setSnapshot(value); setSnapshotUnavailable(false); setFresh(true); },
+    () => setFresh(false),
+    () => {
+      setFresh(false);
+      setSnapshotUnavailable(true);
+    },
+  );
 
-  async function operation(work: () => Promise<unknown>) {
-    if (busy) return;
+  async function operation(work: () => Promise<unknown>, canStop = false) {
+    if (busy || (!fresh && !canStop)) return;
     setBusy(true);
     setNotice("");
     try {
       await work();
-      setSnapshot(await invoke<Snapshot>("private_remote_snapshot"));
+      setFresh(false);
+      refresh();
     } catch (error) {
       const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
       setNotice(code ? "Private Remote action failed (" + code + ")." : "Private Remote action failed.");
@@ -60,7 +62,7 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
     void operation(async () => {
       const result = await invoke<{ invite: string | null }>("private_remote_action", { request });
       onResult?.(result.invite);
-    });
+    }, request.action === "stop");
   }
 
   const active = snapshot?.active === true;
@@ -70,7 +72,18 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
       <p>{product ? "Send and receive files with invited devices over your private VPN. Nearby is off in this mode."
         : "Receiver qualification only. Nearby, discovery, gestures and the normal workspace are not running."}</p>
       {notice && <p role="status">{notice}</p>}
+      {snapshotUnavailable && <p role="status">Private Remote native capability is unavailable.</p>}
       {snapshot && <p>Selected private endpoint: <code>{snapshot.endpoint}</code></p>}
+      {active && (
+      <button type="button" disabled={busy}
+        onClick={() => action({ action: "stop" }, () => { setInvite(""); setPermission(false); })}>
+        {product ? "Stop Remote" : "Stop private receiver"}
+      </button>
+      )}
+      {!fresh && !snapshotUnavailable && <p role="status">Refreshing private transfer state…</p>}
+      {/* Keep mounted editors and folder selection UI across minimization,
+          but never permit offer actions until fresh native data returns. */}
+      <fieldset disabled={!fresh} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       {!active ? (
         <section aria-labelledby="remote-start-heading">
           <h2 id="remote-start-heading">Private receiver is off</h2>
@@ -92,10 +105,6 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
       ) : (
         <>
           <p>Device fingerprint: <code>{snapshot.identity}</code></p>
-          <button type="button" disabled={busy}
-            onClick={() => action({ action: "stop" }, () => { setInvite(""); setPermission(false); })}>
-            {product ? "Stop Remote" : "Stop private receiver"}
-          </button>
           <section aria-labelledby="remote-pair-heading">
             <h2 id="remote-pair-heading">Targeted Remote invitation</h2>
             <form onSubmit={(event) => {
@@ -141,7 +150,7 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
               event.preventDefault();
               setOutgoing(true); setOutgoingMessage("Waiting for the other device to approve pairing…");
               void invoke("windows_redeem_remote", { endpoint: targetEndpoint.trim(), invite: receivedCode.trim(), expectedIssuer: issuer.trim() })
-                .then(() => { setReceivedCode(""); setOutgoingMessage("Remote pairing approved."); })
+                .then(() => { setReceivedCode(""); setOutgoingMessage("Remote pairing approved."); refresh(); })
                 .catch(() => setOutgoingMessage("Pairing failed or was declined. Check the address, fingerprint and invitation expiry."))
                 .finally(() => setOutgoing(false));
             }}>
@@ -207,6 +216,7 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
           </section>
         </>
       )}
+      </fieldset>
     </main>
   );
 }

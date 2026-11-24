@@ -6,7 +6,7 @@ import { command } from "../nativeAppPort";
 import { useDesktopContentEnter } from "./desktopContentMotion";
 import { WorkspaceCategoryHeading, WorkspaceLibrary, useWorkspaceLibrary } from "../WorkspaceLibrary";
 import { isWorkspaceDocument, workspaceSections, type WorkspaceSectionId } from "../workspace-categories";
-import { applyWorkspaceChanges, loadWorkspace, type WorkspaceEntry } from "./workspaceStore";
+import { applyWorkspaceChanges, loadWorkspace, loadWorkspaceAsset, type WorkspaceEntry, type WorkspaceMetadata } from "./workspaceStore";
 
 function newObject(name: string) {
   return { schemaVersion: 1, id: crypto.randomUUID(), name, ownership: "local" } as const;
@@ -23,21 +23,33 @@ function belongsTo(object: DigitalObject, moduleId: ModuleId) {
   }
 }
 
-function AssetPreview({ entry }: { entry: WorkspaceEntry }) {
+function AssetPreview({ object }: { object: DigitalObject }) {
   const [url, setUrl] = useState<string>();
+  const [unavailable, setUnavailable] = useState(false);
   useEffect(() => {
-    if (!entry.asset) return;
-    const objectUrl = URL.createObjectURL(entry.asset);
-    setUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [entry.asset]);
-  if (!url) return null;
+    let current = true;
+    let objectUrl: string | undefined;
+    void loadWorkspaceAsset(object.id).then(asset => {
+      if (!current) return;
+      if (!asset) { setUnavailable(true); return; }
+      objectUrl = URL.createObjectURL(asset);
+      setUrl(objectUrl);
+    }).catch(() => { if (current) setUnavailable(true); });
+    return () => {
+      current = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [object.id]);
+  if (unavailable) return <p role="alert">AeRift could not open this saved copy.</p>;
+  if (!url) return <p role="status">Opening saved copy…</p>;
   return <>
-    {entry.object.kind === "photo" && <img src={url} alt={entry.object.name} />}
-    {entry.object.kind === "video" && <video src={url} aria-label={entry.object.name} controls preload="metadata" />}
-    <a href={url} download={entry.object.name}>Save a copy</a>
+    {object.kind === "photo" && <img src={url} alt={object.name} />}
+    {object.kind === "video" && <video src={url} aria-label={object.name} controls preload="metadata" />}
+    <a href={url} download={object.name}>Save a copy</a>
   </>;
 }
+
+const pageSize = 48;
 
 export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   preferences: ExperiencePreferences;
@@ -49,7 +61,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const current = section ? { id: section.module, label: section.label } : undefined;
   const itemsRef = useRef<HTMLElement>(null);
   useDesktopContentEnter(section?.id, itemsRef);
-  const [entries, setEntries] = useState<WorkspaceEntry[]>();
+  const [entries, setEntries] = useState<WorkspaceMetadata[]>();
+  const [pageIndex, setPageIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>();
   const [error, setError] = useState<string>();
@@ -64,7 +77,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const counts = entries && Object.fromEntries(workspaceSections.map(({ id, module }) =>
     [id, entries.filter(({ object }) => inCategory(object, id, module)).length]));
   function openSection(id: WorkspaceSectionId) {
-    setError(undefined); setStatus(undefined); setPreview(undefined); setEditing(undefined); workspace.open(id);
+    setError(undefined); setStatus(undefined); setPreview(undefined); setEditing(undefined); setPageIndex(0); workspace.open(id);
   }
 
   useEffect(() => {
@@ -87,7 +100,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       const prepared = await prepare();
       await applyWorkspaceChanges(prepared, removed);
       const replaced = new Set([...removed, ...prepared.map(({ object }) => object.id)]);
-      setEntries([...prepared, ...entries.filter(({ object }) => !replaced.has(object.id))]);
+      setEntries([...prepared.map(({ object, asset }) => ({ object, hasAsset: !!asset })),
+        ...entries.filter(({ object }) => !replaced.has(object.id))]);
       setStatus(message);
       return true;
     } catch {
@@ -188,6 +202,9 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
 
   const note = items.find(({ object }) => object.id === editing)?.object;
   const disabled = busy || !entries;
+  const pages = Math.max(1, Math.ceil(visible.length / pageSize));
+  const page = Math.min(pageIndex, pages - 1);
+  const visiblePage = visible.slice(page * pageSize, (page + 1) * pageSize);
   const selectedVisible = visible.filter(({ object }) => selected.includes(object.id)).map(({ object }) => object.id);
 
   return <div className="aerift-workspace">
@@ -236,7 +253,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
             Remove selected ({selectedVisible.length})
           </Button>
         </div>}
-        {visible.length > 0 && <ol>{visible.map(entry => {
+        {visible.length > 0 && <ol>{visiblePage.map(entry => {
           const { object } = entry;
           const captured = object.kind === "clipboard" ? items.find(item => item.object.id === object.objectId)?.object : undefined;
           return <li key={object.id} className="ae-surface aerift-workspace-object" data-material="content" data-selected={selected.includes(object.id)}><div>
@@ -250,7 +267,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
             {object.kind === "collection" && (object.itemIds.length
               ? <ol>{object.itemIds.map(id => <li key={id}>{label(id)}</li>)}</ol> : <p>This collection is empty.</p>)}
             <Popover label={`Actions for ${object.name}`} actions={[
-              ...(entry.asset ? [{ id: "preview", label: preview === object.id ? "Close file details" : "File details",
+              ...(entry.hasAsset ? [{ id: "preview", label: preview === object.id ? "Close file details" : "File details",
                 onSelect: () => setPreview(preview === object.id ? undefined : object.id) }] : []),
               ...(object.kind === "note" ? [{ id: "edit", label: "Edit note",
                 onSelect: () => { setEditing(object.id); if (noteEditor.current) noteEditor.current.open = true; } }] : []),
@@ -262,9 +279,14 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
               } }] : []),
               { id: "remove", label: "Remove", disabled, onSelect: () => removeObjects([object.id]) },
             ]} />
-            {preview === object.id && <AssetPreview entry={entry} />}
+            {preview === object.id && <AssetPreview object={object} />}
           </div></li>;
         })}</ol>}
+        {pages > 1 && <nav aria-label="Workspace pages" className="ae-actions">
+          <Button variant="quiet" disabled={page === 0} onClick={() => setPageIndex(page - 1)}>Previous page</Button>
+          <span role="status">Page {page + 1} of {pages}</span>
+          <Button variant="quiet" disabled={page >= pages - 1} onClick={() => setPageIndex(page + 1)}>Next page</Button>
+        </nav>}
       </section>
     </div>}
   </div>;
