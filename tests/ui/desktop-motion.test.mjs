@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { createRequire } from "node:module";
+import { runInThisContext } from "node:vm";
 
 const source = file => readFile(new URL(`../../apps/aerift/src/windows/${file}`, import.meta.url), "utf8");
 
@@ -18,11 +20,14 @@ test("desktop Workspace navigation preserves native disclosures and animates onl
   assert.match(workspace, /noteEditor\.current\.open = true/);
 });
 
-async function entryPoint() {
+async function entryPoint(windowsCheckout = false) {
   const ts = await import("typescript");
-  const { outputText } = ts.transpileModule((await source("desktopContentMotion.ts")).replace(/^import .*from "react";\n/, ""),
-    { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-  return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`)).beginDesktopContentEnter;
+  const moduleSource = await source("desktopContentMotion.ts");
+  const { outputText } = ts.transpileModule(windowsCheckout ? moduleSource.replace(/\r?\n/g, "\r\n") : moduleSource,
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
+  const exports = {};
+  runInThisContext(`(function (exports, require) { ${outputText}\n})`)(exports, createRequire(import.meta.url));
+  return exports.beginDesktopContentEnter;
 }
 
 function fixture() {
@@ -93,5 +98,13 @@ test("completion or a live OS reduced-motion change cleans up just the decorativ
   begin(target, "workspace");
   preference.matches = true;
   preference.dispatchEvent(new Event("change"));
+  assert.equal(attributes.size, 0);
+});
+
+
+test("desktop motion test harness supports a Windows CRLF checkout", async () => {
+  const begin = await entryPoint(true);
+  const { attributes, target } = fixture();
+  assert.equal(begin(target, "workspace"), undefined);
   assert.equal(attributes.size, 0);
 });
