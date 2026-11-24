@@ -1,4 +1,4 @@
-import { aeRiftGlassRecipe as glass } from "@aerift/ui";
+import { aeRiftGlassRecipe as glass, shadeLens } from "@aerift/ui";
 import { useEffect, useRef, type CSSProperties } from "react";
 
 /** One continuous, tangent-matched contour, shared by the film and the light. */
@@ -19,9 +19,14 @@ function contour(time: number) {
   return d + " Z";
 }
 
-export function AmbientLiquid({ reduce }: { reduce: boolean }) {
+export function AmbientLiquid({ reduce, ownedBackplate }: {
+  reduce: boolean;
+  /** Explicit in-process bitmap authored by AeRift. Never capture a desktop or window. */
+  ownedBackplate?: ImageData;
+}) {
   const shape = useRef<SVGPathElement>(null);
   const light = useRef<SVGLinearGradientElement>(null);
+  const refracted = useRef<HTMLCanvasElement>(null);
   const patch = useRef<SVGRadialGradientElement>(null);
   useEffect(() => {
     const path = shape.current;
@@ -30,6 +35,12 @@ export function AmbientLiquid({ reduce }: { reduce: boolean }) {
     let raf = 0;
     let previous = 0;
     let phase = 0;
+    let lastRefraction = -100;
+    // Restrict the live buffer to this tiny, preassigned coordinate space.
+    const context = ownedBackplate?.width === 144 && ownedBackplate.height === 104
+      ? refracted.current?.getContext("2d") : undefined;
+    const input = context && ownedBackplate ? new Uint8ClampedArray(ownedBackplate.data) : undefined;
+    const output = context?.createImageData(144, 104);
     function draw(now: number) {
       raf = 0;
       if (!path) return;
@@ -40,6 +51,14 @@ export function AmbientLiquid({ reduce }: { reduce: boolean }) {
       light.current?.setAttribute("gradientTransform", `rotate(${glass.light + Math.sin(phase) * glass.sweep * .36} .5 .5)`);
       patch.current?.setAttribute("cx", `${34 + Math.sin(phase * .7) * 15}%`);
       patch.current?.setAttribute("cy", `${28 + Math.cos(phase * .84) * 12}%`);
+      if (context && input && output && now - lastRefraction >= 32) {
+        output.data.set(input);
+        shadeLens(output.data, input, 144, 104, {
+          x: 24, y: 10, width: 96, height: 84, radius: 42, kind: "stage",
+        }, 1, still ? 0 : phase);
+        context.putImageData(output, 0, 0);
+        lastRefraction = now;
+      }
       if (!still && !document.hidden) raf = requestAnimationFrame(draw);
     }
     function refresh() {
@@ -55,12 +74,13 @@ export function AmbientLiquid({ reduce }: { reduce: boolean }) {
       motion.removeEventListener("change", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [reduce]);
+  }, [reduce, ownedBackplate]);
 
   return <svg viewBox="0 0 144 104" className="ae-ambient-liquid" aria-hidden="true"
     style={{ "--ae-liquid-tint": glass.opacity / 900 } as CSSProperties}>
     <defs>
       <path ref={shape} id="ambient-liquid-shape" d={contour(0)} />
+      <clipPath id="ambient-liquid-aperture"><use href="#ambient-liquid-shape" /></clipPath>
       <linearGradient id="ambient-liquid-edge" ref={light} x1="0%" x2="100%" y1="0%" y2="100%">
         <stop stopColor="white" stopOpacity={glass.gloss / 100} />
         <stop offset=".23" stopColor="white" stopOpacity={glass.reflection / 100} />
@@ -81,6 +101,10 @@ export function AmbientLiquid({ reduce }: { reduce: boolean }) {
         <stop offset="1" stopColor="#9b9eff" stopOpacity={glass.dispersion / 250} />
       </radialGradient>
     </defs>
+    {ownedBackplate?.width === 144 && ownedBackplate.height === 104 &&
+      <foreignObject x="0" y="0" width="144" height="104" clipPath="url(#ambient-liquid-aperture)">
+        <canvas className="ae-ambient-owned-refraction" width={144} height={104} ref={refracted} />
+      </foreignObject>}
     <use href="#ambient-liquid-shape" className="ae-liquid-center" />
     <use href="#ambient-liquid-shape" fill="url(#ambient-liquid-film)" />
     <use href="#ambient-liquid-shape" fill="url(#ambient-liquid-patch)" />

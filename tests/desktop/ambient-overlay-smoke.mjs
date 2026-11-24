@@ -1,7 +1,7 @@
 // Isolated synthetic rendering; does not inspect, launch or input into a real desktop app.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -63,6 +63,15 @@ try {
     await page.getByText("3 objects", { exact: true }).waitFor();
     await send({ version: 1, interaction: "cafefade", sequence: 3, phase: "held" });
     await page.getByText("Carrying", { exact: true }).waitFor();
+    await page.waitForFunction(() => {
+      const label = document.querySelector(".ae-ambient-label");
+      const svg = document.querySelector(".ae-ambient-liquid");
+      const shape = document.querySelector("#ambient-liquid-shape");
+      if (!label || !svg || !shape) return false;
+      const l = label.getBoundingClientRect(), b = svg.getBoundingClientRect();
+      return [[l.left, l.top], [l.right, l.top], [l.left, l.bottom], [l.right, l.bottom]]
+        .every(([x, y]) => shape.isPointInFill(new DOMPoint((x - b.left) * 144 / b.width, (y - b.top) * 104 / b.height)));
+    });
     const silhouette = page.locator("#ambient-liquid-shape");
     const initial = await silhouette.getAttribute("d");
     await page.waitForTimeout(125);
@@ -98,7 +107,7 @@ try {
         canvas.height = bitmap.height;
         const context = canvas.getContext("2d");
         context.drawImage(bitmap, 0, 0);
-        return context.getImageData(166, 51, 1, 1).data[3];
+        return context.getImageData(166, 71, 1, 1).data[3];
       }, clear.toString("base64"));
       assert.ok(centerAlpha < 48, `expected mostly transparent center, alpha=${centerAlpha}`);
       if (evidence) {
@@ -124,6 +133,34 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  const optics = await browser.newPage({ viewport: { width: 240, height: 160 }, reducedMotion: "reduce" });
+  const fixture = fileURLToPath(new URL("./ambient-owned-glass.fixture.tsx", import.meta.url));
+  const markup = await readFile(new URL("../../apps/aerift/ambient-owned-glass.fixture.html", import.meta.url), "utf8");
+  await optics.route("**/synthetic-owned-glass", route => route.fulfill({
+    status: 200, contentType: "text/html", body: markup.replace("__FIXTURE_FILE__", fixture),
+  }));
+  await optics.goto(`${address}/synthetic-owned-glass`);
+  await optics.waitForFunction(() => document.querySelector(".ae-ambient-owned-refraction")
+    ?.getContext("2d").getImageData(0, 0, 1, 1).data[3] === 255);
+  const refraction = await optics.locator(".ae-ambient-owned-refraction").evaluate(canvas => {
+    const layer = canvas.getContext("2d").getImageData(0, 0, 144, 104).data;
+    const source = document.querySelector("#fixture-source").getContext("2d").getImageData(0, 0, 144, 104).data;
+    const near = (a, b) => a.every((value, i) => Math.abs(value - b[i]) <= 1);
+    const palette = [[16, 44, 155], [216, 230, 175]];
+    let moved = 0, unchangedOutside = 0;
+    for (let y = 28; y < 76; y++) for (let x = 48; x < 96; x++) {
+      const i = (y * 144 + x) * 4;
+      const raw = Array.from(source.slice(i, i+3)), rendered = Array.from(layer.slice(i, i+3));
+      // Require crossing the blue-vs-yellow boundary; simple tint/brightness cannot explain it.
+      if (palette.some(c => near(raw, c)) && (raw[0] < 60 ? rendered[0] > 140 : rendered[0] < 95)) moved++;
+    }
+    for (let i = 0; i < 80 * 4; i++) if (source[i] === layer[i]) unchangedOutside++;
+    return { moved, unchangedOutside };
+  });
+  assert.ok(refraction.moved > 50 && refraction.unchangedOutside === 320, JSON.stringify(refraction));
+  console.log(`App-owned exact lens shader proof: ${JSON.stringify(refraction)}`);
+  if (evidence) await optics.screenshot({ path: join(evidence, "synthetic-owned-lens.png") });
+  await optics.close();
   console.log("Glass overlay: light/dark, active animation, reduced motion, verified terminal, and invisible idle.");
 } finally {
   if (browser) await browser.close();

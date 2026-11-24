@@ -19,3 +19,7 @@ The versioned app-contract consumer can display one opaque interaction from a tr
 The disposable Chromium job injects only native display events, tests dark/light/reduced-motion and true idle teardown, and reports 45 requested-animation-frame gaps by color scheme. These are synthetic renderer intervals, not native Windows composition, display scanout, camera latency or end-to-end transfer performance.
 
 Use exact-tree Foundation, native Windows installer/launch (including no-activation UI behavior), iOS and Android checks, plus the pinned Windows browser-native-stdio qualification. Gate any expanded desktop overlay or browser permissions on separate interactive fixture verification. Full physical scenarios (Explorer pickup to iPhone, image bytes, app inserts, and true simultaneous A4 animation) are not established by these tests.
+
+### Ambient material boundary
+
+An explicitly supplied AeRift-owned 144×104 backplate uses the same `shadeLens` distortion, magnification, color dispersion, reflection and softening math as the app's Glass surfaces, then clips that result to the moving liquid silhouette. There is no framebuffer readback or backdrop capture. The native Windows overlay does not own an image of other windows or the desktop and therefore shows real transparency with the shared recipe's specular and edge profile, not a fabricated claim of desktop distortion. Compact status and count sit inside the safe center without a panel or pill.

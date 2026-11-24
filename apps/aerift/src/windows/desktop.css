@@ -187,35 +187,38 @@ html[data-aerift-ambient-preview] :is(body, #root, .ae-theme) {
 }
 .ae-ambient-overlay {
   display: grid;
-  grid-template-rows: 99px minmax(1rem, auto);
+  grid-template-rows: 99px;
   justify-items: center;
   text-align: center;
+  position: relative;
   color: var(--ae-text);
   animation: ae-overlay-enter var(--ae-motion-content) var(--ae-motion-out) both;
   --ae-overlay-y: .28rem;
   --ae-overlay-start-scale: .97;
 }
 .ae-ambient-label {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: .35rem;
-  max-inline-size: 94%;
-  font: 600 .72rem var(--ae-font);
+  position: absolute;
+  inset-block-start: 50px;
+  inset-inline-start: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: .1rem;
+  inline-size: 49px;
+  font: 600 9px/1.13 var(--ae-font);
   color: white;
-  text-shadow: 0 1px 1px #131325, 0 0 3px #131325, 0 0 6px #131325;
+  text-shadow: 0 1px 1px #131325, 0 0 3px #131325, 0 0 4px #131325;
 }
-.ae-ambient-label strong { font-weight: 650; }
+.ae-ambient-label strong { font-weight: 650; overflow-wrap: anywhere; }
 .ae-ambient-label small { font: inherit; opacity: .92; }
-.ae-ambient-label small::before { content: "· "; }
-.ae-ambient-label progress { inline-size: 3.55rem; block-size: .2rem; accent-color: #b6aeff; }
+.ae-ambient-label progress { inline-size: 32px; block-size: 3px; accent-color: #b6aeff; }
 .ae-ambient-liquid {
   width: 140px;
   height: 101px;
   overflow: visible;
   filter: drop-shadow(0 1px 1px #10073b44);
 }
+.ae-ambient-owned-refraction { width: 144px; height: 104px; display: block; }
 .ae-liquid-center { fill: rgb(210 224 255 / var(--ae-liquid-tint)); }
 @media (prefers-reduced-transparency: reduce) {
   .ae-liquid-center { fill: rgb(66 62 101 / .85); }
