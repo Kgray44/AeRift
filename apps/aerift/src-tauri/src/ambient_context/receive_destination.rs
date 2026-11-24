@@ -11,8 +11,8 @@ use std::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     GetDriveTypeW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-    FILE_SHARE_READ,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
 };
 
 struct PinnedDirectory {
@@ -43,7 +43,10 @@ impl PinnedDirectory {
             // Pin root-to-leaf without share-write or share-delete. Refuse a
             // redirected, offline or non-directory component before traversing.
             let handle = OpenOptions::new()
-                .access_mode(FILE_READ_ATTRIBUTES)
+                // An attributes-only open is exempt from normal share
+                // checks; request directory read access so deny-delete
+                // actually participates, without enumerating the folder.
+                .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
                 .share_mode(FILE_SHARE_READ)
                 .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
                 .open(ancestor)
