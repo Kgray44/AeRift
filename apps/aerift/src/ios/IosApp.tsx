@@ -311,8 +311,9 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
                 <h2 ref={destinationHeading} tabIndex={-1}>{DESTINATIONS[destination].label}</h2>
               </div>
               {destination === "home" && <>
-                <GlassSurface material="content" className="ios-overview" role="region" aria-label="Connection overview">
-                  <div>
+                <GlassSurface material="content" className="ios-overview" data-ae-lens-role="control" role="region" aria-label="Connection overview">
+                  <span className="ios-overview-symbol" aria-hidden="true"><SpatialIcon name="desktop" size={21} /></span>
+                  <div className="ios-overview-copy">
                     <h3>{summary.trustedOnline ? "Connected space" : "Your portable workspace"}</h3>
                     <p>{snapshot ? `${summary.trustedOnline} trusted online · ${summary.available} nearby` :
                       connectionFailed ? "Transfer service disconnected" : "Connecting to AeRift…"}</p>
@@ -323,7 +324,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
                   <section className="ios-section" aria-labelledby="ios-home-workspace">
                     <h3 id="ios-home-workspace">Workspace</h3>
                     <p>{regions.selection ? regions.selection.name : latestObject?.name ?? summary.received[0]?.file.name ?? "Start with a file, photo or video."}</p>
-                    <Button onClick={() => navigate("workspace")}>Open Workspace</Button>
+                    <Button data-ae-lens-role="control" onClick={() => navigate("workspace")}>Open Workspace</Button>
                   </section>
                   <section className="ios-section" aria-labelledby="ios-home-activity">
                     <h3 id="ios-home-activity">Activity</h3>
@@ -334,7 +335,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
                     <Button variant="quiet" onClick={() => navigate("activity")}>View Activity</Button>
                   </section>
                 </div>
-                <p>{summary.trustedOnline > 0 && "Paired transfers are encrypted. "}
+                <p className="ios-footnote">{summary.trustedOnline > 0 && "Paired transfers are encrypted. "}
                   {preferences.gestures ? "Camera gestures are enabled in Rift." : "Camera gestures are off."}</p>
               </>}
               {destination === "workspace" && <>

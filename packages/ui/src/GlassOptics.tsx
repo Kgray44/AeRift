@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import { appearanceCommitEvent } from "./theme";
-import { atmosphereTarget, blendAtmosphere, paintAtmosphere, ribbonGeometry } from "./atmosphere";
+import { atmosphereIntensity, atmosphereTarget, blendAtmosphere, paintAtmosphere, ribbonGeometry } from "./atmosphere";
 
 /** Source values from the owner's approved Liquid Glass Lab recipe. */
 export const aeRiftGlassRecipe = Object.freeze({
@@ -11,11 +11,15 @@ export const aeRiftGlassRecipe = Object.freeze({
   scroll: 44, scene: "ribbons", surface: "all", showLens: true,
 });
 
+const orbitGlass = ".ae-orbit[data-radial='true'] .ae-orbit-trigger [data-ae-lens-role='orb']";
+const openOrbitGlass = ".ae-orbit[data-radial='true'][data-open='true'] .ae-orbit-choice [data-ae-lens-role='orb']";
 const lensSelector = [
-  ".ae-nav-brand", ".ae-nav-destinations", ".ae-nav-tools", ".ae-transfer-dock", ".ae-spatial-local .ae-spatial-glyph",
+  orbitGlass, openOrbitGlass,
+  ".ae-nav-brand", ".ae-nav-destinations", ".ae-nav-tools", ".ae-transfer-dock",
+  ".ios-dock .ae-nav-indicator", ".ae-spatial-local .ae-spatial-glyph",
   ".ae-spatial-peer[data-selected='true'] .ae-spatial-glyph",
-  ".ae-workspace-nav", ".ae-panel", ".ae-file-slot", ".ae-file",
-  ".ae-panel .ae-button:not([data-variant='primary'], [data-variant='quiet'], :disabled, [aria-disabled='true'])",
+  ".ae-workspace-nav", ".ae-panel", ".ae-file-slot",
+  "[data-ae-lens-role='control']:not(:disabled, [aria-disabled='true'])",
 ].join(",");
 
 const R = aeRiftGlassRecipe;
@@ -54,19 +58,21 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
   const depth = Math.max(1.25, R.depth * resolution * (stage ? 1.40 : panel ? 1.05 : .72));
   // Cap the studio warp and zoom next to retained app text; file-stage glass
   // uses the strongest refraction, while functional labels are drawn by React.
-  const warpMax = appearance.refraction * resolution * (stage ? .57 : panel ? .42 : .35);
+  const warpMax = appearance.refraction * resolution * (stage ? .57 : panel ? .38 : .43);
   const mag = R.magnify * .01 * (stage ? .033 : panel ? .015 : .027);
   const angle = R.light * Math.PI / 180 + .23 * R.sweep / 53 * Math.sin(t * 1.31);
   const lx = Math.cos(angle), ly = Math.sin(angle);
   const cu = 1 - r / width, cv = 1 - r / height;
   const spread = R.patchSize / 100;
-  const patchW = Math.max(.038, r / width * 1.9 + spread * .046);
-  const patchH = Math.max(.079, r / height * 1.55 + spread * .055);
+  const patchW = Math.max(.048, r / width * 2.05 + spread * .052);
+  const patchH = Math.max(.08, r / height * 1.65 + spread * .061);
   const shift = .038 * Math.sin(t * 1.7);
   const signX = Math.sign(lx), signY = Math.sign(ly);
   const reflect = appearance.reflection / 100;
   const [reflectRed, reflectGreen, reflectBlue] = appearance.reflectionColor;
-  const softStep = Math.round(clamp(appearance.softness, 0, 4) * resolution);
+  const softness = clamp(appearance.softness, 0, 4);
+  const softStep = softness ? Math.max(1, Math.round(softness * resolution)) : 0;
+  const softMix = softness * .060;
   const gloss = Math.max(.78, (1 + (100 - R.gloss) * .028) * resolution);
   const grazingWidth = Math.max(1.3, 3.15 * resolution);
   for (let py = scrY; py < endY; py++) {
@@ -87,8 +93,8 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
           const c = (py * w + Math.max(0, px - softStep)) * 4;
           const e = (py * w + Math.min(w - 1, px + softStep)) * 4;
           for (let channel = 0; channel < 3; channel++) {
-            out[idx + channel] = .44 * source[idx + channel] +
-              .14 * (source[a + channel] + source[b + channel] + source[c + channel] + source[e + channel]);
+            out[idx + channel] = (1 - 4 * softMix) * source[idx + channel] +
+              softMix * (source[a + channel] + source[b + channel] + source[c + channel] + source[e + channel]);
           }
         }
         continue;
@@ -126,10 +132,10 @@ export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: 
           const farY = (v + signY * cv) / patchH;
           const near = nearX * nearX + nearY * nearY, far = farX * farX + farY * farY;
           const neck = (d - 1.8 * resolution) / grazingWidth;
-          const lobe = Math.exp(-neck * neck) * (.51 + .49 * Math.abs(nx * ny) * 2);
+          const lobe = Math.exp(-neck * neck) * (.38 + .62 * Math.abs(nx * ny) * 2);
           const hot = (.74 * Math.exp(-near) + .26 * Math.exp(-.45 * near)) * (.39 + .61 * front);
           const echo = Math.exp(-far) * (.41 + .59 * back);
-          white += reflect * R.patches / 100 * lobe * (.91 * hot + .51 * echo);
+          white += reflect * R.patches / 100 * lobe * (1.12 * hot + .56 * echo);
           color = lobe * R.iridescence / 100 * reflect * (hot - .63 * echo);
         }
       }
@@ -227,10 +233,12 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         if (bb.width < 2 || bb.height < 2 || bb.right <= originX || bb.bottom <= originY
           || bb.left >= originX + width || bb.top >= originY + height) continue;
         const style = getComputedStyle(element);
-        if (style.visibility !== "visible" || style.display === "none" || +style.opacity === 0) continue;
+        const fanButton = element.closest<HTMLElement>(".ae-orbit-choice");
+        if (style.visibility !== "visible" || style.display === "none" || +style.opacity === 0
+          || (fanButton && +getComputedStyle(fanButton).opacity < .98)) continue;
         const corner = Number.parseFloat(style.borderTopLeftRadius);
         const kind = element.matches(".ae-file-slot") ? "stage" :
-          element.matches(".ae-panel, .ae-file, .ae-transfer-dock") ? "panel" : "control";
+          element.matches(".ae-panel, .ae-transfer-dock") ? "panel" : "control";
         elements.set(element, { x: (bb.left - originX) * scale, y: (bb.top - originY) * scale,
           width: bb.width * scale, height: bb.height * scale,
           radius: Math.min(Number.isFinite(corner) ? corner : R.radius, bb.height / 2, bb.width / 2) * scale, kind });
@@ -239,7 +247,9 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         const light = explicit.appearance === "light";
         const preset = glassAppearanceRecipes[light ? "light" : "dark"];
         const appearance = appearanceRecipe ? { ...preset, ...appearanceRecipe } : preset;
-        const status = shell.querySelector<HTMLElement>(".ae-transfer-space")?.dataset;
+        const rift = Array.from(shell.querySelectorAll<HTMLElement>(".ae-transfer-space:not([hidden])"))
+          .find(space => space.querySelector(".ae-workspace-view:not([hidden])"));
+        const status = rift?.dataset;
         const target = atmosphereTarget(status?.experiencePhase, Number(status?.experienceProgress),
           Number(status?.experienceX), Number(status?.experienceY));
         const moving = Math.abs(target.energy - atmosphere.energy) > .01
@@ -247,8 +257,8 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
           || Math.abs(target.y - atmosphere.y) > .015;
         atmosphere = reduced ? target : blendAtmosphere(atmosphere, target, seconds);
         const t = reduced ? 0 : phase;
-        paintAtmosphere(paint, pw, ph, t, light, atmosphere, clamp(appearance.ribbonIntensity, .25, 1.35),
-          clamp(appearance.exposure, 50, 150));
+        const intensity = atmosphereIntensity(!!rift, atmosphere.energy, light) * clamp(appearance.ribbonIntensity, .25, 1.35);
+        paintAtmosphere(paint, pw, ph, t, light, atmosphere, intensity, clamp(appearance.exposure, 50, 150));
         const source = paint.getImageData(0, 0, pw, ph).data;
         if (!output) output = ctx.createImageData(pw, ph);
         output.data.set(source);
@@ -259,9 +269,9 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         tag(new Set(elements.keys()));
         if (canvas.hidden) canvas.hidden = false;
         shell.dataset.aeOptics = "ready";
-        // The wallpaper moves continuously at low cadence. Interaction bursts
-        // get a short compositing window and settle back without an idle rAF loop.
-        if (!reduced) timer = window.setTimeout(queue, moving || deadline > now ? 56 : 280);
+        // Schedule only an in-flight interaction/transition, never an idle loop.
+        if (!reduced && (moving || deadline > now)) timer = window.setTimeout(queue, 55);
+        else lastAdvanced = 0;
       } catch {
         faulted = true;
         clear();
@@ -276,7 +286,10 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       if (delay > 4) timer = window.setTimeout(queue, delay);
       else frame = requestAnimationFrame(paintFrame);
     };
-    const animate = () => { deadline = performance.now() + 480; queue(); };
+    const animate = () => { deadline = performance.now() + 680; queue(); };
+    const opticalHover = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".ae-orbit")) animate();
+    };
     const settle = () => queue();
     const appearanceChanged = () => {
       cancelAnimationFrame(frame);
@@ -290,10 +303,13 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       } else queue();
     };
     const onScroll = () => queue();
-    const changes = new MutationObserver(settle);
+    const changes = new MutationObserver(records => {
+      if (records.some(record => record.attributeName === "data-open" || record.attributeName === "data-morphing")) animate();
+      else settle();
+    });
     changes.observe(theme, { attributes: true, attributeFilter: ["data-ae-theme", "data-appearance", "data-contrast", "data-transparency", "data-motion"] });
     changes.observe(shell, { childList: true, subtree: true, attributes: true,
-      attributeFilter: ["aria-current", "data-destination", "data-selected", "hidden", "disabled",
+      attributeFilter: ["aria-current", "aria-disabled", "data-destination", "data-selected", "data-open", "data-morphing", "hidden", "disabled",
         "data-experience-phase", "data-experience-progress", "data-experience-x", "data-experience-y"] });
     const resize = typeof ResizeObserver !== "undefined" ? new ResizeObserver(settle) : undefined;
     resize?.observe(shell);
@@ -310,6 +326,8 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     document.addEventListener(appearanceCommitEvent, appearanceChanged);
     shell.addEventListener("pointerdown", animate, { passive: true });
     shell.addEventListener("focusin", animate);
+    shell.addEventListener("pointerover", opticalHover, { passive: true });
+    shell.addEventListener("pointerout", opticalHover, { passive: true });
     deadline = performance.now() + 840;
     queue();
     return () => {
@@ -327,6 +345,7 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener(appearanceCommitEvent, appearanceChanged);
       shell.removeEventListener("pointerdown", animate); shell.removeEventListener("focusin", animate);
+      shell.removeEventListener("pointerover", opticalHover); shell.removeEventListener("pointerout", opticalHover);
       clear();
     };
   }, [appearanceRecipe]);

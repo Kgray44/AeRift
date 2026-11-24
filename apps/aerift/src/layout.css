@@ -46,3 +46,31 @@ body {
   gap: 0.5rem;
   align-items: center;
 }
+
+/* Shared trust presentation: identity, verified availability and action are
+   distinct. Device trust/pairing logic is exactly the existing implementation. */
+.aerift-device-trust { min-inline-size: 0; width: 100%; max-inline-size: 50rem; }
+.aerift-device-trust .aerift-devices { gap: 0; margin-block: 0; }
+.aerift-device-trust .aerift-devices > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center; column-gap: clamp(.45rem, 2vw, 1.1rem); row-gap: .3rem;
+  padding-block: .72rem;
+  border-block-end: 1px solid var(--ae-display-edge, var(--ae-edge));
+}
+.aerift-device-id { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .72rem; min-width: 0; }
+.aerift-device-id div { display: grid; gap: .15rem; min-width: 0; }
+.aerift-device-id strong { font-size: .98rem; font-weight: 675; overflow-wrap: anywhere; }
+.aerift-device-symbol, .aerift-devices-empty > svg {
+  color: var(--ae-accent);
+}
+.aerift-device-symbol {
+  display: grid; place-items: center; width: 2.6rem; height: 2.6rem;
+  border-radius: .9rem; background: color-mix(in srgb, var(--ae-field) 75%, transparent);
+  border: 1px solid var(--ae-edge);
+}
+.aerift-devices-empty { display: flex; align-items: center; gap: .7rem; padding-block: 1.1rem; }
+.aerift-device-trust .aerift-devices .ae-button[data-variant="quiet"] { padding-inline: .5rem; }
+@media (max-width: 37rem) {
+  .aerift-device-trust .aerift-devices > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .aerift-device-trust .aerift-devices > li > .ae-button { grid-column: 2; margin-block: -.15rem -.45rem; justify-self: end; }
+}

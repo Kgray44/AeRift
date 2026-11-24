@@ -134,7 +134,7 @@ export function TransferProgress({ transfer, deviceName, error, action }: {
   const id = useId();
   const percent = transfer.state === "completed" ? 100 : transfer.file.sizeBytes > 0
     ? Math.min(100, Math.max(0, Math.round(transfer.bytesTransferred / transfer.file.sizeBytes * 100))) : 0;
-  return <GlassSurface className="ae-transfer">
+  return <GlassSurface className="ae-transfer" data-direction={transfer.direction} data-transfer-state={transfer.state}>
     <div className="ae-transfer-top">
       <span className="ae-transfer-glyph" aria-hidden="true">
         <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
@@ -148,12 +148,12 @@ export function TransferProgress({ transfer, deviceName, error, action }: {
       </div>
     </div>
     <span className="ae-transfer-status" data-state={transfer.state} role="status">{transferLabels[transfer.state]}</span>
-    {["accepted", "transferring", "completed"].includes(transfer.state) && <>
+    {["accepted", "transferring", "completed"].includes(transfer.state) && <div className="ae-transfer-measure">
       <div className="ae-progress" role="progressbar" aria-labelledby={id} aria-valuenow={percent}>
         <span style={{ transform: `scaleX(${percent / 100})` }} />
       </div>
       <small>{formatFileSize(Math.max(0, Math.min(transfer.file.sizeBytes, transfer.bytesTransferred)))} of {formatFileSize(transfer.file.sizeBytes)} · {percent}%</small>
-    </>}
+    </div>}
     {error && <small>{error}</small>}
     {action}
   </GlassSurface>;

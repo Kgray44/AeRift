@@ -50,6 +50,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const [browsing, setBrowsing] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [confirmRemoval, setConfirmRemoval] = useState<string>();
+  const [composerOpen, setComposerOpen] = useState(false);
   const notes = module === "notes";
   const browser = module === "browser";
   const clips = module === "clipboard";
@@ -124,6 +125,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   }
 
   function edit(object: MobileObject) {
+    setComposerOpen(true);
     setEditing(object.id);
     setTitle(object.name);
     setDraft(object.kind === "url" ? object.url : "text" in object ? object.text : "");
@@ -238,6 +240,8 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       {!clipboardSharing && <p>Enable clipboard sharing in Control Center to send a copy.</p>}
     </>}
     {collections && <p>Group saved notes, links and pinned text. A transfer copy contains the saved items in one text file.</p>}
+    <details className="ios-object-composer" open={composerOpen} onToggle={event => setComposerOpen(event.currentTarget.open)}>
+    <summary>{editing ? "Edit saved item" : notes ? "New note" : browser ? "Add an address" : clips ? "New text pin" : "New collection"}</summary>
     <form className="ios-object-form" onSubmit={saveDraft}>
       <label><span>{browser ? "Link label (optional)" : "Name"}</span>
         <input value={title} required={!browser} maxLength={100} onChange={event => setTitle(event.currentTarget.value)} />
@@ -285,6 +289,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
         {editing && <Button variant="quiet" onClick={reset}>Done editing</Button>}
       </div>
     </form>
+    </details>
     {selected?.kind === "collection" && <div className="ios-collection">
       <h4>Collection contents</h4>
       <ol className="ios-list">

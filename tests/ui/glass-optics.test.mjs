@@ -71,3 +71,23 @@ test("panel lens leaves the center and outside unchanged while its rim moves", (
   assert.notDeepEqual(first, scene);
   assert.notDeepEqual(first, later);
 });
+
+test("quiet destinations ignore transfer energy but visible Rift states can strengthen the field", () => {
+  for (const isLight of [true, false]) {
+    const quiet = atmosphere.atmosphereIntensity(false, 0, isLight);
+    const active = atmosphere.atmosphereIntensity(true, .46, isLight);
+    assert.equal(atmosphere.atmosphereIntensity(false, .55, isLight), quiet);
+    assert(quiet < atmosphere.atmosphereIntensity(true, 0, isLight));
+    assert(active > quiet && active < 1.1);
+  }
+});
+
+test("small controls transmit their center yet retain a directional rim on an even field", () => {
+  const w = 96, h = 64, scene = new Uint8ClampedArray(w * h * 4);
+  for (let p = 0; p < scene.length; p += 4) scene.set([35, 50, 70, 255], p);
+  const result = scene.slice();
+  shadeLens(result, scene, w, h, { x: 17, y: 15, width: 62, height: 34, radius: 17, kind: "control" }, 1, 0);
+  const byte = (x, y) => result[(y * w + x) * 4];
+  assert.equal(byte(48, 33), 35);
+  assert(byte(48, 15) > byte(48, 48));
+});

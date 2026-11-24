@@ -150,3 +150,91 @@
 @media (max-width: 23rem) {
   .aerift-ios .ios-dock nav button.ae-button[data-variant] { font-size: .625rem; }
 }
+
+/* Phone-specific rhythm: an object-first page, compact controls and a real
+   bottom reading margin instead of scaling the desktop workspace down. */
+.aerift-ios .ae-shell[data-experience="spatial"] {
+  padding-block-end: calc(7.3rem + env(safe-area-inset-bottom));
+}
+.aerift-ios .ios-destination-heading { margin-block: .2rem .35rem; }
+.aerift-ios .ios-page { gap: 1.05rem; }
+.aerift-ios .ios-overview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: .72rem;
+  padding: .7rem .65rem .7rem .8rem;
+  border-radius: 1.3rem;
+  align-items: center;
+}
+.ios-overview-symbol { display: grid; place-items: center; color: var(--ae-accent); width: 2.3rem; height: 2.3rem; }
+.ios-overview-copy { min-inline-size: 0; }
+.aerift-ios .ios-overview h3 { font-size: clamp(1rem, 4.1vw, 1.19rem); letter-spacing: -.02em; line-height: 1.2; }
+.aerift-ios .ios-overview p { margin-block-start: .22rem; font-size: .83rem; }
+.aerift-ios .ios-overview .ae-button { font-size: .84rem; padding-inline: .55rem; }
+.aerift-ios .ios-home-grid .ios-section { gap: .58rem; }
+.aerift-ios .ios-footnote { font-size: .83rem; padding-block-end: .35rem; }
+.aerift-ios .ios-module-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .3rem;
+  padding: .28rem;
+  border-radius: 1.18rem;
+  background: color-mix(in srgb, var(--ae-field) 51%, transparent);
+  border: 1px solid var(--ae-edge);
+}
+.aerift-ios .ios-module-picker .ae-button {
+  justify-content: center;
+  min-width: 0;
+  padding: .37rem .22rem;
+  gap: .32rem;
+  text-align: center;
+  line-height: 1.14;
+  border-radius: .91rem;
+  font-size: .82rem;
+  letter-spacing: -.012em;
+}
+.aerift-ios .ios-module-picker .ae-button:not([aria-pressed="true"]) { color: var(--ae-display-muted, var(--ae-muted)); }
+.aerift-ios .ios-module-picker .ae-button > svg { display: none; }
+@media (min-width: 25rem) {
+  .aerift-ios .ios-module-picker .ae-button > svg { display: block; flex: none; }
+}
+.aerift-ios .ios-section { padding-block: .8rem .66rem; }
+.aerift-ios .ios-section-head { align-items: start; gap: .62rem; }
+.aerift-ios .ios-section-head > div { flex: 1 1 12rem; }
+.aerift-ios .ios-section-head p { font-size: .9rem; line-height: 1.45; }
+.aerift-ios .ios-object-list li { row-gap: .35rem; border-block-start: 0; border-block-end: 1px solid var(--ae-edge); }
+.aerift-ios .ios-object-list li:last-child { border-block-end: 0; }
+.aerift-ios .ios-object-form input,
+.aerift-ios .ios-object-form textarea,
+.aerift-ios .ios-object-form select { border-radius: .82rem; }
+.aerift-ios .ios-object-composer {
+  background: color-mix(in srgb, var(--ae-content) 75%, transparent);
+  border: 1px solid var(--ae-edge);
+  border-radius: 1rem; padding: .4rem .8rem; min-inline-size: 0;
+}
+.aerift-ios .ios-object-composer > summary {
+  min-height: 44px; align-content: center; cursor: pointer; color: var(--ae-text); font-weight: 650;
+}
+.aerift-ios .ios-object-composer[open] > summary { margin-block-end: .38rem; }
+.aerift-ios .ios-object-composer .ios-object-form { padding-block-end: .52rem; }
+.aerift-ios .aerift-control-center > :is(section, fieldset) { min-inline-size: 0; }
+.aerift-ios .aerift-control-center > section > h3 { font-size: 1.03rem; }
+.aerift-ios .ios-dock {
+  margin-block: 0;
+  border-radius: 1.52rem;
+  padding: .3rem;
+}
+.aerift-ios .ios-dock nav button.ae-button[data-variant] {
+  font-size: .76rem; line-height: 1.1; letter-spacing: -.018em; min-block-size: 3.3rem;
+}
+.aerift-ios .ios-dock nav button.ae-button[data-variant][aria-current] {
+  font-weight: 760; color: var(--ae-text);
+}
+.aerift-ios .ios-dock nav button > span:first-of-type { overflow-wrap: normal; }
+@media (max-width: 23rem) {
+  .aerift-ios .ios-overview { grid-template-columns: auto minmax(0, 1fr); }
+  .aerift-ios .ios-overview .ae-button { grid-column: 2; justify-self: start; }
+  .aerift-ios .ios-dock nav button.ae-button[data-variant] { font-size: .71rem; letter-spacing: -.025em; }
+}
+@media (prefers-reduced-motion: reduce) { .aerift-ios .ios-page { animation: none; } }
+.ae-theme[data-motion="reduce"] .ios-page { animation: none; }

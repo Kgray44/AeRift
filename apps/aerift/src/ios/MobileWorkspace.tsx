@@ -7,7 +7,7 @@ import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
 import { command } from "../nativeAppPort";
 import type { AppPort, Transfer } from "@aerift/app-contract";
-import { Button, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
+import { Button, SpatialIcon, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
 
 export type PickerSource = MediaSource;
 export type ModuleVisibility = Record<PickerSource | LocalModule, boolean>;
@@ -51,13 +51,15 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       {presentationError && <p role="alert">{presentationError}</p>}
     </section>}
     {visible.length ? <nav className="ios-module-picker" aria-label="Workspace modules">
-      {visible.map(({ id, label }) => <Button key={id} variant="quiet" aria-pressed={id === current}
-        onClick={() => setSelected(id)}>{label}</Button>)}
+      {visible.map(({ id, label, icon }) => <Button key={id} variant="quiet" aria-pressed={id === current}
+        data-ae-lens-role={id === current ? "control" : undefined} onClick={() => setSelected(id)}>
+        <SpatialIcon name={icon} size={16} /><span>{label}</span>
+      </Button>)}
     </nav> : <p>Enable a workspace module in Settings.</p>}
     {current === "files" && <section className="ios-section" aria-labelledby="ios-files">
       <div className="ios-section-head">
         <div><h3 id="ios-files">Files</h3><p>Browse Files, cloud providers and On My iPhone.</p></div>
-        <Button disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose for Rift</Button>
+        <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose for Rift</Button>
       </div>
       {received.length > 0 && <>
         <h4>Received on this iPhone</h4>
@@ -69,7 +71,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       <div className="ios-section-head">
         <div><h3 id="ios-photos">Photos and videos</h3>
           <p>AeRift can only access items you choose in the system picker.</p></div>
-        <Button disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("photos"))}>Choose for Rift</Button>
+        <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("photos"))}>Choose for Rift</Button>
       </div>
     </section>}
     {(current === "files" || current === "photos") &&

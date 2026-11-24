@@ -24,3 +24,7 @@ npm run test:ui
 ```
 
 The build output is `tests/ui/dist/`. Both pages are development fixtures and stay out of the native app build.
+
+## Production shell visual fixtures
+
+`/desktop-visual.html?scheme=light&route=rift` mounts the Windows production shell with deterministic mock Tauri IPC. Valid routes are Home, Rift, Devices, Workspace, Activity and Settings; optional `state=empty` or `state=offline` exercises the corresponding UI. `/mobile.html` mounts the production iPhone shell and supports real navigation, configuration and mock transfers. Neither test bundle is packaged into the native app. See [visual refinement verification](../../docs/validation/visual-refinement.md).

@@ -98,7 +98,7 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
 
   return <div className="aerift-settings-grid">
     <section aria-labelledby="experience-heading">
-      <h3 id="experience-heading">Experience</h3>
+      <h3 id="experience-heading">Experience</h3><p className="aerift-settings-intro">Make room for the way you work.</p>
       <label>Window mode
         <select value={experience.windowMode} onChange={event => onChange({ ...value, experience: {
           ...experience, windowMode: event.currentTarget.value === "full" ? "full" : "simplified",
@@ -134,7 +134,7 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
       </fieldset>
     </section>
     <section aria-labelledby="appearance-heading">
-      <h3 id="appearance-heading">Appearance and accessibility</h3>
+      <h3 id="appearance-heading">Appearance and accessibility</h3><p className="aerift-settings-intro">Choose your atmosphere and comfort.</p>
       <SettingsPanel value={experience} themes={[{ id: "glass", label: "GLASS" }]} onChange={updateAppearance} />
     </section>
     <section aria-labelledby="gestures-heading">

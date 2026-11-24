@@ -44,13 +44,19 @@ export function blendAtmosphere(from: AtmosphereState, to: AtmosphereState, seco
   };
 }
 
+/** Fast, quiet tool surfaces share the same field as the active Rift. */
+export function atmosphereIntensity(inRift: boolean, energy: number, isLight: boolean) {
+  const idle = isLight ? .43 : .34;
+  return inRift ? idle + .14 + Math.min(.46, Math.max(0, energy) * .95) : idle;
+}
+
 const dark = {
-  canvas: "#040508", shade: "#16163b", distance: "#14102e", body: "#141049", bodyDeep: "#09091d",
+  canvas: "#090d17", shade: "#16163b", distance: "#14102e", body: "#141049", bodyDeep: "#09091d",
   lift: "#2d29a8", amethyst: "#7134b6", face: "#1839ad", shadow: "#070716", glow: "#2568ff",
   lip: "#60dfff", lipWhite: "#dcf9ff", violet: "#9e57ff", violetWhite: "#daa2fb", taper: "#160f52",
 };
 const light = {
-  canvas: "#f8f7f6", shade: "#e1e6f3", distance: "#c4c9e8", body: "#afc5f4", bodyDeep: "#e4e1f2",
+  canvas: "#f5f6fa", shade: "#e1e6f3", distance: "#c4c9e8", body: "#afc5f4", bodyDeep: "#e4e1f2",
   lift: "#777bd3", amethyst: "#a080c4", face: "#82afed", shadow: "#9da7d8", glow: "#69a4f4",
   lip: "#5ac0e6", lipWhite: "#faffff", violet: "#ad84e5", violetWhite: "#fff2ff", taper: "#acb4df",
 };
@@ -103,8 +109,14 @@ export function paintAtmosphere(ctx: CanvasRenderingContext2D, w: number, h: num
     ctx.restore();
   };
 
-  ctx.fillStyle = p.canvas;
+  // The broad field is visible under window chrome even when the fold falls
+  // below it. Keep the hue restrained so headings do not need opaque scrims.
+  ctx.fillStyle = grad(0, 0, w, h, [
+    [0, p.canvas], [.64, p.canvas], [1, isLight ? "#eef1f9" : "#0b1221"],
+  ]);
   ctx.fillRect(0, 0, w, h);
+  spot(w * .76, h * .14, Math.max(w * .52, h * .46), isLight ? "#acbcdf" : "#334f76", isLight ? .78 : .58);
+  spot(w * .09, h * .57, Math.max(w * .47, h * .39), isLight ? "#bac2df" : "#45447a", .47);
   ctx.save();
   ctx.translate(0, top);
   ctx.scale(w / 1000, height / 640);
@@ -174,7 +186,7 @@ export function paintAtmosphere(ctx: CanvasRenderingContext2D, w: number, h: num
   };
   edge(blueLip, 29, [[0, rgb(p.lift, 0)], [.49, rgb(p.glow, .02)], [.71, rgb(p.glow, .10 * high)], [.90, rgb(p.glow, .12 * high)], [1, rgb(p.lip, .04)]]);
   edge(blueLip, 12, [[0, rgb(p.lift, 0)], [.49, rgb(p.glow, .03)], [.71, rgb(p.glow, .19 * high)], [.90, rgb(p.lip, .20 * high)], [1, rgb(p.lip, .07)]]);
-  edge(blueLip, 4, [[0, rgb(p.lift, 0)], [.37, rgb(p.lift, .12)], [.56, rgb(p.glow, .24)], [.78, rgb(p.lip, .83 * high)], [.92, rgb(p.lip, .86 * high)], [1, rgb(p.lip, 0)]]);
+  edge(blueLip, 4, [[0, rgb(p.lift, 0)], [.37, rgb(p.lift, .12)], [.56, rgb(p.glow, .24)], [.78, rgb(p.lip, .73 * high)], [.92, rgb(p.lip, .77 * high)], [1, rgb(p.lip, 0)]]);
   edge(blueLip, 1.15, [[0, rgb(p.lipWhite, 0)], [.56, rgb(p.lip, .11)], [.80, rgb(p.lipWhite, .91 * high)], [.96, rgb(p.lip, 0)], [1, rgb(p.lip, 0)]]);
   edge(violetLip, 11, [[0, rgb(p.violet, 0)], [.6, rgb(p.violet, .08)], [.87, rgb(p.violet, .36 * high)], [1, rgb(p.violet, .12)]]);
   edge(violetLip, 2.1, [[0, rgb(p.violet, 0)], [.57, rgb(p.violet, .14)], [.83, rgb(p.violetWhite, .62 * high)], [.97, rgb(p.violetWhite, .82 * high)], [1, rgb(p.violet, .42)]]);
