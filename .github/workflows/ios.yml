@@ -33,9 +33,11 @@ jobs:
           sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
           xcrun --sdk iphonesimulator swiftc -typecheck -swift-version 5 \
             -sdk "$sdk" -target "$(uname -m)-apple-ios15.0-simulator" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/BrowserLinkCapture.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/ClipboardImagePicker.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/MediaLibrary.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/BonjourDiscovery.swift"
       - name: Test bounded native file staging
@@ -43,6 +45,12 @@ jobs:
           swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
             apps/ios/tests/FileStagingSmoke.swift -o "$RUNNER_TEMP/file-staging-smoke"
           "$RUNNER_TEMP/file-staging-smoke"
+      - name: Test durable media library and active selection lifetime
+        run: |
+          swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/MediaLibrary.swift" \
+            apps/ios/tests/MediaLibrarySmoke.swift -o "$RUNNER_TEMP/media-library-smoke"
+          "$RUNNER_TEMP/media-library-smoke"
 
   simulator-app:
     name: iOS simulator - Tauri app build and launch

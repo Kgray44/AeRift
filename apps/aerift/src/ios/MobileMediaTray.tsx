@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { getObjectPresentation } from "@aerift/app-contract/digital-objects";
 import { Button, formatFileSize, type TransferWorkspaceRegions } from "@aerift/ui";
 import type { Result } from "@aerift/app-contract";
-import type { ImportedMedia, MediaSource, MobileMediaPort } from "./mobile-media";
+import type { ImportedMedia, MediaSource } from "./mobile-media";
+import type { ObservedMediaPort } from "./mobile-media-observer";
 
 const mediaNames = { file: "File", photo: "Photo", video: "Video" };
 
 export function MobileMediaTray({ source, port, regions }: {
   source: MediaSource;
-  port: MobileMediaPort;
+  port: ObservedMediaPort;
   regions: TransferWorkspaceRegions;
 }) {
   const [imports, setImports] = useState<readonly ImportedMedia[]>();
@@ -22,6 +23,10 @@ export function MobileMediaTray({ source, port, regions }: {
   useEffect(() => {
     let current = true;
     setInitialFailure(false);
+    const unsubscribe = port.subscribe(items => {
+      setImports(items);
+      setInitialFailure(false);
+    });
     void port.list().then(result => {
       if (!current) return;
       if (result.ok) setImports(result.value);
@@ -29,7 +34,7 @@ export function MobileMediaTray({ source, port, regions }: {
     }).catch(() => {
       if (current) setInitialFailure(true);
     });
-    return () => { current = false; };
+    return () => { current = false; unsubscribe(); };
   }, [port, reload]);
 
   async function run(action: () => Promise<Result<unknown>>, errorMessage: string) {
@@ -41,7 +46,7 @@ export function MobileMediaTray({ source, port, regions }: {
     try {
       const result = await action();
       if (!result.ok) setError(result.error.code === "conflict" ?
-        "The import tray is full. Remove items before importing more." : errorMessage);
+        "The import library is full. Remove items before importing more." : errorMessage);
     } catch {
       setError(errorMessage);
     } finally {
@@ -83,13 +88,14 @@ export function MobileMediaTray({ source, port, regions }: {
 
   return <section className="ios-section ios-imports" aria-label={source === "files" ? "Imported files" : "Imported photos and videos"} aria-busy={busy}>
     <h3>Imported copies</h3>
-    <p>Keep up to 24 items while AeRift is running. Your original files and media stay in place.</p>
+    <p>Keep up to 24 copies on this iPhone. Your originals stay in place.</p>
     {initialFailure ?
       <Button variant="quiet" onClick={() => setReload(attempts => attempts + 1)}>Retry loading imports</Button> :
-      <Button disabled={busy || regions.selecting || !imports} onClick={() =>
+      <Button disabled={busy || regions.selecting || !imports || imports.length >= 24} onClick={() =>
         void run(importItems, "AeRift couldn’t import these items. Check that they’re available and that there’s space on this iPhone.")}>
         {source === "files" ? "Import files" : "Import photos or videos"}
       </Button>}
+    {imports && imports.length >= 24 && <p>The library holds 24 items. Remove an imported copy to make space.</p>}
     {items.length > 0 && <ol className="ios-object-list">
       {items.map(item => <li key={item.assetId}>
         <strong>{getObjectPresentation(item).label}</strong>

@@ -70,7 +70,11 @@
 .ios-object-editor { justify-items: stretch; }
 .ios-object-form, .ios-object-form label, .ios-object-list, .ios-collection { display: grid; gap: .55rem; }
 .ios-object-form .ios-check { display: flex; align-items: center; min-height: 44px; }
-.ios-object-form :is(input:not([type="checkbox"]), textarea), .ios-add-member select {
+.ios-note-attachments { min-inline-size: 0; margin: 0; padding: 0; border: 0; overflow-wrap: anywhere; }
+.ios-note-attachments legend { padding: 0; font-weight: 600; }
+.ios-object-list details { overflow-wrap: anywhere; }
+.ios-object-list summary { min-height: 44px; align-content: center; cursor: pointer; }
+.ios-object-form :is(input:not([type="checkbox"]), textarea, select), .ios-add-member select {
   width: 100%;
   padding: .7rem;
   border: 1px solid var(--ae-control-edge);

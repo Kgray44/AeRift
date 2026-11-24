@@ -3,6 +3,7 @@ import { decodeObject, type DigitalObject } from "@aerift/app-contract/digital-o
 export type MobileObject = Extract<DigitalObject, { kind: "note" | "text" | "url" | "collection" }>;
 
 export const objectStorageKey = "aerift.ios.objects.v1";
+export const noteAttachmentStorageKey = "aerift.ios.note-attachments.v1";
 export const maxObjectCount = 100;
 export const maxStoreLength = 512 * 1024;
 export const maxTextLength = 24_000;
@@ -30,6 +31,64 @@ export function decodeMobileObjects(raw: string): MobileObject[] | undefined {
   }
 }
 
+export function readMobileObjects(storage: Pick<Storage, "getItem">): MobileObject[] | undefined {
+  const objects = decodeMobileObjects(storage.getItem(objectStorageKey) ?? "[]");
+  const raw = storage.getItem(noteAttachmentStorageKey);
+  if (!objects || raw === null || raw.length > maxStoreLength) return objects;
+
+  let index: unknown;
+  try {
+    index = JSON.parse(raw);
+  } catch {
+    return objects;
+  }
+  if (!Array.isArray(index) || index.length > maxObjectCount) return objects;
+  const references = new Map<string, unknown>();
+  for (const record of index) {
+    if (Array.isArray(record) && record.length === 2 && typeof record[0] === "string") {
+      references.set(record[0], record[1]);
+    }
+  }
+  return objects.map(object => {
+    if (object.kind !== "note" || !references.has(object.id)) return object;
+    const attached = decodeObject(JSON.stringify({ ...object, attachmentIds: references.get(object.id) }));
+    return attached?.kind === "note" && attached.ownership === "local" ? attached : object;
+  });
+}
+
+function serializeAttachmentIndex(objects: readonly MobileObject[]): string {
+  return JSON.stringify(objects.flatMap(object => object.kind === "note" && object.attachmentIds?.length
+    ? [[object.id, object.attachmentIds]] : []));
+}
+
+function noteTextRecord(object: MobileObject): MobileObject {
+  if (object.kind !== "note") return object;
+  const { attachmentIds: _attachmentIds, ...note } = object;
+  return note;
+}
+
+export function persistMobileObjects(storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
+  previous: readonly MobileObject[], next: readonly MobileObject[]) {
+  // Older builds strictly decode this key. Keep the note text readable after a downgrade.
+  const legacy = next.map(noteTextRecord);
+  const previousIndex = serializeAttachmentIndex(previous);
+  const nextIndex = serializeAttachmentIndex(next);
+  if (previousIndex === nextIndex) {
+    storage.setItem(objectStorageKey, JSON.stringify(legacy));
+    return;
+  }
+
+  const storedIndex = storage.getItem(noteAttachmentStorageKey);
+  storage.setItem(noteAttachmentStorageKey, nextIndex);
+  try {
+    storage.setItem(objectStorageKey, JSON.stringify(legacy));
+  } catch (error) {
+    if (storedIndex === null) storage.removeItem(noteAttachmentStorageKey);
+    else storage.setItem(noteAttachmentStorageKey, storedIndex);
+    throw error;
+  }
+}
+
 export function removeMobileObject(objects: readonly MobileObject[], id: string): MobileObject[] {
   return objects.filter(item => item.id !== id).map(item => item.kind === "collection" && item.itemIds.includes(id)
     ? { ...item, itemIds: item.itemIds.filter(member => member !== id) }
@@ -48,6 +107,26 @@ export function normalWebUrl(value: string): string | undefined {
   }
 }
 
+export interface BrowserLink {
+  url: string;
+  title?: string | null;
+}
+
+export function addBrowserLinks(
+  objects: readonly MobileObject[], captures: readonly BrowserLink[], createId: () => string,
+): MobileObject[] {
+  const seen = new Set(objects.flatMap(object => object.kind === "url" ? [object.url] : []));
+  const links: MobileObject[] = [];
+  for (const capture of captures) {
+    const url = normalWebUrl(capture.url);
+    if (!url || seen.has(url)) continue;
+    const name = capture.title?.trim().replace(/\s+/g, " ").slice(0, 100) || new URL(url).hostname;
+    seen.add(url);
+    links.push({ schemaVersion: 1, ownership: "local", id: createId(), kind: "url", url, name });
+  }
+  return [...links, ...objects];
+}
+
 function portableName(name: string, extension: "txt" | "md") {
   const slug = name.normalize("NFKD").replace(/[^a-z0-9 -]/gi, "").trim().slice(0, 72);
   return "AeRift - " + (slug || "Object") + "." + extension;
@@ -63,7 +142,7 @@ export function portableText(object: Exclude<MobileObject, { kind: "collection" 
 
 export function portableCollection(collection: Extract<MobileObject, { kind: "collection" }>,
   objects: readonly MobileObject[]) {
-  const entries = new Map(objects.filter(item => item.kind !== "collection").map(item => [item.id, item]));
+  const entries = new Map(objects.filter(item => item.kind !== "collection").map(item => [item.id, noteTextRecord(item)]));
   const items = collection.itemIds.map(id => entries.get(id));
   if (!items.length || items.some(item => item === undefined)) return undefined;
   const text = JSON.stringify({ schemaVersion: 1, collection, items }, null, 2);

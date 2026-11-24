@@ -1,7 +1,7 @@
 import Foundation
 
 /// Passed to Rust. Only the opaque selection ID, display name and size reach the UI.
-enum StagedKind: String, Encodable {
+enum StagedKind: String, Codable {
     case file, photo, video
 }
 
@@ -21,11 +21,7 @@ enum StagingError: Error {
 enum FileStaging {
     static func discard(_ selections: [StagedSelection]) {
         for selection in selections {
-            do {
-                try FileManager.default.removeItem(at: selection.url)
-            } catch {
-                continue
-            }
+            try? FileManager.default.removeItem(at: selection.url)
             try? FileManager.default.removeItem(at: selection.url.deletingLastPathComponent())
         }
     }
@@ -77,6 +73,23 @@ enum FileStaging {
         }
     }
 
+    static func stageLibraryLink(_ source: URL, name: String, size: Int, kind: StagedKind) throws -> StagedSelection {
+        try stageLibraryLink(source, name: name, size: size, kind: kind, in: stagingDirectory.get())
+    }
+
+    static func stageLibraryLink(_ source: URL, name: String, size: Int, kind: StagedKind,
+                                 in root: URL) throws -> StagedSelection {
+        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true, values.fileSize == size else {
+            throw StagingError.invalidFile
+        }
+        var item = try stageContent(named: name, size: size, in: root, allocatesBytes: false) { destination in
+            try FileManager.default.linkItem(at: source, to: destination)
+        }
+        item.kind = kind
+        return item
+    }
+
     static let textLimitBytes = 128 * 1_024
 
     static func stageText(_ text: String, name: String) throws -> StagedSelection {
@@ -98,7 +111,7 @@ enum FileStaging {
     }
 
     private static func stageContent(named name: String, size: Int, in root: URL,
-                                     write: (URL) throws -> Void) throws -> StagedSelection {
+                                     allocatesBytes: Bool = true, write: (URL) throws -> Void) throws -> StagedSelection {
         stagingLock.lock()
         defer { stagingLock.unlock() }
         guard size <= limitBytes else { throw StagingError.limitExceeded }
@@ -126,7 +139,7 @@ enum FileStaging {
         guard size <= remainingBudget else { throw StagingError.limitExceeded }
 
         let capacity = try root.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity
-        guard let capacity, capacity >= size + freeSpaceMargin else {
+        guard let capacity, capacity >= (allocatesBytes ? size : 0) + freeSpaceMargin else {
             throw StagingError.insufficientSpace
         }
 

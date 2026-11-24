@@ -4,8 +4,6 @@ mod desktop;
 mod desktop_explorer;
 #[cfg(target_os = "ios")]
 mod ios;
-#[cfg(target_os = "ios")]
-mod ios_media;
 #[cfg(windows)]
 mod protected_store;
 #[cfg(any(windows, target_os = "ios"))]
@@ -26,7 +24,6 @@ pub fn run() {
         .plugin(tauri_plugin_aerift_ios::init())
         .manage(runtime::AppRuntime::default())
         .manage(selection::SelectionRegistry::default())
-        .manage(ios_media::MediaTray::default())
         .invoke_handler(tauri::generate_handler![
             ios::watch_app,
             ios::unwatch_app,

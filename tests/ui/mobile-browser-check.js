@@ -207,5 +207,82 @@ async (page) => {
   await media.getByRole("button", { name: "Remove Harbor aerial.heic", exact: true }).click();
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removes only the selected imported copy");
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
-  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, collection copy staging, clipboard sharing and revocation, multi-item imports, saved Activity, and responsive bounds.";
+  await page.reload();
+  await go("Workspace");
+  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
+  check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removal survives restart");
+  await media.getByRole("button", { name: "Select for Rift", exact: true }).click();
+  await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  const notes = page.getByRole("region", { name: "notes", exact: true });
+  await notes.getByRole("button", { name: "Edit", exact: true }).click();
+  const attachmentPicker = notes.getByLabel("Imported copy", { exact: true });
+  await attachmentPicker.selectOption({ label: "Navigation chart.pdf" });
+  await notes.getByRole("button", { name: "Attach", exact: true }).click();
+  await attachmentPicker.selectOption({ label: "Harbor approach.mov" });
+  await notes.getByRole("button", { name: "Attach", exact: true }).click();
+  await notes.getByRole("button", { name: "Save changes", exact: true }).click();
+
+  await page.evaluate(() => {
+    const key = "aerift.ios.objects.v1";
+    const objects = JSON.parse(localStorage.getItem(key));
+    const note = objects.find(item => item.kind === "note");
+    if (Object.hasOwn(note, "attachmentIds")) throw new Error("The earlier build rejects this note record");
+    note.text = "Note edited by an earlier build.";
+    localStorage.setItem(key, JSON.stringify(objects));
+  });
+  await page.reload();
+  await go("Workspace");
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await notes.getByText("2 attachments", { exact: true }).click();
+  const savedNote = notes.locator(".ios-object-list > li").filter({ hasText: "Packing list" });
+  await savedNote.getByText("Note edited by an earlier build.", { exact: true }).waitFor();
+  const attachments = savedNote.locator("details li");
+  await attachments.filter({ hasText: "Harbor approach.mov" }).getByRole("button", { name: "Preview" }).click();
+  check((await attachments.allTextContents())[0].includes("Navigation chart.pdf"), "note attachments keep their order after restart");
+  await savedNote.getByRole("button", { name: "Send note text", exact: true }).waitFor();
+  await screenshot("note-attachments-390");
+  await attachments.filter({ hasText: "Navigation chart.pdf" }).getByRole("button", { name: "Select for Rift" }).click();
+  await page.locator(".ae-dock-file").getByText("Navigation chart.pdf", { exact: true }).waitFor();
+
+  await go("Workspace");
+  await files.getByRole("button", { name: "Remove Navigation chart.pdf", exact: true }).click();
+  await files.getByRole("button", { name: "Remove Navigation chart.pdf", exact: true }).waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await notes.getByText("2 attachments", { exact: true }).click();
+  await attachments.first().getByText("Imported copy unavailable", { exact: true }).waitFor();
+  await notes.getByRole("button", { name: "Edit", exact: true }).click();
+  await notes.getByRole("button", { name: "Detach Attachment 1", exact: true }).click();
+  await notes.getByRole("button", { name: "Save changes", exact: true }).click();
+  await notes.getByText("1 attachment", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__ = { invoke: (command, args) => {
+      if (command !== "open_ios_browser" || args.url !== "https://example.test/start") {
+        throw new Error("Unexpected browser request");
+      }
+      return Promise.resolve([{ url: "https://example.test/reached", title: "Harbor guide" }]);
+    } };
+  });
+  await page.getByLabel("Address", { exact: true }).fill("example.test/start");
+  await page.getByRole("button", { name: "Open page", exact: true }).click();
+  await page.getByRole("status").filter({ hasText: "Link collected." }).waitFor();
+  await page.reload();
+  await go("Workspace");
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  const browser = page.getByRole("region", { name: "browser", exact: true });
+  const currentLink = browser.getByRole("listitem").filter({ hasText: "Harbor guide" });
+  await currentLink.waitFor();
+  await page.evaluate(() => {
+    window.__TAURI_INTERNALS__ = { invoke: (command, args) => {
+      if (command !== "stage_ios_text" || args.text !== "https://example.test/reached") {
+        throw new Error("Unexpected link staging request");
+      }
+      return Promise.resolve({ name: args.name, sizeBytes: args.text.length, selectionId: "fixture-browser-link" });
+    } };
+  });
+  await currentLink.getByRole("button", { name: "Send copy", exact: true }).click();
+  await page.locator(".ae-dock-file").getByText("AeRift - Harbor guide.txt", { exact: true }).waitFor();
+  return "Passed route focus, persistent selection, send, incoming consent, cancellation, theme and motion restart, collection copy staging, clipboard sharing and revocation, durable multi-item imports, note attachments, Browser link capture, saved Activity, and responsive bounds.";
 }

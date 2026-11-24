@@ -98,6 +98,7 @@ pub enum PickerSource {
 struct PickerArgs {
     source: Option<PickerSource>,
     limit: usize,
+    persist: bool,
 }
 
 /// Opens a native picker or the source chooser. Cancellation resolves to `Ok(None)`.
@@ -106,20 +107,58 @@ pub async fn pick_file<R: Runtime>(
     app: &AppHandle<R>,
     source: Option<PickerSource>,
 ) -> Result<Option<StagedSelection>, PluginInvokeError> {
-    Ok(pick_files(app, source, 1).await?.pop())
+    let picker = app.state::<IosPlatform<R>>();
+    let mut response: BatchPickerResponse = picker
+        .0
+        .run_mobile_plugin_async(
+            "pickFile",
+            PickerArgs {
+                source,
+                limit: 1,
+                persist: false,
+            },
+        )
+        .await?;
+    Ok(response.selections.pop())
 }
 
-pub async fn pick_files<R: Runtime>(
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaImport {
+    id: String,
+    name: String,
+    kind: StagedKind,
+    size_bytes: u64,
+}
+
+#[derive(Deserialize)]
+struct MediaLibraryResponse {
+    items: Vec<MediaImport>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaAssetArgs<'a> {
+    asset_id: &'a str,
+}
+
+pub async fn import_media<R: Runtime>(
     app: &AppHandle<R>,
-    source: Option<PickerSource>,
-    limit: usize,
-) -> Result<Vec<StagedSelection>, PluginInvokeError> {
-    let picker = app.state::<IosPlatform<R>>();
-    let response: BatchPickerResponse = picker
+    source: PickerSource,
+) -> Result<Vec<MediaImport>, PluginInvokeError> {
+    let response: MediaLibraryResponse = app
+        .state::<IosPlatform<R>>()
         .0
-        .run_mobile_plugin_async("pickFile", PickerArgs { source, limit })
+        .run_mobile_plugin_async(
+            "pickFile",
+            PickerArgs {
+                source: Some(source),
+                limit: 1,
+                persist: true,
+            },
+        )
         .await?;
-    Ok(response.selections)
+    Ok(response.items)
 }
 
 #[derive(Deserialize)]
@@ -145,6 +184,41 @@ pub async fn paste_clipboard_image<R: Runtime>(
         .state::<IosPlatform<R>>()
         .0
         .run_mobile_plugin_async("pasteClipboardImage", ())
+        .await?;
+    Ok(response.selection)
+}
+
+pub async fn list_media<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<MediaImport>, PluginInvokeError> {
+    let response: MediaLibraryResponse = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("listMedia", ())
+        .await?;
+    Ok(response.items)
+}
+
+pub async fn remove_media<R: Runtime>(
+    app: &AppHandle<R>,
+    asset_id: &str,
+) -> Result<Vec<MediaImport>, PluginInvokeError> {
+    let response: MediaLibraryResponse = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("removeMedia", MediaAssetArgs { asset_id })
+        .await?;
+    Ok(response.items)
+}
+
+pub async fn stage_media<R: Runtime>(
+    app: &AppHandle<R>,
+    asset_id: &str,
+) -> Result<Option<StagedSelection>, PluginInvokeError> {
+    let response: PickerResponse = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("stageMedia", MediaAssetArgs { asset_id })
         .await?;
     Ok(response.selection)
 }
@@ -203,14 +277,27 @@ struct BrowserArgs<'a> {
     url: &'a str,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct BrowserLink {
+    url: String,
+    title: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BrowserResponse {
+    links: Vec<BrowserLink>,
+}
+
 pub async fn open_browser<R: Runtime>(
     app: &AppHandle<R>,
     url: &str,
-) -> Result<(), PluginInvokeError> {
-    app.state::<IosPlatform<R>>()
+) -> Result<Vec<BrowserLink>, PluginInvokeError> {
+    let response: BrowserResponse = app
+        .state::<IosPlatform<R>>()
         .0
         .run_mobile_plugin_async("openBrowser", BrowserArgs { url })
-        .await
+        .await?;
+    Ok(response.links)
 }
 
 #[derive(Deserialize, Serialize)]
