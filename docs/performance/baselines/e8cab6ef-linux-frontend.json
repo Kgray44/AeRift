@@ -1,0 +1,346 @@
+{
+  "schema": "aerift.performance/v1",
+  "capturedAt": "2026-11-24T20:51:19.686Z",
+  "source": {
+    "commit": "e8cab6efff8e4f100ff582b2ef7d945de3fcd64e",
+    "tree": "8679c8035439628f777e44468f2ab602df43de95",
+    "clean": true
+  },
+  "environment": {
+    "platform": "linux",
+    "arch": "x64",
+    "context": "Linux x64 cloud scratch; Node process pinned to logical CPU 6; sequential warm-cache tooling baseline; no known concurrent project benchmarks",
+    "node": "v24.22.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.8",
+    "visibleParallelism": 1,
+    "cpuQuota": null,
+    "memoryLimitBytes": null,
+    "visibleHostLoadAverageAtStart": [
+      0.81,
+      0.32,
+      0.16
+    ],
+    "visibleHostLoadAverageAtEnd": [
+      2,
+      0.82,
+      0.34
+    ]
+  },
+  "scenario": {
+    "id": "frontend.production-build",
+    "profile": "vite-production-tooling-only",
+    "conditions": {
+      "measuredTrials": 7,
+      "warmups": 1,
+      "serialBuilds": true,
+      "warmOperatingSystemCaches": true,
+      "excludes": [
+        "npm dependency install",
+        "native model staging",
+        "Tauri wrapper/installer",
+        "platform device startup"
+      ],
+      "initialGraph": "index.html static Vite manifest import closure; dynamic imports excluded",
+      "gzip": "independent JS/CSS file compression (zlib level 6), not network traffic",
+      "timingAdmission": "descriptive only; shared host contention and no dedicated performance runner",
+      "outputSha256ExcludingManifest": [
+        "2044099e418421d9c1dd63092ead09ddecafcd52de11578d6bce3b6e701e2f49"
+      ]
+    }
+  },
+  "metrics": [
+    {
+      "id": "build.typescript.wall",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        5758.677,
+        5907.636,
+        6493.456,
+        5660.366,
+        5920.084,
+        6194.36,
+        6001.271
+      ],
+      "summary": {
+        "min": 5660.366,
+        "count": 7,
+        "p50": 5920.084,
+        "p95": 6493.456,
+        "max": 6493.456
+      }
+    },
+    {
+      "id": "build.vite.wall",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        2413.969,
+        2424.017,
+        2600.009,
+        2659.202,
+        2372.419,
+        2427.879,
+        2601.148
+      ],
+      "summary": {
+        "min": 2372.419,
+        "count": 7,
+        "p50": 2427.879,
+        "p95": 2659.202,
+        "max": 2659.202
+      }
+    },
+    {
+      "id": "build.total.wall",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        8172.646,
+        8331.653,
+        9093.466,
+        8319.568,
+        8292.503,
+        8622.239,
+        8602.418
+      ],
+      "summary": {
+        "min": 8172.646,
+        "count": 7,
+        "p50": 8331.653,
+        "p95": 9093.466,
+        "max": 9093.466
+      }
+    },
+    {
+      "id": "bundle.startup.js.raw",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        437123,
+        437123,
+        437123,
+        437123,
+        437123,
+        437123,
+        437123
+      ],
+      "summary": {
+        "min": 437123,
+        "count": 7,
+        "p50": 437123,
+        "p95": 437123,
+        "max": 437123
+      }
+    },
+    {
+      "id": "bundle.startup.js.gzip",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        137010,
+        137010,
+        137010,
+        137010,
+        137010,
+        137010,
+        137010
+      ],
+      "summary": {
+        "min": 137010,
+        "count": 7,
+        "p50": 137010,
+        "p95": 137010,
+        "max": 137010
+      }
+    },
+    {
+      "id": "bundle.startup.css.raw",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        121433,
+        121433,
+        121433,
+        121433,
+        121433,
+        121433,
+        121433
+      ],
+      "summary": {
+        "min": 121433,
+        "count": 7,
+        "p50": 121433,
+        "p95": 121433,
+        "max": 121433
+      }
+    },
+    {
+      "id": "bundle.startup.css.gzip",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        22554,
+        22554,
+        22554,
+        22554,
+        22554,
+        22554,
+        22554
+      ],
+      "summary": {
+        "min": 22554,
+        "count": 7,
+        "p50": 22554,
+        "p95": 22554,
+        "max": 22554
+      }
+    },
+    {
+      "id": "bundle.emitted.js.raw",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        437123,
+        437123,
+        437123,
+        437123,
+        437123,
+        437123,
+        437123
+      ],
+      "summary": {
+        "min": 437123,
+        "count": 7,
+        "p50": 437123,
+        "p95": 437123,
+        "max": 437123
+      }
+    },
+    {
+      "id": "bundle.emitted.js.gzip",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        137010,
+        137010,
+        137010,
+        137010,
+        137010,
+        137010,
+        137010
+      ],
+      "summary": {
+        "min": 137010,
+        "count": 7,
+        "p50": 137010,
+        "p95": 137010,
+        "max": 137010
+      }
+    },
+    {
+      "id": "bundle.emitted.css.raw",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        121433,
+        121433,
+        121433,
+        121433,
+        121433,
+        121433,
+        121433
+      ],
+      "summary": {
+        "min": 121433,
+        "count": 7,
+        "p50": 121433,
+        "p95": 121433,
+        "max": 121433
+      }
+    },
+    {
+      "id": "bundle.emitted.css.gzip",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        22554,
+        22554,
+        22554,
+        22554,
+        22554,
+        22554,
+        22554
+      ],
+      "summary": {
+        "min": 22554,
+        "count": 7,
+        "p50": 22554,
+        "p95": 22554,
+        "max": 22554
+      }
+    },
+    {
+      "id": "bundle.other-output.raw",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "measured",
+      "samples": [
+        1689,
+        1689,
+        1689,
+        1689,
+        1689,
+        1689,
+        1689
+      ],
+      "summary": {
+        "min": 1689,
+        "count": 7,
+        "p50": 1689,
+        "p95": 1689,
+        "max": 1689
+      }
+    },
+    {
+      "id": "app.cold-start.ready",
+      "unit": "ms",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No installed app or native renderer startup measured."
+    },
+    {
+      "id": "app.idle.process-tree-rss",
+      "unit": "bytes",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No native application process tree sampled."
+    },
+    {
+      "id": "app.navigation.frame-p95",
+      "unit": "ms/frame",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No installed UI or physical display trace."
+    },
+    {
+      "id": "app.energy.idle",
+      "unit": "mWh",
+      "direction": "lower",
+      "status": "unavailable",
+      "reason": "No battery or energy sensor measurement."
+    }
+  ]
+}

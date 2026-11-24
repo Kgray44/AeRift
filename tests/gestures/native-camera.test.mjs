@@ -115,3 +115,26 @@ test("the native watchdog publishes lost frame feedback before teardown", async 
   assert.equal(terminal.subscribed, true);
   assert.deepEqual(s.commands, ["interrupt"]);
 });
+
+test("native watchdog stays parked during startup and starts exactly once for ready frames", async (t) => {
+  const original = globalThis.setInterval;
+  let starts = 0;
+  t.mock.method(globalThis, "setInterval", (...args) => {
+    starts++;
+    return original(...args);
+  });
+  const s = fixture(t);
+  await s.adapter.start();
+  assert.equal(starts, 0);
+  s.state("starting");
+  assert.equal(starts, 0);
+  s.state("ready", "retired-attempt");
+  assert.equal(starts, 0);
+  s.state("ready");
+  s.state("ready");
+  assert.equal(starts, 1);
+  s.state("suspended");
+  await Promise.resolve();
+  assert.deepEqual(s.stopped, ["native"]);
+  assert.equal(s.subscribed, false);
+});

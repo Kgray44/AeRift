@@ -24,6 +24,7 @@ impl AmbientRuntime {
             return Err(ErrorCode::Conflict.into());
         }
         cfg.a4_opt_in = enabled;
+        self.0.lifecycle_wake.changed();
         self.sync_a4_policy(&cfg);
         Ok(())
     }

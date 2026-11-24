@@ -19,9 +19,11 @@ const HASH_BUFFER: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
+    #[cfg(test)]
     Interrupted,
     InvalidRange,
     PrefixMismatch,
+    #[cfg(test)]
     BlockDigest,
     FileDigest,
     Incomplete,
@@ -66,6 +68,7 @@ impl Checkpoint {
     /// buffering; this method does not consume bytes beyond the named block.
     /// Retries wholly within the prefix are validated against storage but never
     /// written. A failed or incomplete block does not advance the offset.
+    #[cfg(test)]
     pub fn append(
         &mut self,
         start: u64,
@@ -73,6 +76,27 @@ impl Checkpoint {
         block_digest: [u8; 32],
         reader: &mut impl Read,
     ) -> Result<u64, Error> {
+        let end = self.validate_range(start, len)?;
+        let mut bytes = vec![0_u8; len];
+        reader
+            .read_exact(&mut bytes)
+            .map_err(|_| Error::Interrupted)?;
+        if !digest_matches(Sha256::digest(&bytes), block_digest) {
+            return Err(Error::BlockDigest);
+        }
+        self.write_validated(start, end, &bytes)
+    }
+
+    /// Borrow the exact length already checked by the authenticated HTTP
+    /// transport. For a fresh append hashing the very same bytes twice is
+    /// not an integrity check; authenticated storage is still fully rehashed
+    /// at finish. A retransmission still proves it matches the stored prefix.
+    pub fn append_block(&mut self, start: u64, block: &[u8]) -> Result<u64, Error> {
+        let end = self.validate_range(start, block.len())?;
+        self.write_validated(start, end, block)
+    }
+
+    fn validate_range(&self, start: u64, len: usize) -> Result<u64, Error> {
         if self.unusable {
             return Err(Error::Storage);
         }
@@ -83,15 +107,10 @@ impl Checkpoint {
         if end > self.expected_len || (start < self.committed && end > self.committed) {
             return Err(Error::InvalidRange);
         }
+        Ok(end)
+    }
 
-        let mut bytes = vec![0_u8; len];
-        reader
-            .read_exact(&mut bytes)
-            .map_err(|_| Error::Interrupted)?;
-        if !digest_matches(Sha256::digest(&bytes), block_digest) {
-            return Err(Error::BlockDigest);
-        }
-
+    fn write_validated(&mut self, start: u64, end: u64, bytes: &[u8]) -> Result<u64, Error> {
         let file = self.stage.as_file_mut();
         if file.metadata().map_err(|_| Error::Storage)?.len() != self.committed {
             self.unusable = true;
@@ -100,13 +119,16 @@ impl Checkpoint {
         file.seek(SeekFrom::Start(start))
             .map_err(|_| Error::Storage)?;
         if start < self.committed {
-            return if digest_matches(hash_exact(file, len as u64)?, block_digest) {
+            return if digest_matches(
+                hash_exact(file, bytes.len() as u64)?,
+                Sha256::digest(bytes).into(),
+            ) {
                 Ok(self.committed)
             } else {
                 Err(Error::PrefixMismatch)
             };
         }
-        if file.write_all(&bytes).and_then(|()| file.flush()).is_err() {
+        if file.write_all(bytes).and_then(|()| file.flush()).is_err() {
             // If there may be an uncommitted suffix and rollback fails,
             // refuse future writes and publication; Drop cleans the stage.
             if file.set_len(self.committed).is_err() {
@@ -220,6 +242,21 @@ mod tests {
             Err(Error::BlockDigest)
         );
         assert_eq!(c.offset(), 3);
+    }
+
+    #[test]
+    fn borrowed_transport_block_preserves_range_retry_and_final_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut checkpoint = Checkpoint::create(dir.path(), 6, hash(b"abcdef")).unwrap();
+        assert_eq!(checkpoint.append_block(0, b"abc"), Ok(3));
+        assert_eq!(checkpoint.append_block(0, b"abc"), Ok(3));
+        assert_eq!(
+            checkpoint.append_block(0, b"abz"),
+            Err(Error::PrefixMismatch)
+        );
+        assert_eq!(checkpoint.append_block(2, b"cd"), Err(Error::InvalidRange));
+        assert_eq!(checkpoint.append_block(3, b"deg"), Ok(6));
+        assert_eq!(checkpoint.finish().unwrap_err(), Error::FileDigest);
     }
 
     #[test]

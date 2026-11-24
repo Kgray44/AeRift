@@ -47,6 +47,9 @@ pub(crate) enum CaptureView {
     },
 }
 
+mod lifecycle_wait;
+use lifecycle_wait::LifecycleWake;
+
 struct Slot {
     captured_at: Instant,
     id: uuid::Uuid,
@@ -70,6 +73,7 @@ struct Supervisor {
     a4: aerift_transfer::ambient::nearby_runtime::NearbyRuntime,
     generation: AtomicU64,
     working: AtomicBool,
+    lifecycle_wake: LifecycleWake,
 }
 
 #[derive(Clone, Default)]
@@ -180,6 +184,7 @@ impl AmbientRuntime {
             } else {
                 // Revoke in-process authority even if OS cleanup fails.
                 cfg.enabled = false;
+                self.0.lifecycle_wake.changed();
                 cfg.a4_opt_in = false;
                 self.0.a4.set_policy(false, false, false);
                 cfg.paused = false;
@@ -201,6 +206,7 @@ impl AmbientRuntime {
             self.0.a4.cancel();
             self.0.generation.fetch_add(1, Ordering::AcqRel);
             cfg.enabled = enabled;
+            self.0.lifecycle_wake.changed();
             cfg.excludes = excluded_apps;
             cfg.slot = None;
             emit(
@@ -221,6 +227,7 @@ impl AmbientRuntime {
             return None;
         }
         cfg.paused = !cfg.paused;
+        self.0.lifecycle_wake.changed();
         self.sync_a4_policy(&cfg);
         cfg.slot = None;
         self.0.generation.fetch_add(1, Ordering::AcqRel);
@@ -411,10 +418,13 @@ impl AmbientRuntime {
     pub(crate) fn start_lifecycle_watch(&self) {
         let runtime = self.clone();
         tauri::async_runtime::spawn(async move {
-            let mut clock = tokio::time::interval(Duration::from_millis(250));
             let mut was_paused_by_session = false;
             loop {
-                clock.tick().await;
+                let enabled = match runtime.0.config.lock() {
+                    Ok(config) => config.enabled,
+                    Err(_) => break,
+                };
+                runtime.0.lifecycle_wake.wait(enabled).await;
                 let Ok(mut config) = runtime.0.config.lock() else {
                     break;
                 };
@@ -445,7 +455,10 @@ impl AmbientRuntime {
 }
 
 fn require_main(window: &WebviewWindow) -> Result<(), TransferError> {
-    if !window.state::<crate::runtime::AppRuntime>().nearby_enabled() {
+    if !window
+        .state::<crate::runtime::AppRuntime>()
+        .nearby_enabled()
+    {
         return Err(ErrorCode::PeerUnavailable.into());
     }
     if window.label() != "main" {

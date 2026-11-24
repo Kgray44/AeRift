@@ -19,6 +19,7 @@ export class NativeGestureCamera {
   private started = false;
   private active = false;
   private offset = 0;
+  private clockReady = false;
   private unsubscribe: (() => void) | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
   private attemptTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -52,25 +53,33 @@ export class NativeGestureCamera {
       if (!Number.isFinite(native)) throw new Error("Invalid native clock");
       // Earliest possible offset makes frame age conservative, including bridge latency.
       this.offset = before - native;
-      let lastFrameAt = Infinity;
-      this.timer = setInterval(() => {
-        const now = performance.now();
-        const result = this.intent.tick(now);
-        if (result.phase === "interrupted" || result.phase === "released") {
-          this.publish(result);
-          return this.stop();
-        }
-        if (result.camera === "ready") {
-          if (lastFrameAt === Infinity) lastFrameAt = now;
-          if (now - Math.max(this.lastFrameAt, lastFrameAt) > 750) this.stop("error", "capture-timeout");
-        }
-      }, 50);
+      this.clockReady = true;
+      if (this.intent.feedback.camera === "ready") this.startWatchdog();
       await this.port.start(this.attemptId);
       // Prevent a late start acknowledgement resurrecting a cancelled attempt.
       if (!this.active) await this.port.stop(this.attemptId);
     } catch {
       if (this.active) this.stop("error");
     }
+  }
+
+  private startWatchdog(): void {
+    // Before ready, the absolute attempt deadline and native startup safety
+    // already own teardown. Do not poll an inactive frame source.
+    if (!this.active || !this.clockReady || this.timer !== undefined) return;
+    let lastFrameAt = Infinity;
+    this.timer = setInterval(() => {
+      const now = performance.now();
+      const result = this.intent.tick(now);
+      if (result.phase === "interrupted" || result.phase === "released") {
+        this.publish(result);
+        return this.stop();
+      }
+      if (result.camera === "ready") {
+        if (lastFrameAt === Infinity) lastFrameAt = now;
+        if (now - Math.max(this.lastFrameAt, lastFrameAt) > 750) this.stop("error", "capture-timeout");
+      }
+    }, 50);
   }
 
   updateContext(target: GestureTarget | null): void {
@@ -99,6 +108,7 @@ export class NativeGestureCamera {
     if (event.type === "state") {
       if (event.state === "ready" || event.state === "starting" || event.state === "requesting") {
         if (this.publish(this.intent.setCamera(event.state))) this.stop(event.state);
+        else if (event.state === "ready") this.startWatchdog();
       } else this.stop(event.state);
       return;
     }

@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { memo, useId, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import type { Device, Platform } from "@aerift/app-contract";
 import { Button, ConnectionStatus, GlassSurface } from "./components";
 import { devicePresence } from "./spatial-device";
@@ -84,32 +84,35 @@ function equalAnchors(first: SpatialAnchors | undefined, second: SpatialAnchors)
     && [...second.peers].every(([id, position]) => equalPosition(position, first.peers.get(id)));
 }
 
-function Peer({ device, slot, groupName, selected, busy, ready, offered, active, interrupted, onSelect }: {
-  device: Device; slot: number; groupName: string; selected: boolean; busy?: boolean; ready: boolean;
+// Progress snapshots can recreate every Device object. Pass just the values
+// used by this peer so unrelated frame updates don't revisit its markup.
+const Peer = memo(function Peer({ id, name, platformId, paired, online, slot, groupName, selected, busy, ready, offered, active, interrupted, onSelect }: {
+  id: string; name: string; platformId: Platform; paired: boolean; online: boolean;
+  slot: number; groupName: string; selected: boolean; busy?: boolean; ready: boolean;
   offered: boolean; active: boolean; interrupted: boolean; onSelect: (id: string) => void;
 }) {
   const statusId = useId();
   const titleId = useId();
-  const platform = platforms[device.platform];
-  const [state, presence] = devicePresence(device, { selected, ready, offered, active, interrupted });
-  const detail = `${platform.label}, ${device.paired ? "paired" : "unpaired"}, ${device.online ? "online" : "offline"}`;
+  const platform = platforms[platformId];
+  const [state, presence] = devicePresence({ online, paired }, { selected, ready, offered, active, interrupted });
+  const detail = `${platform.label}, ${paired ? "paired" : "unpaired"}, ${online ? "online" : "offline"}`;
   return <label className="ae-spatial-peer" data-slot={slot} data-peer-state={state} data-selected={selected}
-    title={`${device.name} · ${detail}`}>
+    title={`${name} · ${detail}`}>
     <input className="ae-spatial-radio" type="radio" name={groupName} checked={selected}
-      disabled={busy || !device.paired || !device.online} aria-labelledby={titleId} aria-describedby={statusId}
-      onChange={() => onSelect(device.id)} />
-    <span className="ae-surface ae-spatial-glyph" data-material="chrome" data-peer-anchor={device.id}>
+      disabled={busy || !paired || !online} aria-labelledby={titleId} aria-describedby={statusId}
+      onChange={() => onSelect(id)} />
+    <span className="ae-surface ae-spatial-glyph" data-material="chrome" data-peer-anchor={id}>
       <SpatialIcon name={platform.icon} size={30} />
     </span>
     <span className="ae-spatial-caption">
-      <strong id={titleId}>{device.name}</strong>
+      <strong id={titleId}>{name}</strong>
       <small className="ae-spatial-presence">{presence}</small>
       <span className="ae-spatial-detail" id={statusId}>{detail}
         {state !== "available" && state !== "offline" && state !== "unpaired" && `, ${presence.toLowerCase()}`}
       </span>
     </span>
   </label>;
-}
+});
 
 export function SpatialScene({ devices, platform, discovery, selectedId, readinessPeerId, offeredPeerId, activePeerId, interruptedPeerId, receiverReady,
   busy, onSelect, onPair, pairingDisabled, pairingLabel = "Pair a device", onRetry, retryLabel = "Retry connection", children }: {
@@ -186,7 +189,8 @@ export function SpatialScene({ devices, platform, discovery, selectedId, readine
         {peers.map(device => {
           const current = slots.get(device.id) ?? 0;
           const slot = current >= spatialCapacity ? availableSlots.shift() ?? current : current;
-          return <Peer key={device.id} slot={slot} groupName={groupName} device={device}
+          return <Peer key={device.id} slot={slot} groupName={groupName}
+            id={device.id} name={device.name} platformId={device.platform} paired={device.paired} online={device.online}
             selected={device.id === selectedId} busy={busy} ready={device.id === readinessPeerId}
             offered={device.id === offeredPeerId} active={device.id === activePeerId}
             interrupted={device.id === interruptedPeerId} onSelect={onSelect} />;
