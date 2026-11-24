@@ -43,6 +43,54 @@ try {
   await snapped(desktop, "desktop-documents-dark");
   await desktop.close();
 
+  const large = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await large.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
+  await open(large, "File Browser");
+  await large.getByLabel("Import files", { exact: true }).setInputFiles(Array.from({ length: 52 }, (_, index) => ({
+    name: `Large-${index}.pdf`, mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7"),
+  })));
+  const saved = large.getByRole("region", { name: "Saved file browser", exact: true });
+  await saved.getByText("Page 1 of 2").waitFor();
+  assert.equal(await saved.getByRole("checkbox").count(), 48);
+  await saved.getByRole("checkbox", { name: "Large-0.pdf" }).check();
+  await button(saved, "Next page").click();
+  assert.equal(await saved.getByRole("checkbox").count(), 4);
+  await saved.getByRole("checkbox", { name: "Large-51.pdf" }).check();
+  await button(saved, "Remove selected (2)").waitFor();
+  await button(saved, "Previous page").click();
+  assert.equal(await saved.getByRole("checkbox", { name: "Large-0.pdf" }).isChecked(), true);
+  await back(large, "File Browser");
+  assert.equal(await button(large, "Documents").getByText("52 items").count(), 1);
+  // Exercise an installed v1 writer against the same persisted browser origin.
+  const prior = await large.evaluate(async () => {
+    const read = request => new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    const db = await read(indexedDB.open("aerift.desktop.workspace", 1));
+    const storeNames = [...db.objectStoreNames];
+    const tx = db.transaction("objects", "readwrite");
+    const finish = new Promise((resolve, reject) => {
+      tx.oncomplete = resolve; tx.onabort = () => reject(tx.error);
+    });
+    const store = tx.objectStore("objects");
+    const rows = await read(store.getAll());
+    const edit = rows.find(row => JSON.parse(row.document).name === "Large-0.pdf");
+    const remove = rows.find(row => JSON.parse(row.document).name === "Large-51.pdf");
+    store.put({ ...edit, document: JSON.stringify({ ...JSON.parse(edit.document), name: "Prior edit.pdf" }) });
+    store.delete(remove.id);
+    await finish;
+    db.close();
+    return { storeNames, count: rows.length, fileContents: await edit.asset.text() };
+  });
+  assert.deepEqual(prior, { storeNames: ["objects"], count: 52, fileContents: "%PDF-1.7" });
+  await large.reload();
+  await open(large, "Documents");
+  const updated = large.getByRole("region", { name: "Saved documents", exact: true });
+  await updated.getByText("Page 1 of 2").waitFor();
+  await button(updated, "Next page").click();
+  assert.equal(await updated.getByRole("checkbox").count(), 3);
+  await large.close();
+
   for (const platform of ["ios", "android"]) {
     const page = await browser.newPage({ viewport: { width: platform === "ios" ? 390 : 320, height: 844 },
       deviceScaleFactor: 1, isMobile: true, hasTouch: true, colorScheme: platform === "ios" ? "light" : "dark" });

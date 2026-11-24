@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
 import { Button, GlassSurface } from "@aerift/ui";
 import type { FriendContact } from "@aerift/app-contract/friends";
 import { command } from "../nativeAppPort";
@@ -39,20 +40,16 @@ export function WindowsFriendsFiles({ contacts }: { contacts: readonly FriendCon
   const [acceptRoutes, setAcceptRoutes] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const refreshing = useRef(false);
-  const refresh = useCallback(async () => {
-    if (refreshing.current) return;
-    refreshing.current = true;
-    try {
+  const refresh = useVisibleNativeRefresh("friends_files_view", 1000,
+    async () => {
       const result = await command<FileView>("friends_files_view");
-      if (result.ok) setView(result.value);
-    } finally { refreshing.current = false; }
-  }, []);
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 1000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+      if (!result.ok) throw result.error;
+      return result.value;
+    },
+    setView,
+    () => setView(undefined),
+    () => setView(undefined),
+  );
   const delegatedContacts = (view?.memberRoster ?? []).map(friend => ({
     id: friend.id, label: `Friend ${friend.id.slice(0, 12)}`,
     devices: friend.devices.map(id => ({ id, label: `Device ${id.slice(0, 12)}` })),
@@ -88,7 +85,7 @@ export function WindowsFriendsFiles({ contacts }: { contacts: readonly FriendCon
       }
     } finally {
       setBusy(false);
-      await refresh();
+      refresh();
     }
   }
 

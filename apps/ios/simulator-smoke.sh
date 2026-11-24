@@ -66,6 +66,11 @@ if ! xcrun simctl list devices booted | grep -F "$device" > /dev/null; then
 fi
 xcrun simctl bootstatus "$device" -b
 xcrun simctl install "$device" "$app"
+perf="${AERIFT_PERF_OBSERVE:-0}"
+monotonic_ms() { python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'; }
+if [[ "$perf" == 1 ]]; then
+  observe_started="$(monotonic_ms)"
+fi
 launch="$(xcrun simctl launch --terminate-running-process "$device" com.kgamazing44.aerift)"
 echo "$launch"
 pid="${launch##*: }"
@@ -83,6 +88,9 @@ workspace_visible=0
 while (( SECONDS < deadline )); do
   if xcrun simctl io "$device" screenshot "$verification_dir/launch.png" &&
      "$verification_dir/verify-workspace" "$verification_dir/launch.png"; then
+    if [[ "$perf" == 1 ]]; then
+      printf 'AERIFT_PERF startup.ios.workspace-observed=%d\n' "$(( $(monotonic_ms) - observe_started ))"
+    fi
     workspace_visible=1
     break
   fi
