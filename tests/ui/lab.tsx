@@ -6,15 +6,18 @@ import "../../packages/ui/src/styles.css";
 import "./lab.css";
 
 type Appearance = keyof typeof glassAppearanceRecipes;
-type OpticalNumber = Exclude<keyof GlassAppearanceRecipe, "reflectionColor">;
+type OpticalNumber = keyof GlassAppearanceRecipe;
 
 const parameters: readonly { key: OpticalNumber; label: string; min: number; max: number; step: number }[] = [
-  { key: "softness", label: "Backdrop softness", min: 0, max: 4, step: .1 },
+  { key: "opacity", label: "Optical tint", min: 0, max: 80, step: 1 },
+  { key: "softness", label: "Backdrop softness", min: 0, max: 14, step: 1 },
   { key: "exposure", label: "Exposure", min: 80, max: 125, step: 1 },
-  { key: "refraction", label: "Refraction", min: 0, max: 100, step: 1 },
+  { key: "distortion", label: "Distortion", min: 0, max: 40, step: 1 },
   { key: "dispersion", label: "Dispersion", min: 0, max: 100, step: 1 },
   { key: "reflection", label: "Reflection intensity", min: 0, max: 100, step: 1 },
-  { key: "ribbonIntensity", label: "Ribbon illumination", min: .2, max: 1.6, step: .05 },
+  { key: "patches", label: "Reflection patches", min: 0, max: 100, step: 1 },
+  { key: "iridescence", label: "Edge iridescence", min: 0, max: 100, step: 1 },
+  { key: "edging", label: "Directional edging", min: 0, max: 100, step: 1 },
 ];
 
 function Laboratory() {
@@ -22,9 +25,8 @@ function Laboratory() {
   const [settings, setSettings] = useState(glassAppearanceRecipes);
   const [pattern, setPattern] = useState(false);
   const recipe = settings[appearance];
-  const color = "#" + recipe.reflectionColor.map(value => value.toString(16).padStart(2, "0")).join("");
   const exportData = JSON.stringify({
-    schema: "aerift-glass-lab/v1", appearance, settings: aeRiftGlassRecipe, optics: recipe,
+    schema: "aerift-glass-lab/v1", settings: { ...aeRiftGlassRecipe, ...recipe },
   }, null, 2);
 
   function update(patch: Partial<GlassAppearanceRecipe>) {
@@ -60,14 +62,6 @@ function Laboratory() {
             <input type="range" aria-label={label} min={min} max={max} step={step} value={recipe[key]}
               onChange={event => update({ [key]: event.currentTarget.valueAsNumber })} />
           </label>)}
-          <label>Reflection color
-            <input type="color" value={color} onChange={event => {
-              const hex = event.currentTarget.value;
-              update({ reflectionColor: [
-                parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16),
-              ] });
-            }} />
-          </label>
         </div>
         <div className="ae-lab-actions">
           <Button variant="quiet" onClick={() => setSettings(current => ({ ...current, [appearance]: glassAppearanceRecipes[appearance] }))}>

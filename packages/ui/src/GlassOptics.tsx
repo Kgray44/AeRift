@@ -2,12 +2,12 @@ import { useEffect, useId, useRef } from "react";
 import { appearanceCommitEvent } from "./theme";
 import { atmosphereIntensity, atmosphereTarget, blendAtmosphere, paintAtmosphere, ribbonGeometry } from "./atmosphere";
 
-/** Source values from the owner's approved Liquid Glass Lab recipe. */
+/** The owner-approved aerift-glass-lab/v1 recipe. These values are live inputs, not a visual reference. */
 export const aeRiftGlassRecipe = Object.freeze({
-  opacity: 2, warmth: 0, softness: 2, exposure: 108, depth: 9, radius: 26,
-  roundness: 69, distortion: 40, dispersion: 100, magnify: 80, shadow: 61,
-  reflection: 76, gloss: 100, patches: 60, patchSize: 58, iridescence: 30,
-  edging: 77, edge: 44, light: 315, sweep: 53, drift: 48, speed: 116,
+  opacity: 11, warmth: 0, softness: 5, exposure: 100, depth: 10, radius: 26,
+  roundness: 81, distortion: 40, dispersion: 61, magnify: 73, shadow: 83,
+  reflection: 51, gloss: 100, patches: 56, patchSize: 100, iridescence: 47,
+  edging: 71, edge: 26, light: 315, sweep: 70, drift: 72, speed: 76,
   scroll: 44, scene: "ribbons", surface: "all", showLens: true,
 });
 
@@ -15,136 +15,149 @@ const orbitGlass = ".ae-orbit[data-radial='true'] .ae-orbit-trigger [data-ae-len
 const openOrbitGlass = ".ae-orbit[data-radial='true'][data-open='true'] .ae-orbit-choice [data-ae-lens-role='orb']";
 const lensSelector = [
   orbitGlass, openOrbitGlass,
-  ".ae-nav-brand", ".ae-nav-destinations", ".ae-nav-tools", ".ae-transfer-dock",
-  ".ios-dock .ae-nav-indicator", ".ae-spatial-local .ae-spatial-glyph",
+  ".ae-nav-brand", ".ae-nav-destinations", ".ae-nav-tools",
+  ".ae-spatial-local .ae-spatial-glyph",
   ".ae-spatial-peer[data-selected='true'] .ae-spatial-glyph",
   ".ae-workspace-nav", ".ae-panel", ".ae-file-slot",
+  ".ae-surface:is([data-material='content'], [data-material='raised'])",
+  ".ae-button:is([data-variant='secondary'], [data-variant='primary']):not(:disabled, [aria-disabled='true'])",
   "[data-ae-lens-role='control']:not(:disabled, [aria-disabled='true'])",
 ].join(",");
 
 const R = aeRiftGlassRecipe;
-export interface GlassAppearanceRecipe {
-  softness: number;
-  exposure: number;
-  refraction: number;
-  dispersion: number;
-  reflection: number;
-  reflectionColor: readonly [number, number, number];
-  ribbonIntensity: number;
-}
-
+type MaterialKey = Exclude<keyof typeof R, "drift" | "scroll" | "scene" | "surface" | "showLens">;
+export type GlassAppearanceRecipe = Record<MaterialKey, number>;
 export const glassAppearanceRecipes: Readonly<Record<"dark" | "light", GlassAppearanceRecipe>> = Object.freeze({
-  dark: Object.freeze({ softness: R.softness, exposure: R.exposure, refraction: R.distortion, dispersion: R.dispersion,
-    reflection: R.reflection, reflectionColor: [249, 253, 255] as const, ribbonIntensity: 1 }),
-  light: Object.freeze({ softness: 1.35, exposure: 102, refraction: 36, dispersion: 77,
-    reflection: 86, reflectionColor: [252, 251, 255] as const, ribbonIntensity: .90 }),
+  dark: R, light: R,
 });
 
 const clamp = (n: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, n));
+const TAU = 2 * Math.PI;
 type Surface = { x: number; y: number; width: number; height: number; radius: number; kind: "control" | "panel" | "stage" };
 
 export function opticalViewportScale(width: number, height: number, dpr: number) {
   return Math.min(Math.max(1, dpr), 800 / width, Math.sqrt(390000 / (width * height)));
 }
 
+/** Port of the Lab's shade equations. The only sampling differences are live app
+ * artwork instead of its diagnostic scene, and screen-pixel clipping and scale. */
 export function shadeLens(out: Uint8ClampedArray, source: Uint8ClampedArray, w: number, h: number, box: Surface, resolution: number, t: number,
-  appearance: GlassAppearanceRecipe = glassAppearanceRecipes.dark) {
+  s: GlassAppearanceRecipe = R) {
   const { x, y, width, height, radius, kind } = box;
   const scrX = Math.max(0, Math.floor(x)), scrY = Math.max(0, Math.floor(y));
   const endX = Math.min(w, Math.ceil(x + width)), endY = Math.min(h, Math.ceil(y + height));
   const halfW = width / 2, halfH = height / 2, centerX = x + halfW, centerY = y + halfH;
-  const r = Math.min(radius, halfW, halfH);
-  const stage = kind === "stage", panel = kind === "panel";
-  const depth = Math.max(1.25, R.depth * resolution * (stage ? 1.40 : panel ? 1.05 : .72));
-  // Cap the studio warp and zoom next to retained app text; file-stage glass
-  // uses the strongest refraction, while functional labels are drawn by React.
-  const warpMax = appearance.refraction * resolution * (stage ? .57 : panel ? .38 : .43);
-  const mag = R.magnify * .01 * (stage ? .033 : panel ? .015 : .027);
-  const angle = R.light * Math.PI / 180 + .23 * R.sweep / 53 * Math.sin(t * 1.31);
-  const lx = Math.cos(angle), ly = Math.sin(angle);
-  const cu = 1 - r / width, cv = 1 - r / height;
-  const spread = R.patchSize / 100;
-  const patchW = Math.max(.048, r / width * 2.05 + spread * .052);
-  const patchH = Math.max(.08, r / height * 1.65 + spread * .061);
-  const shift = .038 * Math.sin(t * 1.7);
-  const signX = Math.sign(lx), signY = Math.sign(ly);
-  const reflect = appearance.reflection / 100;
-  const [reflectRed, reflectGreen, reflectBlue] = appearance.reflectionColor;
-  const softness = clamp(appearance.softness, 0, 4);
-  const softStep = softness ? Math.max(1, Math.round(softness * resolution)) : 0;
-  const softMix = softness * .060;
-  const gloss = Math.max(.78, (1 + (100 - R.gloss) * .028) * resolution);
-  const grazingWidth = Math.max(1.3, 3.15 * resolution);
+  const orb = kind === "stage", card = kind === "panel", density = 1 / resolution;
+  const r = Math.max(0, Math.min(radius + (kind === "control" ? (s.radius - 26) * .43 * resolution : 0), halfW, halfH));
+  const tint = s.opacity * .01 * (orb ? .46 : 1);
+  const dep = Math.max(1, s.depth * (orb ? 1.32 : card ? 1 : .65));
+  const bend = s.distortion * resolution * (orb ? 1.42 : card ? 1 : .70);
+  const eref = s.reflection * .01, prism = s.dispersion * .01, film = s.iridescence * .01, warm = s.warmth * .01;
+  const glow = s.patches * .01, size = s.patchSize * .01;
+  const gloss = s.gloss * .01, sweep = s.sweep * .01, roll = s.roundness * .01, edging = s.edging * .01;
+  const hw = .59 + (1 - gloss) * 2.1 + .034 * s.depth, nxWidth = 1.10 + .08 * s.depth + .68 * (1 - gloss);
+  const blurRadius = s.softness ? Math.max(1, Math.round(Math.ceil(s.softness * .70) * resolution)) : 0;
+  const blurMix = Math.min(.52, s.softness * .037);
+  const heading = s.light * Math.PI / 180 + Math.sin(t * .98) * .43 * sweep;
+  const lx = Math.cos(heading), ly = Math.sin(heading);
+  const u1 = lx * .67 + Math.sin(t * .80 + x * density * .025) * .37 * sweep;
+  const v1 = ly * .69 + Math.cos(t * .97 + y * density * .025) * .40 * sweep;
+  const u2 = -lx * .49 + Math.cos(t * .67 - y * density * .04) * .49 * sweep;
+  const v2 = -ly * .66 + Math.sin(t * .71 + x * density * .03) * .41 * sweep;
+  const det = orb ? 1.8 : 1;
+  const cu = 1 - 1.07 * r / width, cv = 1 - 1.05 * r / height;
+  const cw = .041 + 1.94 * r / width + size * .103, ch = .080 + 1.67 * r / height + size * .081;
+  const wander = .045 * Math.sin(t * .96) * sweep;
+  const pw = .062 + size * .31, ph = .18 + size * .67;
+  const amp = .34 + s.depth * .030;
+  const zoom = (s.magnify * .01) * (orb ? .94 : .045);
   for (let py = scrY; py < endY; py++) {
     const iy = py + .5 - centerY, ay = Math.abs(iy) - halfH + r, dy = Math.max(0, ay), v = iy / halfH;
     for (let px = scrX; px < endX; px++) {
       const ix = px + .5 - centerX, ax = Math.abs(ix) - halfW + r, dx = Math.max(0, ax);
-      // No normals, exponentials or chromatic samples are needed in the clear
-      // interior, except for the intentionally stronger file-stage lens.
       const hyp = dx || dy ? Math.sqrt(dx * dx + dy * dy) : 0;
-      const d = r - hyp - Math.min(Math.max(ax, ay), 0);
+      const d = (r - hyp - Math.min(Math.max(ax, ay), 0)) * density;
       if (d <= -.5) continue;
-      const idx = (py * w + px) * 4;
-      if (!stage && d > depth * 1.42 + 2) {
-        if (softStep > 0) {
-          // A small, symmetric sample softens only the backdrop in the clear lens interior.
-          const a = (Math.max(0, py - softStep) * w + px) * 4;
-          const b = (Math.min(h - 1, py + softStep) * w + px) * 4;
-          const c = (py * w + Math.max(0, px - softStep)) * 4;
-          const e = (py * w + Math.min(w - 1, px + softStep)) * 4;
-          for (let channel = 0; channel < 3; channel++) {
-            out[idx + channel] = (1 - 4 * softMix) * source[idx + channel] +
-              softMix * (source[a + channel] + source[b + channel] + source[c + channel] + source[e + channel]);
-          }
-        }
-        continue;
-      }
-      const u = ix / halfW;
+      const j = (py * w + px) * 4, u = ix / halfW;
       const nx = hyp ? Math.sign(ix) * dx / hyp : ax > ay ? Math.sign(ix) : 0;
       const ny = hyp ? Math.sign(iy) * dy / hyp : ax <= ay ? Math.sign(iy) : 0;
-      const outer = clamp(1 - d / depth), sq = outer * outer;
-      const warp = warpMax * Math.pow(outer, 1.1 + 1.4 * R.roundness / 100);
-      const zoom = stage ? mag * clamp(1 - u * u - v * v) : mag * sq;
-      const X = clamp(px + nx * warp - ix * zoom, 0, w - 1.001);
-      const Y = clamp(py + ny * warp - iy * zoom, 0, h - 1.001);
-      const sx = Math.floor(X), sy = Math.floor(Y), i = (sy * w + sx) * 4, next = i + w * 4;
-      const fx = X - sx, fy = Y - sy, a = (1 - fx) * (1 - fy), b = fx * (1 - fy), c = (1 - fx) * fy, e = fx * fy;
-      let red = source[i] * a + source[i + 4] * b + source[next] * c + source[next + 4] * e;
-      let green = source[i + 1] * a + source[i + 5] * b + source[next + 1] * c + source[next + 5] * e;
-      let blue = source[i + 2] * a + source[i + 6] * b + source[next + 2] * c + source[next + 6] * e;
-      if (sq > .045) {
-        const separation = 2.65 * resolution * sq * appearance.dispersion / 100;
-        const ar = (Math.round(clamp(Y + ny * separation, 0, h - 1)) * w + Math.round(clamp(X + nx * separation, 0, w - 1))) * 4;
-        const ab = (Math.round(clamp(Y - ny * separation, 0, h - 1)) * w + Math.round(clamp(X - nx * separation, 0, w - 1))) * 4 + 2;
-        red += (source[ar] - red) * .43 * sq; blue += (source[ab] - blue) * .43 * sq;
+      const outer = clamp(1 - d / dep), rim = outer * outer;
+      const facing = nx * lx + ny * ly, keyside = Math.max(0, facing), backside = Math.max(0, -facing);
+      const warp = outer > 0 ? bend * Math.pow(outer, 1.13 + roll * 1.4) : 0;
+      const mag = zoom * Math.max(0, 1 - u * u - v * v);
+      const X = clamp(px + nx * warp - ix * mag, 0, w - 1.001);
+      const Y = clamp(py + ny * warp - iy * mag, 0, h - 1.001);
+      const p0 = X | 0, p1 = Y | 0, fx = X - p0, fy = Y - p1;
+      const i = (p1 * w + p0) * 4, ri = i + w * 4;
+      const w00 = (1 - fx) * (1 - fy), w01 = fx * (1 - fy), w10 = (1 - fx) * fy, w11 = fx * fy;
+      let R = source[i] * w00 + source[i + 4] * w01 + source[ri] * w10 + source[ri + 4] * w11;
+      let G = source[i + 1] * w00 + source[i + 5] * w01 + source[ri + 1] * w10 + source[ri + 5] * w11;
+      let B = source[i + 2] * w00 + source[i + 6] * w01 + source[ri + 2] * w10 + source[ri + 6] * w11;
+      if (prism > 0 && rim > .035) {
+        const spread = 4.25 * prism * rim * resolution, dx = nx * spread, dy = ny * spread;
+        const a1 = (Math.round(clamp(Y + dy, 0, h - 1)) * w + Math.round(clamp(X + dx, 0, w - 1))) * 4;
+        const b1 = (Math.round(clamp(Y - dy, 0, h - 1)) * w + Math.round(clamp(X - dx, 0, w - 1))) * 4;
+        const pr = prism * .48 * rim;
+        R += (source[a1] - R) * pr; B += (source[b1 + 2] - B) * pr;
       }
-      const dot = nx * lx + ny * ly, front = Math.max(0, dot), back = Math.max(0, -dot);
-      const inEdge = clamp(1 - d / Math.max(1.15, 2.45 * resolution));
-      let white = R.opacity / 100 + .44 * R.edging / 100 * front ** 3 * inEdge * inEdge;
-      let color = 0;
-      if (d < depth + 2) {
-        const delta = (d - .6 * resolution) / gloss;
-        white += reflect * (.035 + .19 * front ** 3) * Math.exp(-delta * delta);
-        if (Math.abs(u) > .68 && Math.abs(v) > .58) {
-          const nearX = (u - signX * (cu + shift)) / patchW;
-          const nearY = (v - signY * cv) / patchH;
-          const farX = (u + signX * (cu - shift)) / (patchW * .88);
-          const farY = (v + signY * cv) / patchH;
-          const near = nearX * nearX + nearY * nearY, far = farX * farX + farY * farY;
-          const neck = (d - 1.8 * resolution) / grazingWidth;
-          const lobe = Math.exp(-neck * neck) * (.38 + .62 * Math.abs(nx * ny) * 2);
-          const hot = (.74 * Math.exp(-near) + .26 * Math.exp(-.45 * near)) * (.39 + .61 * front);
-          const echo = Math.exp(-far) * (.41 + .59 * back);
-          white += reflect * R.patches / 100 * lobe * (1.12 * hot + .56 * echo);
-          color = lobe * R.iridescence / 100 * reflect * (hot - .63 * echo);
+      if (blurRadius) {
+        const up = (Math.max(0, p1 - blurRadius) * w + p0) * 4;
+        const down = (Math.min(h - 1, p1 + blurRadius) * w + p0) * 4;
+        const left = (p1 * w + Math.max(0, p0 - blurRadius)) * 4, right = (p1 * w + Math.min(w - 1, p0 + blurRadius)) * 4;
+        R += ((source[up] + source[down] + source[left] + source[right]) * .25 - R) * blurMix;
+        G += ((source[up + 1] + source[down + 1] + source[left + 1] + source[right + 1]) * .25 - G) * blurMix;
+        B += ((source[up + 2] + source[down + 2] + source[left + 2] + source[right + 2]) * .25 - B) * blurMix;
+      }
+        let white=tint,red=0,blue=0,dark=.43*s.edge*.01*backside*rim;
+        if(d<4.6&&edging>0){
+          // Facing side only, with a smooth taper inward. The same directional
+          // normal responds to light heading; it is not a white painted stroke.
+          const q=clamp(1-d/(1.7+1.8*roll));white+=.53*edging*keyside**3.0*q*q;
         }
-      }
-      const shade = clamp((.30 * R.edge / 100 * back + R.shadow / 100 * .045 * back ** 2) * sq);
-      const alpha = clamp(d + .5);
-      const wr = clamp(white);
-      out[idx] += ((red + (reflectRed - red) * wr - 25 * color) * (1 - shade) - out[idx]) * alpha;
-      out[idx + 1] += ((green + (reflectGreen - green) * wr + 7 * color) * (1 - shade) - out[idx + 1]) * alpha;
-      out[idx + 2] += ((blue + (reflectBlue - blue) * wr + 57 * color) * (1 - shade) - out[idx + 2]) * alpha;
+        if(eref>0&&(d<dep+5||orb)){
+          const narrow=Math.exp(-Math.pow((d-.65)/hw,2));
+          const neck=Math.exp(-Math.pow((d-1.25-.7*roll)/nxWidth,2));
+          const b1=Math.pow((u-u1)/(pw*(1.30-.50*gloss)),2)+Math.pow((v-v1)/ph,2);
+          const b2=Math.pow((u-u2)/(pw*.67),2)+Math.pow((v-v2)/(ph*.75),2);
+          const spot=Math.exp(-b1)*(.22+.78*keyside*keyside);
+          const spark=Math.exp(-b2)*(.23+.77*backside);
+          let front=spot,back=spark;
+          if(!orb&&Math.abs(u)>.60&&Math.abs(v)>.62){
+            const aSign=lx>=0?1:-1,bSign=ly>=0?1:-1;
+            const c1=Math.pow((u-aSign*(cu+wander))/cw,2)+Math.pow((v-bSign*cv)/ch,2);
+            const c2=Math.pow((u+aSign*(cu-wander))/(cw*.84),2)+Math.pow((v+bSign*cv)/(ch*.94),2);
+            const curved=.45+.55*Math.abs(nx*ny)*2;
+            // Gaussian core for a sharp glint and longer, soft skirt. Both
+            // remain wrapped around the continuous rounded-corner normal.
+            front+=1.54*(.72*Math.exp(-c1)+.28*Math.exp(-c1*.39))*curved*(.40+.60*keyside);
+            back+=.98*(.69*Math.exp(-c2)+.31*Math.exp(-c2*.44))*curved*(.37+.63*backside);
+          }
+          const hot=neck*(front*(orb?.97:1.12)+back*(orb?.70:.72))*glow*amp;
+          const tip=narrow*(.07+.24*keyside*keyside*keyside)*(.45+.55*amp);
+          white+=eref*(tip+hot);
+          dark=(.43*s.edge*.01)*backside*rim*(1-clamp(hot));
+          red=film*eref*glow*neck*(back*.77-front*.19)*.32;
+          blue=film*eref*glow*neck*(front*.97-back*.16)*.44;
+          if(orb&&glow>0){
+            const uu=u*lx+v*ly+0.04,vv=v*lx-u*ly+.09;
+            const radial=Math.hypot(uu/.73,vv/.69),theta=Math.atan2(vv/.69,uu/.73);
+            const phase=theta<0?theta+TAU:theta;
+            const da=Math.abs(phase-.19);
+            const delta=Math.min(da,TAU-da);
+            if(delta<1.65){
+              const arc=Math.exp(-Math.pow((radial-.77)/(.033+size*.009),2)-Math.pow(delta/(.48+size*.66),4));
+              const sheen=.32*Math.exp(-Math.pow((radial-.80)/.083,2)-Math.pow(delta/.76,2));
+              white+=eref*glow*(arc*det+sheen);blue+=film*arc*.22;
+            }
+            const dz=Math.pow((uu-.50)/.075,2)+Math.pow((vv+.34)/.067,2);
+            white+=1.31*eref*glow*Math.exp(-dz);
+          }
+        }
+        white=clamp(white);
+        const alpha = clamp(d + .5);
+        out[j] += ((R + (249 - R) * white) * (1 - dark) + 255 * red + warm * (9 + 20 * rim) - out[j]) * alpha;
+        out[j+1] += ((G + (253 - G) * white) * (1 - dark) + 48 * (blue + red) + warm * (2 + 5 * rim) - out[j+1]) * alpha;
+        out[j+2] += ((B + (255 - B) * white) * (1 - dark) + 255 * blue - warm * (12 + 22 * rim) - out[j+2]) * alpha;
     }
   }
 }
@@ -212,7 +225,8 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       if (document.hidden || !shell.isConnected) return;
       const reduced = explicit.motion === "reduce" || media[3].matches;
       const seconds = lastAdvanced ? Math.min((now - lastAdvanced) / 1000, .25) : .14;
-      phase += seconds * R.speed / 100;
+      const appearance = appearanceRecipe ? { ...R, ...appearanceRecipe } : R;
+      phase += seconds * appearance.speed / 100;
       lastAdvanced = now;
       const bounds = shell.getBoundingClientRect();
       const top = Math.max(0, -bounds.top), left = Math.max(0, -bounds.left);
@@ -228,7 +242,8 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       const originX = bounds.left + left, originY = bounds.top + top;
       const elements = new Map<HTMLElement, Surface>();
       for (const element of shell.querySelectorAll<HTMLElement>(lensSelector)) {
-        if (elements.size >= 24) break;
+        if (elements.size >= 32) break;
+        if (element.closest("dialog, .ae-popover, .ae-toast, .ios-dock, .ae-surface[data-material=overlay]")) continue;
         const bb = element.getBoundingClientRect();
         if (bb.width < 2 || bb.height < 2 || bb.right <= originX || bb.bottom <= originY
           || bb.left >= originX + width || bb.top >= originY + height) continue;
@@ -236,17 +251,16 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         const fanButton = element.closest<HTMLElement>(".ae-orbit-choice");
         if (style.visibility !== "visible" || style.display === "none" || +style.opacity === 0
           || (fanButton && +getComputedStyle(fanButton).opacity < .98)) continue;
-        const corner = Number.parseFloat(style.borderTopLeftRadius);
-        const kind = element.matches(".ae-file-slot") ? "stage" :
-          element.matches(".ae-panel, .ae-transfer-dock") ? "panel" : "control";
+        const ordinaryCard = element.matches(".ae-panel, .ae-surface[data-material=content], .ae-surface[data-material=raised]");
+        const corner = ordinaryCard ? appearance.radius : Number.parseFloat(style.borderTopLeftRadius);
+        const kind = element.matches(".ae-file-slot, [data-ae-lens-role=orb], .ae-spatial-glyph") ? "stage" :
+          !element.matches(".ae-button, .ae-nav-indicator, [data-ae-lens-role=control]:not(.ae-surface)") ? "panel" : "control";
         elements.set(element, { x: (bb.left - originX) * scale, y: (bb.top - originY) * scale,
           width: bb.width * scale, height: bb.height * scale,
           radius: Math.min(Number.isFinite(corner) ? corner : R.radius, bb.height / 2, bb.width / 2) * scale, kind });
       }
       try {
         const light = explicit.appearance === "light";
-        const preset = glassAppearanceRecipes[light ? "light" : "dark"];
-        const appearance = appearanceRecipe ? { ...preset, ...appearanceRecipe } : preset;
         const rift = Array.from(shell.querySelectorAll<HTMLElement>(".ae-transfer-space:not([hidden])"))
           .find(space => space.querySelector(".ae-workspace-view:not([hidden])"));
         const status = rift?.dataset;
@@ -257,15 +271,25 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
           || Math.abs(target.y - atmosphere.y) > .015;
         atmosphere = reduced ? target : blendAtmosphere(atmosphere, target, seconds);
         const t = reduced ? 0 : phase;
-        const intensity = atmosphereIntensity(!!rift, atmosphere.energy, light) * clamp(appearance.ribbonIntensity, .25, 1.35);
-        paintAtmosphere(paint, pw, ph, t, light, atmosphere, intensity, clamp(appearance.exposure, 50, 150));
+        const intensity = atmosphereIntensity(!!rift, atmosphere.energy, light);
+        paintAtmosphere(paint, pw, ph, t, light, atmosphere, intensity, light ? 100 : 108);
         const source = paint.getImageData(0, 0, pw, ph).data;
+        const exposure = clamp(appearance.exposure, 50, 150) / 100;
+        if (exposure !== 1) for (let j = 0; j < source.length; j += 4) {
+          source[j] *= exposure; source[j+1] *= exposure; source[j+2] *= exposure;
+        }
         if (!output) output = ctx.createImageData(pw, ph);
         output.data.set(source);
         // Do not compound white reflections in nested controls: each surface
         // works against the original scene; later DOM children own their rims.
         for (const box of elements.values()) shadeLens(output.data, source, pw, ph, box, scale, t, appearance);
         ctx.putImageData(output, 0, 0);
+        const shadow = clamp(appearance.shadow / 100);
+        shell.style.setProperty("--ae-lab-radius", `${appearance.radius}px`);
+        shell.style.setProperty("--ae-lab-shadow-y", `${2 + 4 * shadow}px`);
+        shell.style.setProperty("--ae-lab-shadow-blur", `${4 + 5 * shadow}px`);
+        shell.style.setProperty("--ae-lab-card-shadow", String(.37 * shadow));
+        shell.style.setProperty("--ae-lab-control-shadow", String(.51 * shadow));
         tag(new Set(elements.keys()));
         if (canvas.hidden) canvas.hidden = false;
         shell.dataset.aeOptics = "ready";
