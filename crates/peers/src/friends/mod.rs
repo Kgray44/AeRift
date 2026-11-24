@@ -8,8 +8,8 @@ mod payload;
 mod wire;
 
 pub use authority::{
-    DeviceEnrollment, FriendAcceptance, FriendApproval, FriendAuthority, FriendInvitation,
-    FriendRecord, PersonId,
+    DelegatedFriendMember, DelegatedReview, DelegatedRoute, DeviceEnrollment, FriendAcceptance,
+    FriendApproval, FriendAuthority, FriendInvitation, FriendRecord, PersonId,
 };
 pub use book::{
     FriendBook, FriendClaim, FriendContactView, FriendControlObject, FriendDecision,

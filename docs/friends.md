@@ -154,3 +154,93 @@ This iteration addresses **one chosen authorized device** rather than
 discovering or fanning out to an unavailable roster. Person-targeted payload
 selection, folders/objects, mobile and hands-free flow require further product
 integration. Native hosted proof and physical/network coverage are separate.
+
+### Selecting a person instead of a device
+
+The shared private file-window interface can target a verified person's roster
+instead of a single device. It requires explicit supplied routes for already
+enrolled device IDs and rejects missing, duplicate or foreign device IDs.
+There is no directory, route scanning, or fallback trust. One immutable offer
+ID and manifest are reused across all reached devices; a transport-scoped
+delivery ticket and an authenticated, explicitly accepted prompt are required
+on each. The sender's protected book commits a single winner. On rechecking
+the original pinned issuer, losers see withdrawal, never the winner identity.
+Revoking the winning device prevents release without selecting a replacement.
+A new transfer requires a new offer. The Windows explicit-device flow keeps
+its existing contract.
+
+The shared adapter is verified with three distinct TLS device key pairs and
+two enrolled recipient endpoints competing for one award. It does not activate
+a second route architecture or add new listener roles. The product still needs
+native multi-device enrollment/provisioning and a page for supplying all
+verified routes and reconciling withdrawn prompts, plus appropriate protected
+person storage on mobile and install/device qualification. No app claims to
+offer start-to-finish person targeting on this change alone.
+
+### Delegated device enrollment (shared/host adapter, not a live control)
+
+The root's protected Friends book retains the original signed friendship
+transcript for new friendships. A root authority can attach a fresh,
+relationship-specific enrollment for one explicitly verified device
+fingerprint; the exported capsule contains signatures and public identities
+only, not the root private key. Old records without a preserved transcript
+cannot issue these capsules and must not invent consent.
+
+The original verified friend's device separately reviews the expected exact
+device and authorizes a private one-time ticket for the same signed grant.
+The new device must prove TLS possession to that same pinned peer; the
+request binds the full approved grant, not just the ticket and device ID.
+Only after the remote grant responds successfully does the new device
+atomically seal the capsule and reciprocal contact in its independent
+platform-protected book. Opening that book later checks the local TLS
+identity and historical transcript. Expiration limits onboarding, not the
+use of a previously authorized book; the remote book continuously enforces
+device revocation and can reject a revoked device even if the device
+retains a local copy. The remote operation permits exact idempotent retry
+by the same TLS device after a lost response during the approval window;
+local durable enrollment can commit only once and remote replay cannot
+recreate a revoked grant. No Nearby, My Devices or Remote grants are added.
+
+Protected mobile member-store wiring remains disabled pending host qualification.
+
+On Windows, the normal Friends page now has a three-role **Enroll another
+device for a friendship** ceremony. The new device shows its local TLS
+fingerprint; the friend's original device and the person's original device
+each use the existing verified friendship. The owner compares the exact
+new-device fingerprint and approves a signed delegation capsule. The friend
+imports it and compares the intended fingerprint, explicitly chooses a
+reachable private IPv4 LAN/VPN address, and gives the new device a signed,
+time-limited route and one-time ticket. The new device independently reviews
+all fingerprints, confirms, and commits only after the exact original peer
+authenticates the new device and acknowledges that exact delegation.
+
+Native IPC review is read-only and stores one bounded, single-use opaque
+review ID bound to the chosen role and exact reviewed row or capsule.
+Native confirmation rechecks scope, expiry, role, local and remote identities,
+and signed route. No normal renderer action passes a path, key, role override
+or raw route after the new device approves. The only listener starts after a
+friend approves and is bound to the explicitly chosen private interface; it
+has the same expiry as the delegated grant. No external service is contacted.
+
+A successful Windows enrollment is saved in a separate delegated profile
+with no person signing key. The existing primary transfer flow continues
+to be the default; import never silently switches it. The iOS and Android app do not expose the ceremony:
+Keychain/Keystore member-store atomicity, identity handle access, native
+lifecycle, and installed-device qualification are outstanding.
+
+A Windows user can explicitly select a valid delegated friendship for a single
+Friends file window; the primary profile is still the default, and closing
+the window does not change which profile the app uses for enrollment, Nearby,
+or general Remote. The delegated book permits only the originally pinned
+friend and never exposes root operations or person-route fan-out. Its received
+files go to the separate `FriendsMemberReceived` folder.
+
+In a primary Windows Friends window, selecting a contact with at least two
+individually enrolled devices exposes **This person, first device to accept**.
+Provide at least two privately verified offer/payload routes. The sender still
+chooses a file using the native picker; only consent metadata goes to each
+device. The protected book selects at most one winner and the sender must
+explicitly release payload to the winning device. A losing device can check
+withdrawal with the original issuer. A revoked winning device cannot cause
+fallback bytes to any other device. Windows host qualification remains
+separate from shared TLS tests, and no mobile capability is implied.

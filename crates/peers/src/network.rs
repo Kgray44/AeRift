@@ -21,6 +21,7 @@ use crate::{
     Device, Identity, Pairing, Platform, TrustStore,
     nearby::{self, Nearby, NearbyChallenge, NearbyPending},
     pairing::{PairRequest, RedeemCode},
+    remote_folder::{self, RemoteFolderIngress},
 };
 
 /// An explicitly installed native Nearby Ambient hook. No generic transfer
@@ -288,7 +289,8 @@ impl PeerNode {
         listener: TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), TransferError> {
-        self.serve_scoped(listener, shutdown, None, None).await
+        self.serve_scoped(listener, shutdown, None, None, None)
+            .await
     }
 
     /// Explicitly attach native Nearby discovery policy to the legacy LAN lane.
@@ -302,7 +304,7 @@ impl PeerNode {
         if self.nearby.is_none() {
             return Err(ErrorCode::UnsupportedVersion.into());
         }
-        self.serve_scoped(listener, shutdown, Some(Arc::new(is_nearby)), None)
+        self.serve_scoped(listener, shutdown, Some(Arc::new(is_nearby)), None, None)
             .await
     }
 
@@ -316,7 +318,26 @@ impl PeerNode {
         if !matches!(self.lane, Lane::Nearby) || self.nearby.is_none() {
             return Err(ErrorCode::UnsupportedVersion.into());
         }
-        self.serve_scoped(listener, shutdown, Some(Arc::new(is_nearby)), Some(ambient))
+        self.serve_scoped(
+            listener,
+            shutdown,
+            Some(Arc::new(is_nearby)),
+            Some(ambient),
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn serve_with_folders(
+        &self,
+        listener: TcpListener,
+        shutdown: CancellationToken,
+        folders: Arc<RemoteFolderIngress>,
+    ) -> Result<(), TransferError> {
+        if !matches!(self.lane, Lane::Remote) {
+            return Err(ErrorCode::UnsupportedVersion.into());
+        }
+        self.serve_scoped(listener, shutdown, None, None, Some(folders))
             .await
     }
 
@@ -326,11 +347,24 @@ impl PeerNode {
         shutdown: CancellationToken,
         is_nearby: Option<Arc<dyn Fn(PeerId, SocketAddr) -> bool + Send + Sync>>,
         ambient: Option<NearbyAmbientHook>,
+        folders: Option<Arc<RemoteFolderIngress>>,
     ) -> Result<(), TransferError> {
         let lane = self.lane;
+        // Dedicated intake capabilities are never attached across lanes or
+        // simultaneously; ordinary file listeners need neither.
+        if (is_nearby.is_some() && !matches!(lane, Lane::Nearby))
+            || (ambient.is_some() && is_nearby.is_none())
+            || (folders.is_some()
+                && (!matches!(lane, Lane::Remote) || ambient.is_some() || is_nearby.is_some()))
+        {
+            return Err(ErrorCode::UnsupportedVersion.into());
+        }
         let nearby = is_nearby.zip(self.nearby.clone());
         let mut config = self.identity.server_config()?;
         config.alpn_protocols = vec![lane.alpn().to_vec()];
+        if folders.is_some() {
+            config.alpn_protocols.push(remote_folder::ALPN.to_vec());
+        }
         let tls = TlsAcceptor::from(Arc::new(config));
         let connections = Arc::new(Semaphore::new(48));
         let unknown = Arc::new(Semaphore::new(8));
@@ -344,6 +378,7 @@ impl PeerNode {
                     self.receiver.expire_offers();
                     self.pairing.expire_invitation();
                     if let Some(nearby) = &self.nearby { nearby.expire(); }
+                    if let Some(folders) = &folders { folders.expire(); }
                 }
                 _ = tasks.join_next(), if !tasks.is_empty() => {}
                 next = listener.accept() => {
@@ -355,13 +390,23 @@ impl PeerNode {
                     let unknown = Arc::clone(&unknown);
                     let nearby = nearby.clone();
                     let ambient = ambient.clone();
+                    let folders = folders.clone();
                     tasks.spawn(async move {
                         let _permit = permit;
                         let Ok(Ok(stream)) = timeout(CONNECT_TIMEOUT, tls.accept(socket)).await else { return };
                         let session = stream.get_ref().1;
-                        if session.alpn_protocol() != Some(lane.alpn()) { return; }
+                        let folder_protocol = session.alpn_protocol() == Some(remote_folder::ALPN);
+                        if !folder_protocol && session.alpn_protocol() != Some(lane.alpn()) { return; }
                         let Some(leaf) = session.peer_certificates().and_then(|chain| chain.first()) else { return };
                         let peer = PeerId::from_tls_leaf(leaf.as_ref());
+                        let local = pairing.device().id;
+                        let folder_binding = if folder_protocol {
+                            if folders.is_none() || !pairing.is_trusted(peer) { return; }
+                            match session.export_keying_material([0; 32], remote_folder::EXPORTER, None) {
+                                Ok(binding) => Some(binding),
+                                Err(_) => return,
+                            }
+                        } else { None };
                         let trusted = pairing.is_trusted(peer);
                         let _untrusted = if trusted {
                             None
@@ -379,8 +424,14 @@ impl PeerNode {
                             let pairing = Arc::clone(&pairing);
                             let ambient = ambient.clone();
                             let receiver = Arc::clone(&receiver);
+                            let folders = folders.clone();
                             async move {
-                                let response = if nearby_request {
+                                let response = if let Some(binding) = folder_binding {
+                                    match (folders, pairing.trust(peer)) {
+                                        (Some(folders), Some(grant)) => folders.route(request, peer, local, binding, grant).await,
+                                        _ => error(ErrorCode::PeerUntrusted.into()),
+                                    }
+                                } else if nearby_request {
                                     match nearby {
                                         Some((is_nearby, state)) if is_nearby(peer, source) =>
                                             nearby_route(request, peer, &pairing, &state, nearby_secret).await,
@@ -482,6 +533,24 @@ impl PeerNode {
             tls: TlsConnector::from(Arc::new(config)),
             trust,
         })
+    }
+
+    pub(crate) fn folder_endpoint(
+        &self,
+        addresses: &[SocketAddr],
+        peer: PeerId,
+    ) -> Result<PinnedEndpoint, TransferError> {
+        if !matches!(self.lane, Lane::Remote) {
+            return Err(ErrorCode::UnsupportedVersion.into());
+        }
+        let grant = self.pairing.trust(peer).ok_or(ErrorCode::PeerUntrusted)?;
+        pinned_endpoint(
+            &self.identity,
+            addresses,
+            peer,
+            Some(grant),
+            remote_folder::ALPN,
+        )
     }
 
     fn endpoint(
@@ -714,7 +783,7 @@ impl PinnedEndpoint {
     }
 }
 
-type Reply = Response<Full<Bytes>>;
+pub(crate) type Reply = Response<Full<Bytes>>;
 
 async fn route(
     request: Request<Incoming>,
@@ -822,7 +891,7 @@ async fn pair_call<T: serde::de::DeserializeOwned>(
     pair_call_bytes(socket, endpoint.authority(), path, data, duration).await
 }
 
-async fn pair_call_bytes<T: serde::de::DeserializeOwned>(
+pub(crate) async fn pair_call_bytes<T: serde::de::DeserializeOwned>(
     socket: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
     authority: &str,
     path: &str,
@@ -868,7 +937,7 @@ async fn pair_call_bytes<T: serde::de::DeserializeOwned>(
     .map_err(|_| ErrorCode::PairingExpired)?
 }
 
-fn error(failure: TransferError) -> Reply {
+pub(crate) fn error(failure: TransferError) -> Reply {
     let status = match failure.code {
         ErrorCode::PeerUnavailable => StatusCode::NOT_FOUND,
         ErrorCode::PairingExpired => StatusCode::GONE,
@@ -879,7 +948,7 @@ fn error(failure: TransferError) -> Reply {
     reply(status, &failure)
 }
 
-fn reply(status: StatusCode, value: &impl serde::Serialize) -> Reply {
+pub(crate) fn reply(status: StatusCode, value: &impl serde::Serialize) -> Reply {
     let encoded = serde_json::to_vec(value).expect("serializable pairing response");
     Response::builder()
         .status(status)
@@ -993,3 +1062,7 @@ mod route_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "network/remote_folder_qualification.rs"]
+mod remote_folder_qualification;

@@ -62,3 +62,18 @@ test("Windows Ambient capture and its global shortcut respect the native exclusi
   const shortcut = desktop.slice(desktop.indexOf("fn handle_shortcut"), desktop.indexOf("request_pickup()"));
   assert.match(shortcut, /if !app\.state::<AppRuntime>\(\)\.nearby_enabled\(\) \{\s*return;/);
 });
+
+test("folder qualification is gated off by default and never treats an envelope as publication", () => {
+  const native = read("apps/aerift/src-tauri/src/private_remote_app.rs");
+  const dispatch = read("apps/aerift/src-tauri/src/lib.rs");
+  const folder = read("apps/aerift/src-tauri/src/private_remote_folder_mode.rs");
+  const view = read("apps/aerift/src/windows/PrivateRemoteFolders.tsx");
+  assert.match(native, /enable_folders == Some\(true\) && !developer/);
+  assert.match(dispatch, /#\[cfg\(feature = "private-remote-folder-qualification"\)\]\s+private_remote_app::folder_mode::windows_remote_folder_command/);
+  assert.match(folder, /choose_folder\(window\.clone\(\)\)\.await\?/);
+  assert.match(folder, /WindowsFolderDirectory::from_native_selection\(&selected\)/);
+  assert.match(folder, /from_native_selection\(&selected\)[\s\S]*?mode\.ingress\.respond\(key, true\)/);
+  assert.match(folder, /with_completed\(key,[\s\S]*?commit_windows_folder\(/);
+  assert.match(view, /Folder data verified\. Not exported yet\./);
+  assert.match(view, /folder\.destinationRetained/);
+});

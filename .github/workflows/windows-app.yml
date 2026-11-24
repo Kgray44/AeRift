@@ -98,3 +98,67 @@ jobs:
             apps/aerift/src-tauri/target/release/bundle/nsis/*-setup.exe
             ${{ runner.temp }}/aerift-evidence/
           if-no-files-found: error
+
+  private-lanes-qualification:
+    name: Synthetic Remote folder and Friends delegated qualification
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Verify native qualification with temporary synthetic profiles
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'Private lane fixtures require a disposable GitHub-hosted Windows runner.'
+          }
+          function Invoke-QualifiedTests([string[]] $CargoArgs, [string[]] $Expected) {
+            $testLines = & cargo @CargoArgs -- --test-threads=1 2>&1
+            $status = $LASTEXITCODE
+            $testLines | ForEach-Object { Write-Host $_ }
+            if ($status -ne 0) { throw "cargo test failed: $status" }
+            foreach ($name in $Expected) {
+              $pattern = '^test (?:\S+::)?' + [regex]::Escape($name) + ' \.\.\. ok\s*$'
+              if (-not ($testLines -match $pattern)) { throw "Required test did not pass: $name" }
+            }
+          }
+
+          rustup update stable --no-self-update
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          Invoke-QualifiedTests -CargoArgs @('test', '--locked', '-p', 'aerift-transfer',
+            '--features', 'windows-folder-qualification', '--lib', 'folder::windows_handles::tests') -Expected @(
+            'ntfs_typed_completed_receipt_is_verified_staged_and_published_once',
+            'ntfs_folder_child_checks_spent_receipt',
+            'ntfs_no_replace_is_atomic_against_a_competing_leaf_creator',
+            'ntfs_pinned_relative_publish_refuses_junction_collision_and_replay')
+          $app = 'apps/aerift/src-tauri/Cargo.toml'
+          $features = 'private-remote-folder-qualification'
+          Invoke-QualifiedTests -CargoArgs @('test', '--locked', '--manifest-path', $app,
+            '--features', $features, '--lib', 'windows_dpapi_remote_folder_records_survive_store_reconstruction') -Expected @(
+            'windows_dpapi_remote_folder_records_survive_store_reconstruction')
+          Invoke-QualifiedTests -CargoArgs @('test', '--locked', '--manifest-path', $app,
+            '--features', $features, '--lib', 'friends_windows_delegated_profile_reopens_without_a_person_private_key') -Expected @(
+            'friends_windows_delegated_profile_reopens_without_a_person_private_key')
+      - name: Compile the opt-in Windows app without launching or publishing it
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm --workspace @aerift/app run build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          cargo build --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --bin aerift --features private-remote-folder-qualification,tauri/custom-protocol
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git diff --exit-code -- package-lock.json Cargo.lock apps/aerift/src-tauri/Cargo.lock

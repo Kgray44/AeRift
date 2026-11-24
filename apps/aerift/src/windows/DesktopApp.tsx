@@ -12,6 +12,7 @@ import { FriendsWorkspace } from "../FriendsWorkspace";
 import { WindowsFriendsSetup, setupPort, type SetupView } from "./WindowsFriendsSetup";
 import type { FriendsSnapshot } from "@aerift/app-contract/friends";
 import { WindowsFriendsFiles } from "./WindowsFriendsFiles";
+import { WindowsFriendsMember } from "./WindowsFriendsMember";
 import { DeviceTrust } from "../DeviceTrust";
 import { command, nativeAppPort } from "../nativeAppPort";
 import { DesktopHome } from "./DesktopHome";
@@ -264,6 +265,7 @@ export function DesktopApp() {
           <>
             <FriendsWorkspace snapshot={friends} port={setupPort} setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />} />
             <WindowsFriendsFiles contacts={friends.contacts} />
+            <WindowsFriendsMember contacts={friends.contacts} />
           </>}
         {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
           if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);

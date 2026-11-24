@@ -283,3 +283,95 @@ async fn friends_product_file_window_delivers_to_verified_windows_profile_after_
     window_a.stop();
     window_b.stop();
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn friends_windows_delegated_profile_reopens_without_a_person_private_key() {
+    use super::{join_friends_member, open_friends_member};
+    use aerift_peers::{DelegatedRoute, FriendRecord};
+    let (a, b, c) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let (alice, a_book) = open_friends(a.path()).unwrap();
+    let (bob, b_book) = open_friends(b.path()).unwrap();
+    let a_tls = Identity::load_or_create(&WindowsIdentity::new(a.path())).unwrap();
+    let b_tls = Arc::new(Identity::load_or_create(&WindowsIdentity::new(b.path())).unwrap());
+    let c_tls = Identity::load_or_create(&WindowsIdentity::new(c.path())).unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let invite = alice.invite(a_tls.id(), bob.id(), b_tls.id(), now).unwrap();
+    let accept = bob.accept(&invite, a_tls.id(), b_tls.id(), now).unwrap();
+    let approval = alice.confirm(&invite, &accept, b_tls.id(), now).unwrap();
+    a_book
+        .add(
+            FriendRecord::verify(
+                &invite,
+                &accept,
+                &approval,
+                alice.id(),
+                a_tls.id(),
+                b_tls.id(),
+                now,
+            )
+            .unwrap(),
+            now,
+        )
+        .unwrap();
+    b_book
+        .add(
+            FriendRecord::verify(
+                &invite,
+                &accept,
+                &approval,
+                bob.id(),
+                b_tls.id(),
+                a_tls.id(),
+                now,
+            )
+            .unwrap(),
+            now,
+        )
+        .unwrap();
+    let capsule = a_book
+        .delegate_contact(&alice, bob.id(), c_tls.id(), now)
+        .unwrap();
+    let ticket =
+        FriendInviteEndpoint::expect_delegated(&b_tls, &b_book, &capsule, c_tls.id(), now).unwrap();
+    let (listener, routes) = local_listener().await;
+    let wire =
+        DelegatedRoute::sign(&bob, capsule.clone(), c_tls.id(), ticket, routes[0], now).unwrap();
+    assert_eq!(
+        wire.review(c_tls.id(), now).unwrap().friend_device,
+        b_tls.id()
+    );
+    assert!(wire.review(a_tls.id(), now).is_err());
+    let (capsule, signed_route, signed_ticket) = wire.into_parts();
+    assert_eq!((signed_route, signed_ticket), (routes[0], ticket));
+    let stop = CancellationToken::new();
+    let task = tokio::spawn({
+        let (b_tls, b_book, stop) = (b_tls.clone(), b_book.clone(), stop.clone());
+        async move { FriendInviteEndpoint::serve(&b_tls, listener, b_book, stop).await }
+    });
+    let member = join_friends_member(c.path(), &c_tls, capsule, &routes, ticket)
+        .await
+        .unwrap();
+    assert!(member.may_receive_from(bob.id(), b_tls.id()).unwrap());
+    assert!(
+        open_friends_member(c.path(), &c_tls).is_err(),
+        "second writer must not open"
+    );
+    drop(member);
+    let reopened = open_friends_member(c.path(), &c_tls).unwrap();
+    assert!(reopened.may_receive_from(bob.id(), b_tls.id()).unwrap());
+    drop(reopened);
+    assert!(open_friends_member(c.path(), &a_tls).is_err());
+    assert!(c.path().join("friends-member-v1/book.dpapi").is_file());
+    assert!(!c.path().join("friends-member-v1/person.dpapi").exists());
+    assert!(!c.path().join("friends-v1").exists());
+    assert!(WindowsTrust::new(c.path()).load().unwrap().is_empty());
+    stop.cancel();
+    join(task).await;
+}

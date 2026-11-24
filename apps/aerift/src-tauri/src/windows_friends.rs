@@ -26,9 +26,9 @@ use uuid::Uuid;
 pub(crate) struct WindowsFriends(OnceCell<Arc<Host>>);
 pub(crate) struct Host {
     pub(crate) identity: Arc<Identity>,
-    authority: FriendAuthority,
+    pub(crate) authority: FriendAuthority,
     pub(crate) book: Arc<FriendBook>,
-    pub(crate) files: Mutex<Option<Arc<aerift_peers::FriendFileWindow>>>,
+    pub(crate) files: Mutex<Option<crate::windows_friends_files::MountedWindow>>,
     pub(crate) received: std::path::PathBuf,
     active: Mutex<Option<(FriendInvitation, CancellationToken)>>,
 }
@@ -40,14 +40,14 @@ impl Drop for Host {
     }
 }
 
-fn now() -> Result<u64, TransferError> {
+pub(crate) fn now() -> Result<u64, TransferError> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| ErrorCode::InternalError)?
         .as_secs())
 }
 
-fn private_ip(ip: Ipv4Addr) -> bool {
+pub(crate) fn private_ip(ip: Ipv4Addr) -> bool {
     let [a, b, _, _] = ip.octets();
     ip.is_private() || ip.is_loopback() || (a == 100 && (64..=127).contains(&b))
 }

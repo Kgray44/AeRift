@@ -1,4 +1,4 @@
-use super::{DeviceEnrollment, FriendRecord, PersonId};
+use super::{DelegatedFriendMember, DeviceEnrollment, FriendRecord, PersonId};
 use aerift_transfer::{ErrorCode, PeerId, TransferError};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -61,6 +61,8 @@ struct Data {
     enrollments: Vec<admission::PendingEnrollment>,
     #[serde(default)]
     consent_drafts: Vec<admission::RecipientConsent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    member: Option<DelegatedFriendMember>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -70,6 +72,8 @@ struct Friend {
     devices: Vec<PeerId>,
     revoked: Vec<PeerId>,
     receive_allowed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transcript: Option<super::authority::FriendshipTranscript>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -94,6 +98,118 @@ pub struct FriendContactView {
 }
 
 impl FriendBook {
+    /// Read-only validation for a prospective local approval. Never signs.
+    pub fn delegation_candidate(
+        &self,
+        person: PersonId,
+        device: PeerId,
+    ) -> Result<Uuid, TransferError> {
+        let current = self.read()?;
+        if current.member.is_some() {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        let row = current
+            .friends
+            .iter()
+            .find(|f| f.person == person)
+            .ok_or(ErrorCode::PeerUntrusted)?;
+        if row.transcript.is_none() {
+            return Err(ErrorCode::PairingRejected.into());
+        }
+        if row.devices.contains(&device) || row.revoked.contains(&device) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Ok(row.relationship)
+    }
+
+    /// Root-device action after explicit validation of the new device
+    /// fingerprint. This issues signed material, not a friendship or remote grant.
+    pub fn delegate_contact(
+        &self,
+        authority: &super::FriendAuthority,
+        person: PersonId,
+        device: PeerId,
+        now: u64,
+    ) -> Result<DelegatedFriendMember, TransferError> {
+        let current = self.read()?;
+        if current.owner != authority.id() || current.member.is_some() {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        let row = current
+            .friends
+            .into_iter()
+            .find(|entry| entry.person == person)
+            .ok_or(ErrorCode::PeerUntrusted)?;
+        let transcript = row.transcript.ok_or(ErrorCode::PairingRejected)?;
+        if row.revoked.contains(&device) || row.devices.contains(&device) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        let grant = authority.enroll(row.relationship, device, now)?;
+        let member = DelegatedFriendMember::new(
+            transcript.invitation,
+            transcript.acceptance,
+            transcript.approval,
+            grant,
+        );
+        member.record(device, now)?;
+        Ok(member)
+    }
+
+    /// Open a previously joined member profile from an independent protected
+    /// store. No root signing API or secret material is returned to this device.
+    pub fn open_delegated(
+        identity: &crate::Identity,
+        store: Arc<dyn FriendStore>,
+    ) -> Result<Self, TransferError> {
+        let data = store.load()?.ok_or(ErrorCode::PeerUntrusted)?;
+        if data.len() > MAX_STORE_BYTES {
+            return Err(ErrorCode::StorageFailed.into());
+        }
+        let stored: Data = serde_json::from_slice(&data).map_err(|_| ErrorCode::StorageFailed)?;
+        let delegation = stored.member.as_ref().ok_or(ErrorCode::PeerUntrusted)?;
+        let record = delegation.record(identity.id(), delegation.issued())?;
+        if record.owner != stored.owner || !stored.used.contains(&record.nonce) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Self::open(record.owner, store)
+    }
+
+    /// A fresh member store must be protected/locked by the platform. Verify all
+    /// local proof before dialing the original friend's exact pinned device.
+    /// The signed delegation and reciprocal roster row commit in one CAS.
+    pub async fn join_delegated(
+        identity: &crate::Identity,
+        store: Arc<dyn FriendStore>,
+        member: DelegatedFriendMember,
+        routes: &[std::net::SocketAddr],
+        ticket: Uuid,
+    ) -> Result<Self, TransferError> {
+        let now = super::wire::wall_clock()?;
+        let record = member.record(identity.id(), now)?;
+        if store.load()?.is_some() {
+            return Err(ErrorCode::Conflict.into());
+        }
+        FriendInviteEndpoint::prove_exact_device(
+            identity,
+            routes,
+            record.primary,
+            ticket,
+            member.grant().clone(),
+        )
+        .await?;
+        let current = super::wire::wall_clock()?;
+        let book = Self::open(record.owner, store)?;
+        book.mutate(|data| {
+            if data.member.is_some() || !data.used.is_empty() || !data.friends.is_empty() {
+                return Err(ErrorCode::Conflict.into());
+            }
+            Self::add_record(data, record, current)?;
+            data.member = Some(member);
+            Ok(())
+        })?;
+        Ok(book)
+    }
+
     pub fn contacts(&self) -> Result<Vec<FriendContactView>, TransferError> {
         Ok(self
             .read()?
@@ -135,6 +251,7 @@ impl FriendBook {
                 invites: Vec::new(),
                 enrollments: Vec::new(),
                 consent_drafts: Vec::new(),
+                member: None,
             });
         };
         if raw.len() > MAX_STORE_BYTES {
@@ -197,6 +314,7 @@ impl FriendBook {
             devices: vec![friend.primary],
             revoked: Vec::new(),
             receive_allowed: true,
+            transcript: Some(friend.transcript),
         });
         Ok(())
     }

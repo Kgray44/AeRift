@@ -105,6 +105,60 @@ pub async fn serve_scoped_request(
     dispatch(request, peer, receiver, trust, Some(scope)).await
 }
 
+/// One explicit typed folder session over an authenticated, independently
+/// authorized Remote-folder lane. Ordinary v1 and v2 dispatch remain separate.
+/// The host owns the protected admission, local review and folder-only receiver.
+pub async fn serve_admitted_folder_request(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+    admission: &crate::folder::admission::AdmittedFolder,
+) -> Reply {
+    if trust.is_cancelled() || admission.key().peer != peer {
+        return error(ErrorCode::PeerUntrusted.into());
+    }
+    if !receiver.resumable_enabled() {
+        return error(ErrorCode::UnsupportedVersion.into());
+    }
+    let path = request.uri().path();
+    if request.uri().query().is_some() {
+        return error(ErrorCode::InvalidRequest.into());
+    }
+    if path == RESUMABLE_ROUTE {
+        if request.method() != Method::POST {
+            return error(ErrorCode::InvalidRequest.into());
+        }
+        let body = tokio::select! {
+            biased;
+            _ = trust.cancelled() => return error(ErrorCode::PeerUntrusted.into()),
+            result = tokio::time::timeout(Duration::from_secs(10), read_control(request.into_body())) => {
+                match result {
+                    Ok(Ok(body)) => body,
+                    _ => return error(ErrorCode::InvalidRequest.into()),
+                }
+            }
+        };
+        let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
+            return error(ErrorCode::InvalidRequest.into());
+        };
+        if offer != *admission.envelope() {
+            return error(ErrorCode::Conflict.into());
+        }
+        return register_resumable(receiver, peer, offer, trust).await;
+    }
+    let requested = path
+        .strip_prefix(RESUMABLE_ROUTE)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .and_then(|rest| parse_id(rest.split('/').next().unwrap_or("")));
+    if requested != Some(admission.key().id) {
+        return error(ErrorCode::UnsupportedVersion.into());
+    }
+    // The existing receiver checks live peer trust and its own explicit
+    // decision before allocating checkpoint bodies, and again on append.
+    resumable(request, peer, receiver, trust).await
+}
+
 // v2 has its own generic peer consent/checkpoint flow. A scoped caller
 // (currently Friends v1) must never enter that flow without a scoped v2 contract.
 fn resumable_route(path: &str, scoped: bool) -> Result<bool, TransferError> {
@@ -285,6 +339,28 @@ async fn offer(
     }
 }
 
+async fn register_resumable(
+    receiver: Arc<Receiver>,
+    peer: PeerId,
+    offer: Offer,
+    trust: CancellationToken,
+) -> Reply {
+    match tokio::task::spawn_blocking(move || receiver.offer_resumable(peer, offer, &trust))
+        .await
+        .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+    {
+        Ok((created, status)) => json(
+            if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            },
+            &status,
+        ),
+        Err(failure) => error(failure),
+    }
+}
+
 async fn resumable(
     request: Request<Incoming>,
     peer: PeerId,
@@ -308,22 +384,7 @@ async fn resumable(
         let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
             return error(ErrorCode::InvalidRequest.into());
         };
-        return match tokio::task::spawn_blocking(move || {
-            receiver.offer_resumable(peer, offer, &trust)
-        })
-        .await
-        .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
-        {
-            Ok((created, status)) => json(
-                if created {
-                    StatusCode::CREATED
-                } else {
-                    StatusCode::OK
-                },
-                &status,
-            ),
-            Err(failure) => error(failure),
-        };
+        return register_resumable(receiver, peer, offer, trust).await;
     }
     let Some(rest) = request
         .uri()

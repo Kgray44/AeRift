@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PrivateRemoteFolders } from "./PrivateRemoteFolders";
 import { invoke } from "@tauri-apps/api/core";
 
 type Device = { id: string; name: string; platform: string };
@@ -7,6 +8,7 @@ type Offer = {
   status: { state: string; bytesTransferred: number };
 };
 type Snapshot = {
+  folderQualification?: boolean; foldersActive?: boolean;
   active: boolean; endpoint: string; identity: string | null;
   peers: Device[]; pairing: { id: string; peer: Device } | null; offers: Offer[];
 };
@@ -14,6 +16,7 @@ type Snapshot = {
 export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [permission, setPermission] = useState(false);
+  const [enableFolders, setEnableFolders] = useState(false);
   const [busy, setBusy] = useState(false);
   const [peerId, setPeerId] = useState("");
   const [invite, setInvite] = useState("");
@@ -76,8 +79,13 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
             {product ? "Start listening at this exact address on my private VPN."
               : "This endpoint belongs to an already-authorized private test overlay. I will use synthetic files only."}
           </label>
+          {product && snapshot?.folderQualification && <label>
+            <input type="checkbox" checked={enableFolders}
+              onChange={(event) => setEnableFolders(event.target.checked)} />
+            Enable private folder qualification on this VPN listener for this session.
+          </label>}
           <p><button type="button" disabled={!permission || !snapshot || busy}
-            onClick={() => void operation(() => invoke("private_remote_start", { confirmed: permission }))}>
+            onClick={() => void operation(() => invoke("private_remote_start", { confirmed: permission, enableFolders: product && enableFolders }))}>
             {product ? "Start Remote" : "Start private receiver"}
           </button></p>
         </section>
@@ -167,6 +175,7 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
               }}>Choose file to send</button>
             <p role="status">{outgoingMessage}</p>
           </section>}
+          {product && snapshot.foldersActive && <PrivateRemoteFolders peers={snapshot.peers} endpoint={targetEndpoint} />}
           <section aria-labelledby="remote-peers-heading">
             <h2 id="remote-peers-heading">Authorized Remote devices</h2>
             <p>Saved authorization only. There is no discovery or online indicator.</p>

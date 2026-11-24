@@ -63,6 +63,8 @@ pub(super) struct RecipientConsent {
 struct InviteControl {
     nonce: Uuid,
     consent: Option<FriendAcceptance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grant: Option<DeviceEnrollment>,
 }
 
 impl FriendInviteEndpoint {
@@ -144,6 +146,7 @@ impl FriendInviteEndpoint {
             InviteControl {
                 nonce: invite.id(),
                 consent: Some(proof),
+                grant: None,
             },
             ALPN,
         )
@@ -272,6 +275,7 @@ impl FriendInviteEndpoint {
             InviteControl {
                 nonce: invite.id(),
                 consent: None,
+                grant: None,
             },
             ALPN,
         )
@@ -351,6 +355,23 @@ impl FriendInviteEndpoint {
         })
     }
 
+    /// Only the original verified friend's device may approve this portable
+    /// enrollment. Caller obtains the expected fingerprint privately and
+    /// passes it following a distinct user approval.
+    pub fn expect_delegated(
+        identity: &Identity,
+        book: &FriendBook,
+        member: &super::super::DelegatedFriendMember,
+        expected_device: PeerId,
+        now: u64,
+    ) -> Result<Uuid, TransferError> {
+        let record = member.record(expected_device, now)?;
+        if record.primary != identity.id() {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Self::expect_device(identity, book, member.grant().clone(), now)
+    }
+
     /// Prove possession of the exact locally pre-authorized new certificate.
     pub async fn prove_device(
         identity: &Identity,
@@ -366,6 +387,29 @@ impl FriendInviteEndpoint {
             InviteControl {
                 nonce: ticket,
                 consent: None,
+                grant: None,
+            },
+            ALPN,
+        )
+        .await
+    }
+
+    pub(super) async fn prove_exact_device(
+        identity: &Identity,
+        routes: &[SocketAddr],
+        receiver: PeerId,
+        ticket: Uuid,
+        grant: DeviceEnrollment,
+    ) -> Result<(), TransferError> {
+        scoped_client(
+            identity,
+            routes,
+            receiver,
+            ENROLL,
+            InviteControl {
+                nonce: ticket,
+                consent: None,
+                grant: Some(grant),
             },
             ALPN,
         )
@@ -411,7 +455,7 @@ async fn dispatch(
     let Ok(wire) = serde_json::from_slice::<InviteControl>(&data.to_bytes()) else {
         return deny(ErrorCode::InvalidRequest);
     };
-    if submit != wire.consent.is_some() {
+    if submit != wire.consent.is_some() || (!enroll && wire.grant.is_some()) {
         return deny(ErrorCode::InvalidRequest);
     }
     let Ok(now) = wall_clock() else {
@@ -429,6 +473,13 @@ async fn dispatch(
                 })
                 .ok_or(ErrorCode::PairingRejected)?;
             let row = state.enrollments[idx].clone();
+            if wire
+                .grant
+                .as_ref()
+                .is_some_and(|expected| expected != &row.grant)
+            {
+                return Err(ErrorCode::PairingRejected.into());
+            }
             row.grant.verify(authenticated, now)?;
             if row.committed {
                 if state.friends.iter().any(|f| {

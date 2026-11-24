@@ -2,8 +2,8 @@
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
 use aerift_transfer::{
-    ErrorCode, IncomingTransfer, PeerId, ReceiveLimits, Receiver, Sender, Status, TransferError,
-    TransferKey,
+    Connector, ErrorCode, IncomingTransfer, PeerId, ReceiveLimits, Receiver, Sender, Status,
+    TransferError, TransferKey,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -248,6 +248,96 @@ impl RemotePeerNode {
         self.peer.serve(listener, shutdown).await
     }
 
+    /// Attach folder-specific ingress to the same explicitly authorized
+    /// Remote listener, but never to Nearby or the ordinary file protocol.
+    /// Installed hosts should pass no ingress until native export qualification.
+    pub async fn serve_with_folders(
+        &self,
+        listener: TcpListener,
+        shutdown: CancellationToken,
+        folders: Arc<crate::RemoteFolderIngress>,
+    ) -> Result<(), TransferError> {
+        let address = listener.local_addr().map_err(|_| ErrorCode::NetworkError)?;
+        validate_private_routes(&[address])?;
+        if folders.uses_storage(self.receiver.staging_directory()) {
+            return Err(ErrorCode::Conflict.into());
+        }
+        self.peer
+            .serve_with_folders(listener, shutdown, folders)
+            .await
+    }
+
+    /// Sends an explicitly prepared directory to a pinned Remote device
+    /// only on the folder ALPN; no fallback to file or Nearby transport.
+    /// Completion here is the authenticated envelope receipt, not export.
+    pub async fn send_folder(
+        &self,
+        routes: &[SocketAddr],
+        peer: PeerId,
+        folder: &aerift_transfer::folder::PreparedFolder,
+        id: Uuid,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
+        use crate::{network::pair_call_bytes, remote_folder};
+        use aerift_transfer::{ambient::ReceiverCapabilities, folder::admission::FolderCapability};
+        validate_private_routes(routes)?;
+        let endpoint = self.peer.folder_endpoint(routes, peer)?;
+        let local = self.device().id;
+        let grant = endpoint.trust_revoked().ok_or(ErrorCode::PeerUntrusted)?;
+        let negotiate = async {
+            let cap: FolderCapability = pair_call_bytes(
+                endpoint.connect().await?,
+                endpoint.authority(),
+                remote_folder::CAPABILITY,
+                Vec::new(),
+                Duration::from_secs(10),
+            )
+            .await?;
+            let stream = endpoint.connect().await?;
+            let binding = stream
+                .get_ref()
+                .1
+                .export_keying_material([0; 32], remote_folder::EXPORTER, None)
+                .map_err(|_| ErrorCode::PeerUntrusted)?;
+            let body = folder.encode_typed_offer(&cap, id, local, peer, binding)?;
+            let admitted: bool = pair_call_bytes(
+                stream,
+                endpoint.authority(),
+                remote_folder::OFFER,
+                body,
+                Duration::from_secs(10),
+            )
+            .await?;
+            if !admitted {
+                return Err(ErrorCode::PeerUntrusted.into());
+            }
+            Ok::<_, TransferError>(())
+        };
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ErrorCode::Cancelled.into()),
+            _ = grant.cancelled() => return Err(ErrorCode::PeerUntrusted.into()),
+            result = negotiate => result?,
+        }
+        let sender = Sender::new(
+            endpoint,
+            Duration::from_secs(120),
+            Duration::from_secs(1800),
+        );
+        folder
+            .send_over(
+                &sender,
+                id,
+                ReceiverCapabilities {
+                    object_manifest_v1: true,
+                },
+                cancel,
+                progress,
+            )
+            .await
+    }
+
     pub fn subscribe_transfers(&self) -> watch::Receiver<u64> {
         self.receiver.subscribe()
     }
@@ -259,6 +349,33 @@ impl RemotePeerNode {
     /// Each incoming Remote offer needs a separate, deliberate decision.
     pub fn respond(&self, key: TransferKey, accept: bool) -> Result<Status, TransferError> {
         self.receiver.respond(key, accept)
+    }
+
+    /// Enter private staging only for a completed Remote v2 receipt. The
+    /// host must independently negotiate the admitted folder representation.
+    pub fn stage_resumable_folder(
+        &self,
+        key: TransferKey,
+        capability: aerift_transfer::ambient::ReceiverCapabilities,
+        scratch: &std::path::Path,
+        cancel: &CancellationToken,
+    ) -> Result<aerift_transfer::folder::StagedFolder, TransferError> {
+        self.receiver
+            .stage_resumable_folder(key, capability, scratch, cancel)
+    }
+
+    /// Publish a verified Remote folder on a qualified Linux profile only.
+    /// Caller must supply the native-selected destination and fixed profile ledger.
+    #[cfg(target_os = "linux")]
+    pub fn commit_resumable_folder(
+        &self,
+        key: TransferKey,
+        capability: aerift_transfer::ambient::ReceiverCapabilities,
+        destination: aerift_transfer::folder::FolderExport<'_>,
+        cancel: &CancellationToken,
+    ) -> Result<String, TransferError> {
+        self.receiver
+            .commit_resumable_folder(key, capability, destination, cancel)
     }
 
     pub fn cancel(&self, key: TransferKey) -> Result<Status, TransferError> {

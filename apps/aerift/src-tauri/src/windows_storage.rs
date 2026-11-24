@@ -133,6 +133,35 @@ pub(crate) fn open_friends(
     Ok((authority, book))
 }
 
+/// Member enrollment is isolated from the existing root (and its signing key).
+/// No normal product startup calls either function until enrollment UX is qualified.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) async fn join_friends_member(
+    directory: &Path,
+    identity: &aerift_peers::Identity,
+    capsule: aerift_peers::DelegatedFriendMember,
+    routes: &[std::net::SocketAddr],
+    ticket: uuid::Uuid,
+) -> Result<Arc<FriendBook>, TransferError> {
+    let store = Arc::new(WindowsFriendStore::new(
+        &directory.join("friends-member-v1"),
+    )?);
+    FriendBook::join_delegated(identity, store, capsule, routes, ticket)
+        .await
+        .map(Arc::new)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn open_friends_member(
+    directory: &Path,
+    identity: &aerift_peers::Identity,
+) -> Result<Arc<FriendBook>, TransferError> {
+    let store = Arc::new(WindowsFriendStore::new(
+        &directory.join("friends-member-v1"),
+    )?);
+    FriendBook::open_delegated(identity, store).map(Arc::new)
+}
+
 /// Keep the OS-held lock alive until every reference to the book is dropped.
 struct WindowsFriendStore {
     _profile_lock: File,
