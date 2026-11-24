@@ -573,3 +573,132 @@
 @media (prefers-contrast: more), (forced-colors: active) {
   .ae-theme[data-ae-theme="glass"] .ae-glass-fallback { display: none; }
 }
+
+/* GLASS material hierarchy: a quiet field, integrated content, a localized
+   optical accent and elevated native-backed overlays. The sampled renderer
+   makes the highlights; style provides only the legibility floor. */
+.ae-theme[data-ae-theme="glass"] {
+  --ae-lens-read: rgb(15 25 43 / .19);
+  --ae-dock-read: rgb(13 22 39 / .68);
+  --ae-float-top: rgb(232 246 255 / .14);
+  --ae-float-return: rgb(150 177 255 / .11);
+  --ae-structure: rgb(29 43 66 / .18);
+}
+.ae-theme[data-ae-theme="glass"][data-appearance="light"] {
+  --ae-lens-read: rgb(248 250 255 / .22);
+  --ae-dock-read: rgb(249 250 255 / .75);
+  --ae-float-top: rgb(255 255 255 / .89);
+  --ae-float-return: rgb(131 156 213 / .19);
+  --ae-structure: rgb(233 238 251 / .43);
+}
+.ae-theme[data-ae-theme="glass"] .ae-glass-fallback { opacity: .45; }
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ae-main {
+  /* Heading and controls remain regular DOM above the sampled field. */
+  min-inline-size: 0;
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] :is(.ae-panel, .ae-transfer-dock, [data-ae-lens-role="control"])[data-ae-lens="sampled"] {
+  background: var(--ae-lens-read);
+  box-shadow: 0 4px 13px color-mix(in srgb, var(--ae-optical-shade) 43%, transparent);
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-orbit-orb[data-ae-lens="sampled"] {
+  border-color: var(--ae-edge);
+  background: var(--ae-lens-read);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--ae-optical-shade) 50%, transparent);
+}
+.ae-theme[data-ae-theme="glass"] .ae-orbit-trigger[aria-expanded="true"] .ae-orbit-current {
+  color: var(--ae-text);
+}
+.ae-theme[data-ae-theme="glass"] .ae-orbit[data-radial="true"] .ae-orbit-label {
+  font-weight: 650;
+}
+.ae-theme[data-ae-theme="glass"] .ae-orbit-surface[data-morphing="true"] .ae-orbit-skin {
+  background-image:
+    radial-gradient(ellipse at 15% 0%, var(--ae-float-top), transparent 42%),
+    radial-gradient(ellipse at 92% 93%, var(--ae-float-return), transparent 34%);
+}
+.ae-theme[data-ae-theme="glass"] .ios-dock {
+  border-color: var(--ae-control-edge);
+  box-shadow: 0 6px 21px color-mix(in srgb, var(--ae-optical-shade) 62%, transparent);
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ios-dock[data-ae-lens="sampled"] {
+  /* The canvas samples the artwork, while this thin native layer separates
+     dock labels from actual scrolled DOM that the canvas cannot sample. */
+  background-color: var(--ae-dock-read);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 19px color-mix(in srgb, var(--ae-optical-shade) 63%, transparent);
+}
+.ae-theme[data-ae-theme="glass"] .ios-dock .ae-nav-indicator[data-ae-lens="sampled"] {
+  background: var(--ae-lens-read);
+  border-color: var(--ae-control-edge);
+  box-shadow: none;
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  :is(.ae-surface[data-material="overlay"], .ae-orbit[data-radial="false"] .ae-orbit-fan) {
+  background-image:
+    radial-gradient(ellipse at 10% -5%, var(--ae-float-top), transparent 37%),
+    radial-gradient(ellipse at 96% 100%, var(--ae-float-return), transparent 34%);
+}
+.ae-theme[data-ae-theme="glass"] :is(.ae-sheet, .ae-popover, .ae-toast) {
+  border-radius: var(--ae-radius-panel);
+}
+.ae-theme[data-ae-theme="glass"] .ae-sheet :is(p, small) { line-height: 1.46; }
+.ae-theme[data-ae-theme="glass"] .ae-pair-request { box-shadow: none; }
+.ae-theme[data-ae-theme="glass"] .ae-activity-list .ae-transfer {
+  --ae-transfer-ink: var(--ae-accent);
+  --ae-transfer-badge: color-mix(in srgb, var(--ae-accent) 9%, var(--ae-content));
+}
+.ae-theme[data-ae-theme="glass"] .ae-activity-list .ae-transfer[data-direction="incoming"] { --ae-transfer-ink: var(--ae-signal-ready); }
+.ae-theme[data-ae-theme="glass"] .ae-activity-list .ae-transfer[data-transfer-state="completed"] { --ae-transfer-ink: var(--ae-success); }
+.ae-theme[data-ae-theme="glass"] .ae-activity-list .ae-transfer[data-transfer-state="failed"] { --ae-transfer-ink: var(--ae-error); }
+.ae-theme[data-ae-theme="glass"] .ae-activity-list .ae-transfer-glyph {
+  inline-size: 2.35rem; block-size: 2.35rem;
+  border-radius: .84rem;
+  background: var(--ae-transfer-badge);
+  color: var(--ae-transfer-ink);
+}
+.ae-theme .ae-activity-list .ae-transfer-measure {
+  display: grid;
+  grid-template-columns: minmax(4rem, 1fr) auto;
+  gap: .52rem;
+  align-items: center;
+  padding-inline-start: 2.9rem;
+  font-variant-numeric: tabular-nums;
+  min-inline-size: 0;
+}
+.ae-theme .ae-activity-list .ae-transfer-measure .ae-progress {
+  block-size: .28rem;
+  min-inline-size: 0;
+}
+.ae-theme .ae-activity-list .ae-transfer-measure small { font-size: .73rem; }
+.ae-theme .ae-activity-list .ae-transfer-status { line-height: 1.2; }
+@media (max-width: 24rem) {
+  .ae-theme .ae-activity-list .ae-transfer-measure { grid-template-columns: minmax(0, 1fr); row-gap: .22rem; }
+}
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .ae-theme[data-ae-theme="glass"] :is(.ae-surface[data-material="overlay"], .ae-orbit[data-radial="false"] .ae-orbit-fan) { background-image: none; }
+  .ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ios-dock[data-ae-lens="sampled"] {
+    background: var(--ae-material-solid, var(--ae-chrome-solid));
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+}
+
+/* An expanded radial menu is a distinct focus plane, not another control on
+   top of equally prominent page copy. Do not move the selected destination. */
+.ae-theme[data-ae-theme="glass"] .ae-orbit[data-open="true"] .ae-orbit-veil {
+  background: color-mix(in srgb, var(--ae-base) 73%, transparent);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.ae-theme[data-ae-theme="glass"]:is([data-contrast="increase"], [data-transparency="reduce"])
+  .ae-orbit[data-open="true"] .ae-orbit-veil {
+  background: var(--ae-base); -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .ae-theme[data-ae-theme="glass"] .ae-orbit[data-open="true"] .ae-orbit-veil {
+    background: var(--ae-base); -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+}

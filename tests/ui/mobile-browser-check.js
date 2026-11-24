@@ -54,11 +54,13 @@ async (page) => {
   await screenshot("dark-activity-390");
   await go("Workspace");
   await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await page.getByText("New note", { exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Packing list");
   await page.getByLabel("Note", { exact: true }).fill("Charts and camera");
   await page.getByRole("button", { name: "Save note", exact: true }).click();
   await page.getByText("Packing list", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await page.getByText("New collection", { exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Harbor Trip");
   await page.getByRole("button", { name: "Create collection", exact: true }).click();
   await page.getByRole("combobox", { name: "Add an item" }).selectOption({ label: "Packing list" });
@@ -87,6 +89,7 @@ async (page) => {
   }
   await go("Workspace");
   await page.getByRole("button", { name: "Clipboard", exact: true }).click();
+  await page.getByText("New text pin", { exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Dock code");
   await page.getByLabel("Text to pin", { exact: true }).fill("fixture-sensitive-text");
   await page.getByRole("button", { name: "Pin text", exact: true }).click();

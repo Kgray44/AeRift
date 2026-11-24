@@ -632,7 +632,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       selection, selecting: pending === "file",
       canSelect: !!snapshot && !watchError && pending === undefined,
       select: selectWith,
-      pairingAction: <Button disabled={pairingDisabled} onClick={() => setPairingOpen(true)}>
+      pairingAction: <Button data-ae-lens-role="control" disabled={pairingDisabled} onClick={() => setPairingOpen(true)}>
         <SpatialIcon name="pair" size={17} />{pairingLabel}
       </Button>,
     })}
@@ -666,7 +666,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
               state={departure?.file === outgoingObject && pending === "send" ? "departing" : outgoingPhase || "resting"} />
               : allowDrop && !dockStatus && <small>or drop a file here</small>}
             <div className="ae-dock-actions">
-              <Button variant={outgoingObject ? "quiet" : "secondary"} onClick={chooseFile}
+              <Button data-ae-lens-role={outgoingObject ? undefined : "control"} variant={outgoingObject ? "quiet" : "secondary"} onClick={chooseFile}
                 loading={pending === "file"} loadingLabel="Opening picker…" disabled={!snapshot || (!!pending && pending !== "file")}>
                 <SpatialIcon name="file" />{outgoingObject ? "Change file" : dockStatus ? "Choose another file" : "Choose file"}
               </Button>

@@ -1,7 +1,7 @@
 import type { DigitalObject } from "@aerift/app-contract/digital-objects";
 import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@aerift/app-contract/experience";
-import { Button, Popover } from "@aerift/ui";
-import { useEffect, useState, type FormEvent } from "react";
+import { Button, Popover, SpatialIcon } from "@aerift/ui";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { applyWorkspaceChanges, loadWorkspace, type WorkspaceEntry } from "./workspaceStore";
 
@@ -49,6 +49,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const [error, setError] = useState<string>();
   const [preview, setPreview] = useState<string>();
   const [editing, setEditing] = useState<string>();
+  const noteEditor = useRef<HTMLDetailsElement>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const items = entries ?? [];
   const visible = current ? items.filter(({ object }) => belongsTo(object, current.id)) : [];
@@ -183,7 +184,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         onClick={() => { setModuleId(module.id); setError(undefined); setStatus(undefined); }}>{module.label}</Button>)}
     </nav>
     {!current && <p>Enable workspace modules in Settings.</p>}
-    {current && <h3>{current.label}</h3>}
+    {current && <div className="aerift-section-heading"><h3>{current.label}</h3><span>{visible.length} {visible.length === 1 ? "object" : "objects"} · On this device</span></div>}
     {!entries && !error && <p>Opening Workspace…</p>}
     {error && <p role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
@@ -197,31 +198,31 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
                 event.currentTarget.value = "";
               }} />
           </label>}
-        {current?.id === "notes" && <form key={editing ?? "new"} onSubmit={event => void submit(event, "note")}>
+        {current?.id === "notes" && <details className="aerift-workspace-create" ref={noteEditor}><summary>{editing ? "Edit note" : "Create a note"}</summary><form key={editing ?? "new"} onSubmit={event => void submit(event, "note")}>
           <label>Title<input name="name" required maxLength={180} defaultValue={note?.name} /></label>
           <label>Note<textarea name="text" defaultValue={note?.kind === "note" ? note.text : undefined} /></label>
           <div className="ae-actions"><Button type="submit" disabled={disabled}>{editing ? "Save changes" : "Add note"}</Button>
             {editing && <Button onClick={() => setEditing(undefined)}>Cancel editing</Button>}</div>
-        </form>}
-        {current?.id === "browser" && <form onSubmit={event => void submit(event, "url")}>
+        </form></details>}
+        {current?.id === "browser" && <details className="aerift-workspace-create"><summary>Save a link</summary><form onSubmit={event => void submit(event, "url")}>
           <label>Title<input name="name" required maxLength={180} /></label>
           <label>Web address<input name="url" type="url" required /></label>
           <div><Button type="submit" disabled={disabled}>Save link</Button></div>
-        </form>}
+        </form></details>}
         {current?.id === "clipboard" && <div>
           {clipboardAllowed ? <Button disabled={disabled} onClick={() => void captureClipboard()}>Capture clipboard text</Button>
             : <p>Enable manual capture in Settings to save clipboard text.</p>}
         </div>}
-        {current?.id === "collections" && <form onSubmit={event => void submit(event, "collection")}>
+        {current?.id === "collections" && <details className="aerift-workspace-create" open={selected.length ? true : undefined}><summary>Create a collection{selected.length > 0 ? ` (${selected.length} selected)` : ""}</summary><form onSubmit={event => void submit(event, "collection")}>
           <label>Name<input name="name" required maxLength={180} /></label>
           <p>Select files, notes, media, links, or clipboard entries in their modules to group them here.</p>
           {!!selected.length && <ol>{selected.map(id => <li key={id}>{label(id)}
             <Button variant="quiet" onClick={() => select(id, false)}>Remove from selection</Button></li>)}</ol>}
           <div><Button type="submit" disabled={disabled || !selected.length}>Create collection</Button></div>
-        </form>}
+        </form></details>}
       </div>
       <section aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
-        {entries && current && visible.length === 0 && <p>No saved {current.id === "photos" ? "media" : "items"} here yet.</p>}
+        {entries && current && visible.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>A space for your {current.id === "photos" ? "media" : current.label.toLowerCase()}</h4><p>No saved {current.id === "photos" ? "media" : "items"} here yet. Add an object to keep it on this device.</p></div>}
         {selectedVisible.length > 0 && <div>
           <Button variant="quiet" disabled={disabled} onClick={() => removeObjects(selectedVisible)}>
             Remove selected ({selectedVisible.length})
@@ -230,7 +231,9 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         {visible.length > 0 && <ol>{visible.map(entry => {
           const { object } = entry;
           const captured = object.kind === "clipboard" ? items.find(item => item.object.id === object.objectId)?.object : undefined;
-          return <li key={object.id}><div>
+          return <li key={object.id} className="aerift-workspace-object" data-selected={selected.includes(object.id)}><div>
+            <span className="aerift-object-glyph"><SpatialIcon name={object.kind === "url" ? "pair" : object.kind === "collection" ? "workspace" : "file"} size={24} /></span>
+            <span className="aerift-object-kind">{object.kind}</span>
             {object.kind === "collection" ? <strong>{object.name}</strong> :
               <label className="aerift-check"><input type="checkbox" checked={selected.includes(object.id)}
                 onChange={event => select(object.id, event.currentTarget.checked)} />{object.name}</label>}
@@ -242,7 +245,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
               ...(entry.asset ? [{ id: "preview", label: preview === object.id ? "Close file details" : "File details",
                 onSelect: () => setPreview(preview === object.id ? undefined : object.id) }] : []),
               ...(object.kind === "note" ? [{ id: "edit", label: "Edit note",
-                onSelect: () => setEditing(object.id) }] : []),
+                onSelect: () => { setEditing(object.id); if (noteEditor.current) noteEditor.current.open = true; } }] : []),
               ...(object.kind === "url" ? [{ id: "open-link", label: "Open in browser", onSelect: () => {
                 setError(undefined);
                 void command<void>("open_workspace_url", { url: object.url }).then(result => {

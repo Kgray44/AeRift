@@ -7,13 +7,13 @@
 .aerift-home-lead { display: grid; justify-items: start; align-content: end; gap: 1rem; padding: clamp(1.1rem, 3vw, 2rem); min-height: 9rem; }
 .aerift-home-lead p { font-size: clamp(1.15rem, 2.6vw, 1.8rem); }
 .aerift-home-grid, .aerift-settings-grid { display: grid; gap: clamp(1.25rem, 4vw, 2.5rem); }
-.aerift-home-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
-.aerift-settings-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
+.aerift-home-grid { grid-template-columns: minmax(0, 2fr) minmax(14rem, 1fr); }
+.aerift-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem 3rem; }
 .aerift-home-grid section, .aerift-settings-grid section { display: grid; gap: .65rem; align-content: start; justify-items: start; min-width: 0; }
 .aerift-summary { display: grid; gap: .5rem; list-style: none; padding: 0; margin: 0; min-width: 0; }
 .aerift-summary li { display: grid; justify-items: start; gap: .25rem; overflow-wrap: anywhere; }
 .aerift-settings-grid fieldset { display: grid; gap: .35rem; padding: .55rem 0 0; margin: 0; border: 0; }
-.aerift-settings-grid label, .aerift-workspace label:not(.aerift-check) { display: grid; gap: .3rem; }
+.aerift-settings-grid > section > label, .aerift-workspace label:not(.aerift-check) { display: grid; gap: .3rem; }
 .aerift-settings-grid .aerift-check, .aerift-workspace .aerift-check { display: flex; align-items: baseline; gap: .45rem; }
 .aerift-settings-grid p { overflow-wrap: anywhere; }
 .aerift-transfer-view:empty { display: none; }
@@ -78,7 +78,7 @@
 
 .aerift-workspace-content {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: clamp(1rem, 3vw, 2.2rem);
 }
 .aerift-workspace-controls, .aerift-workspace-items { min-width: 0; }
@@ -88,3 +88,75 @@
 @media (max-width: 48rem) {
   .aerift-workspace-content { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Desktop composition: content stays quiet; shared chrome owns optical emphasis. */
+.aerift-desktop-surface > .ae-orbit-content { gap: 1.75rem; }
+.aerift-destination-heading h2 { letter-spacing: -.045em; font-weight: 600; }
+.aerift-home-hero { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(16rem, 1fr); align-items: center; gap: clamp(2rem, 5vw, 5rem); padding-block: 1.5rem 2.5rem; }
+.aerift-home-introduction { display: grid; justify-items: start; gap: 1.25rem; max-width: 38rem; }
+.aerift-eyebrow { font-size: .78rem; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; color: var(--ae-muted); }
+.aerift-home-introduction h3 { font-size: clamp(2rem, 4.2vw, 3.5rem); font-weight: 500; line-height: 1.08; letter-spacing: -.045em; text-wrap: balance; }
+.aerift-home-introduction > p { max-width: 31rem; line-height: 1.65; color: var(--ae-muted); }
+.aerift-home-introduction .aerift-home-gesture { font-size: .82rem; }
+.aerift-home-lead { align-content: start; min-height: 0; gap: 1rem; padding: clamp(1.25rem, 2.5vw, 2rem); }
+.aerift-home-lead h3 { font-size: 1.1rem; font-weight: 600; }
+.aerift-home-lead > p { font-size: .9rem; color: var(--ae-muted); line-height: 1.5; }
+.aerift-home-glyph, .aerift-object-glyph { display: inline-grid; place-items: center; color: var(--ae-text); }
+.aerift-home-glyph { margin-block-end: .25rem; }
+.aerift-home-grid { gap: 2.5rem; border-block-start: 1px solid var(--ae-control-edge); padding-block-start: 1.5rem; }
+.aerift-section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; width: 100%; }
+.aerift-section-heading h3, .aerift-home-activity h3 { font-size: 1.05rem; font-weight: 600; }
+.aerift-section-heading > span, .aerift-home-activity > p { color: var(--ae-muted); font-size: .85rem; line-height: 1.6; }
+.aerift-home-grid .aerift-home-recent { gap: 1.1rem; }
+.aerift-recent-objects { width: 100%; }
+.aerift-recent-objects li { display: flex; align-items: center; gap: .9rem; padding-block: .65rem; }
+.aerift-recent-objects li > div { display: grid; gap: .3rem; min-width: 0; }
+.aerift-recent-objects strong { font-size: .95rem; font-weight: 550; }
+.aerift-recent-objects li span:not(.aerift-object-glyph) { font-size: .8rem; color: var(--ae-muted); }
+.aerift-settings-grid > section { width: 100%; box-sizing: border-box; padding-block: 1.25rem 1.75rem; border-block-start: 1px solid var(--ae-control-edge); gap: 1rem; }
+.aerift-settings-grid h3 { font-size: 1.15rem; font-weight: 600; letter-spacing: -.02em; }
+.aerift-settings-grid p { color: var(--ae-muted); line-height: 1.6; font-size: .9rem; max-width: 48ch; }
+.aerift-settings-grid > section > label:not(.aerift-check) { width: 100%; gap: .5rem; font-size: .9rem; }
+.aerift-settings-grid > section > label > select { width: 100%; min-height: 2.75rem; padding: .6rem .85rem; border: 1px solid var(--ae-control-edge); border-radius: .8rem; color: var(--ae-text); background: var(--ae-field); font: inherit; }
+.aerift-settings-grid .ae-settings { width: 100%; }
+.aerift-settings-grid .ae-settings select { width: auto; min-width: 7rem; }
+.aerift-settings-grid .aerift-check { align-items: center; min-height: 2.75rem; line-height: 1.5; gap: .65rem; }
+.aerift-settings-grid .aerift-check input { flex-shrink: 0; }
+.aerift-settings-grid fieldset { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: .4rem 1rem; }
+.aerift-settings-grid legend { padding-block-end: .65rem; font-size: .9rem; font-weight: 600; }
+.aerift-workspace { gap: 1.4rem; }
+.aerift-workspace > .aerift-desktop-nav { gap: .5rem; padding-block-end: .6rem; border-block-end: 1px solid var(--ae-control-edge); }
+.aerift-workspace-controls { display: grid; gap: 1rem; }
+.aerift-workspace-controls > label { justify-items: start; gap: .7rem; font-size: .9rem; }
+.aerift-workspace-create { border-block-end: 1px solid var(--ae-control-edge); padding-block-end: 1rem; }
+.aerift-workspace-create > summary { cursor: pointer; padding: .8rem .2rem; min-height: 2.75rem; box-sizing: border-box; font-weight: 550; font-size: .95rem; }
+.aerift-workspace-create > summary:focus-visible { outline: 2px solid var(--ae-text); outline-offset: .2rem; border-radius: .4rem; }
+.aerift-workspace-create > form { padding-block: 1rem .5rem; gap: 1rem; }
+.aerift-workspace-create input, .aerift-workspace-create textarea { min-height: 2.75rem; box-sizing: border-box; }
+.aerift-workspace-items > ol { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
+.aerift-workspace-items > ol > li { margin: 0; }
+.aerift-workspace-object { border: 1px solid var(--ae-control-edge); border-radius: 1.25rem; background: var(--ae-field); padding: 1.25rem; min-width: 0; }
+.aerift-workspace-object[data-selected="true"] { outline: 2px solid var(--ae-text); outline-offset: -2px; }
+.aerift-workspace-object > div { gap: .85rem; }
+.aerift-object-kind { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ae-muted); }
+.aerift-workspace-object .aerift-check { font-weight: 550; min-height: 2rem; line-height: 1.5; overflow-wrap: anywhere; }
+.aerift-workspace-object .aerift-check input { flex-shrink: 0; }
+.aerift-workspace-object .aerift-note-text { font-size: .9rem; line-height: 1.6; max-height: 12rem; overflow-y: auto; width: 100%; }
+.aerift-workspace-object img, .aerift-workspace-object video { border-radius: .75rem; }
+.aerift-empty-state { display: grid; justify-items: center; text-align: center; align-content: center; gap: .75rem; min-height: 12rem; color: var(--ae-muted); padding: 1.5rem; line-height: 1.6; }
+.aerift-empty-state h4 { margin: 0; color: var(--ae-text); font-size: 1.15rem; font-weight: 500; }
+.aerift-empty-state p { max-width: 42ch; font-size: .9rem; }
+.aerift-home-recent > .aerift-empty-state { min-height: 5rem; justify-items: start; padding-inline: 0; text-align: start; }
+@media (max-width: 56rem) {
+  .aerift-home-hero { grid-template-columns: minmax(0, 1fr) minmax(14rem, .8fr); gap: 1.5rem; }
+  .aerift-settings-grid { gap: 1.25rem 1.5rem; }
+}
+@media (max-width: 40rem) {
+  .aerift-home-hero, .aerift-home-grid, .aerift-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .aerift-home-hero { padding-block-start: .5rem; }
+  .aerift-home-lead { width: 100%; box-sizing: border-box; }
+}
+
+.aerift-workspace input[type="file"] { font: inherit; color: var(--ae-muted); }
+.aerift-workspace input[type="file"]::file-selector-button { min-height: 2.75rem; padding: .6rem 1rem; margin-inline-end: .75rem; border: 1px solid var(--ae-control-edge); border-radius: var(--ae-radius-control, .8rem); color: var(--ae-text); background: var(--ae-field); font: inherit; cursor: pointer; }
+.aerift-workspace input[type="file"]:disabled::file-selector-button { opacity: .55; cursor: not-allowed; }

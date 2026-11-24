@@ -1,7 +1,12 @@
-import { Button, ConnectionStatus } from "@aerift/ui";
+import { Button, ConnectionStatus, SpatialIcon } from "@aerift/ui";
 import { useState } from "react";
 import type { AppPort, AppSnapshot } from "@aerift/app-contract";
 import { nativeAppPort } from "./nativeAppPort";
+
+const devicePlatform = {
+  ios: ["iPhone", "phone"], android: ["Android", "phone"], windows: ["Windows", "desktop"],
+  macos: ["Mac", "desktop"], linux: ["Linux", "desktop"],
+} as const;
 
 export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppSnapshot | undefined; port?: AppPort }) {
   const [selected, setSelected] = useState<string>();
@@ -26,15 +31,18 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
   }
 
   return (
-    <section aria-label="Nearby and trusted devices">
+    <section className="aerift-device-trust" aria-label="Nearby and trusted devices">
       {devices.length ? (
         <ul className="aerift-devices">
           {devices.map((device) => (
             <li key={device.id}>
-              <strong>{device.name}</strong>
-              <span>{device.paired ? "Paired" : "Unpaired"}</span>
-              <ConnectionStatus state={device.online ? "connected" : "offline"}
-                label={device.online ? "Online" : "Offline"} />
+              <div className="aerift-device-id">
+                <span className="aerift-device-symbol" aria-hidden="true">
+                  <SpatialIcon name={devicePlatform[device.platform][1]} size={22} />
+                </span>
+                <div><strong>{device.name}</strong><small>{devicePlatform[device.platform][0]} · {device.paired ? "Paired" : "Unpaired"}</small></div>
+              </div>
+              <ConnectionStatus state={device.online ? "connected" : "offline"} label={device.online ? "Online" : "Offline"} />
               {device.paired && (selected === device.id ? (
                 <>
                   <Button variant="danger" onClick={() => void revoke(device.id)}
@@ -45,7 +53,10 @@ export function DeviceTrust({ snapshot, port = nativeAppPort }: { snapshot: AppS
             </li>
           ))}
         </ul>
-      ) : <p>{snapshot ? "Searching the local network…" : "Disconnected"}</p>}
+      ) : <div className="aerift-devices-empty">
+        <SpatialIcon name="desktop" size={22} />
+        <p>{snapshot ? "Searching the local network…" : "Disconnected"}</p>
+      </div>}
       {feedback && <p role={feedback.error ? "alert" : "status"}>{feedback.message}</p>}
     </section>
   );
