@@ -15,6 +15,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "aerift"
 path = "src/main.rs"
 
+[features]
+private-remote-host = []
+
+[[example]]
+name = "private_remote_host"
+path = "examples/private_remote_host.rs"
+required-features = ["private-remote-host"]
+
 [build-dependencies]
 tauri-build = "2"
 
