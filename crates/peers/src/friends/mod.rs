@@ -3,6 +3,7 @@
 
 mod authority;
 mod book;
+mod payload;
 mod wire;
 
 pub use authority::{
@@ -14,4 +15,5 @@ pub use book::{
     FriendInviteEndpoint, FriendInviteState, FriendObjectKind, FriendStore,
 };
 
+pub use payload::FriendPayloadEndpoint;
 pub use wire::FriendOfferEndpoint;

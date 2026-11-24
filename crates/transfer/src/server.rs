@@ -16,11 +16,39 @@ use tokio_util::sync::CancellationToken;
 
 use crate::receiver::Upload;
 use crate::{
-    ErrorCode, Offer, PeerId, RECEIVER_READY_ROUTE, Receiver, ReceiverReady, TransferError,
+    ErrorCode, Offer, PeerId, RECEIVER_READY_ROUTE, Receiver, ReceiverReady, Status, TransferError,
     TransferKey, parse_id, read_control,
 };
 
 type Reply = Response<Full<Bytes>>;
+
+/// Optional transport-lane policy. Must run only after peer TLS authentication.
+/// Treat an admitted metadata offer as prior explicit consent, never generic trust.
+pub trait TransferScope: Send + Sync {
+    fn admit(&self, key: TransferKey, offer: &Offer) -> Result<(), TransferError>;
+    fn check(&self, key: TransferKey) -> Result<(), TransferError>;
+    fn publish(
+        &self,
+        key: TransferKey,
+        action: impl FnOnce() -> Result<Status, TransferError>,
+    ) -> Result<Status, TransferError>;
+}
+struct NoScope;
+impl TransferScope for NoScope {
+    fn admit(&self, _: TransferKey, _: &Offer) -> Result<(), TransferError> {
+        Ok(())
+    }
+    fn check(&self, _: TransferKey) -> Result<(), TransferError> {
+        Ok(())
+    }
+    fn publish(
+        &self,
+        _: TransferKey,
+        action: impl FnOnce() -> Result<Status, TransferError>,
+    ) -> Result<Status, TransferError> {
+        action()
+    }
+}
 
 /// Serve one HTTP/1.1 connection. The caller owns the preceding TLS handshake and
 /// supplies its verified peer. The trust callback is evaluated on every request.
@@ -63,6 +91,27 @@ pub async fn serve_request(
     receiver: Arc<Receiver>,
     trust: CancellationToken,
 ) -> Reply {
+    dispatch(request, peer, receiver, trust, None::<&NoScope>).await
+}
+
+/// Separate optional guarded scope; ordinary Nearby/Remote remain unchanged.
+pub async fn serve_scoped_request(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+    scope: &impl TransferScope,
+) -> Reply {
+    dispatch(request, peer, receiver, trust, Some(scope)).await
+}
+
+async fn dispatch(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+    scope: Option<&impl TransferScope>,
+) -> Reply {
     if trust.is_cancelled() {
         return error(ErrorCode::PeerUntrusted.into());
     }
@@ -74,6 +123,9 @@ pub async fn serve_request(
         return error(ErrorCode::UnsupportedVersion.into());
     }
     if path == RECEIVER_READY_ROUTE {
+        if scope.is_some() {
+            return error(ErrorCode::PeerUntrusted.into());
+        }
         if request.method() != Method::GET || request.body().size_hint().exact() != Some(0) {
             return error(ErrorCode::InvalidRequest.into());
         }
@@ -90,7 +142,7 @@ pub async fn serve_request(
         return reply;
     }
     if path == "/v1/transfers" && request.method() == Method::POST {
-        return offer(request, peer, &receiver, &trust).await;
+        return offer(request, peer, &receiver, &trust, scope).await;
     }
     let Some(path) = path.strip_prefix("/v1/transfers/") else {
         return error(ErrorCode::PeerUnavailable.into());
@@ -103,6 +155,11 @@ pub async fn serve_request(
         return error(ErrorCode::InvalidRequest.into());
     };
     let key = TransferKey { peer, id };
+    if let Some(scope) = scope {
+        if let Err(failure) = scope.check(key) {
+            return error(failure);
+        }
+    }
     let result = match (request.method(), content) {
         (&Method::GET, false) => receiver.status(key),
         (&Method::DELETE, false) => receiver.cancel(key),
@@ -112,7 +169,7 @@ pub async fn serve_request(
             };
             match receiver.start(key, size) {
                 Ok(upload) => {
-                    let result = receive(&upload, request.into_body()).await;
+                    let result = receive(&upload, request.into_body(), key, scope).await;
                     if let Err(error) = result {
                         upload.fail(error);
                     }
@@ -134,6 +191,7 @@ async fn offer(
     peer: PeerId,
     receiver: &Receiver,
     trust: &CancellationToken,
+    scope: Option<&impl TransferScope>,
 ) -> Reply {
     let body = match tokio::time::timeout(
         Duration::from_secs(10),
@@ -153,15 +211,38 @@ async fn offer(
     let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
         return error(ErrorCode::InvalidRequest.into());
     };
+    let key = TransferKey { peer, id: offer.id };
+    if let Some(scope) = scope {
+        if let Err(failure) = offer.validate().and_then(|()| scope.admit(key, &offer)) {
+            return error(failure);
+        }
+    }
     match receiver.offer(peer, offer, trust) {
-        Ok((created, status)) => json(
-            if created {
-                StatusCode::CREATED
+        Ok((created, status)) => {
+            let status = if created && scope.is_some() {
+                match scope
+                    .expect("checked")
+                    .check(key)
+                    .and_then(|()| receiver.respond(key, true))
+                {
+                    Ok(status) => status,
+                    Err(failure) => {
+                        let _ = receiver.cancel(key);
+                        return error(failure);
+                    }
+                }
             } else {
-                StatusCode::OK
-            },
-            &status,
-        ),
+                status
+            };
+            json(
+                if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                },
+                &status,
+            )
+        }
         Err(failure) => error(failure),
     }
 }
@@ -182,7 +263,12 @@ fn content_length(request: &Request<Incoming>) -> Option<u64> {
         .ok()
 }
 
-async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, TransferError> {
+async fn receive(
+    upload: &Upload,
+    mut body: Incoming,
+    key: TransferKey,
+    scope: Option<&impl TransferScope>,
+) -> Result<Status, TransferError> {
     let temporary = upload.tempfile()?;
     let handle = temporary.reopen().map_err(|_| ErrorCode::StorageFailed)?;
     let mut file = tokio::fs::File::from_std(handle);
@@ -197,6 +283,9 @@ async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, T
                 next.map_err(|_| ErrorCode::PeerUnavailable)?,
         };
         let Some(frame) = frame else { break };
+        if let Some(scope) = scope {
+            scope.check(key)?;
+        }
         let data = frame
             .map_err(|_| ErrorCode::IntegrityFailed)?
             .into_data()
@@ -219,7 +308,10 @@ async fn receive(upload: &Upload, mut body: Incoming) -> Result<crate::Status, T
         .await
         .map_err(|_| ErrorCode::StorageFailed)?;
     drop(file);
-    upload.publish(temporary)
+    match scope {
+        Some(scope) => scope.publish(key, || upload.publish(temporary)),
+        None => upload.publish(temporary),
+    }
 }
 
 fn error(failure: TransferError) -> Reply {

@@ -5,10 +5,10 @@ mod model;
 mod receiver;
 mod server;
 
-pub use client::{Connector, Sender};
+pub use client::{Connector, Sender, inspect_file_offer};
 pub use model::{ErrorCode, Offer, PeerId, State, Status, TransferError};
 pub use receiver::{IncomingTransfer, ReceiveLimits, Receiver, TransferKey};
-pub use server::{serve, serve_request};
+pub use server::{TransferScope, serve, serve_request, serve_scoped_request};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Limited};

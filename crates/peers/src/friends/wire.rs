@@ -172,7 +172,7 @@ pub(super) async fn serve_scoped<H, F>(
     handler: H,
 ) -> Result<(), TransferError>
 where
-    H: Fn(Request<Incoming>, PeerId, PeerId, Arc<FriendBook>) -> F + Copy + Send + Sync + 'static,
+    H: Fn(Request<Incoming>, PeerId, PeerId, Arc<FriendBook>) -> F + Clone + Send + Sync + 'static,
     F: std::future::Future<Output = Response<Full<Bytes>>> + Send + 'static,
 {
     let bound = listener.local_addr().map_err(|_| ErrorCode::NetworkError)?;
@@ -195,6 +195,7 @@ where
                 let Ok(permit) = connections.clone().try_acquire_owned() else { continue; };
                 let tls = tls.clone();
                 let book = book.clone();
+                let handler = handler.clone();
                 tasks.spawn(async move {
                     let _permit = permit;
                     let Ok(Ok(stream)) = timeout(BUDGET, tls.accept(socket)).await else { return; };
@@ -204,6 +205,7 @@ where
                     let authenticated = PeerId::from_tls_leaf(leaf.as_ref());
                     let service = service_fn(|request| {
                         let book = book.clone();
+                let handler = handler.clone();
                         async move { Ok::<_, Infallible>(handler(request, authenticated, local, book).await) }
                     });
                     let _ = hyper::server::conn::http1::Builder::new()

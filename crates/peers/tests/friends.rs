@@ -619,3 +619,310 @@ async fn private_roster_enrollment_requires_signed_grant_expected_peer_and_does_
     shutdown.cancel();
     server.await.unwrap().unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn friends_payload_reaches_only_winner_with_verified_digest_and_receipt() {
+    use aerift_peers::{FriendOfferEndpoint, FriendPayloadEndpoint, Identity};
+    use aerift_transfer::{ReceiveLimits, Receiver, State, inspect_file_offer};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio::net::TcpListener;
+    use tokio_util::sync::CancellationToken;
+
+    let alice = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let bob = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let a = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let b = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let c = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let (ap, bp, cp) = (a.id(), b.id(), c.id());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let inv = alice.invite(ap, bob.id(), bp, now).unwrap();
+    let acc = bob.accept(&inv, ap, bp, now).unwrap();
+    let confirm = alice.confirm(&inv, &acc, bp, now).unwrap();
+    let av = FriendRecord::verify(&inv, &acc, &confirm, alice.id(), ap, bp, now).unwrap();
+    let bv = FriendRecord::verify(&inv, &acc, &confirm, bob.id(), bp, ap, now).unwrap();
+    let relation = av.relationship();
+    let a_data = Arc::new(Memory::default());
+    let book_a = Arc::new(FriendBook::open(alice.id(), a_data.clone()).unwrap());
+    let b_data = Arc::new(Memory::default());
+    let book_b = Arc::new(FriendBook::open(bob.id(), b_data.clone()).unwrap());
+    let book_c = Arc::new(FriendBook::open(bob.id(), Arc::new(Memory::default())).unwrap());
+    book_a.add(av, now).unwrap();
+    book_b.add(bv.clone(), now).unwrap();
+    book_c.add(bv, now).unwrap();
+    book_a
+        .enroll(bob.enroll(relation, cp, now).unwrap(), cp, now)
+        .unwrap();
+
+    let stop = CancellationToken::new();
+    let mut jobs = Vec::new();
+    let mut controls = Vec::new();
+    for (identity, book) in [(&a, &book_a), (&b, &book_b), (&c, &book_c)] {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        controls.push([l.local_addr().unwrap()]);
+        let (identity, book, stop) = (identity.clone(), book.clone(), stop.clone());
+        jobs.push(tokio::spawn(async move {
+            FriendOfferEndpoint::serve(&identity, l, book, stop).await
+        }));
+    }
+    let dir_b = tempfile::tempdir().unwrap();
+    let dir_c = tempfile::tempdir().unwrap();
+    let limit = ReceiveLimits {
+        session_offers: 16,
+        active_bytes: 32 * 1024 * 1024,
+    };
+    let receiver_b = Arc::new(Receiver::new(dir_b.path(), limit).unwrap());
+    let receiver_c = Arc::new(Receiver::new(dir_c.path(), limit).unwrap());
+    let mut payloads = Vec::new();
+    for (identity, book, receiver) in [(&b, &book_b, &receiver_b), (&c, &book_c, &receiver_c)] {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        payloads.push([l.local_addr().unwrap()]);
+        let (identity, book, receiver, stop) = (
+            identity.clone(),
+            book.clone(),
+            receiver.clone(),
+            stop.clone(),
+        );
+        jobs.push(tokio::spawn(async move {
+            FriendPayloadEndpoint::serve(&identity, l, book, receiver, stop).await
+        }));
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.bin");
+    let bytes = (0..256_000usize)
+        .map(|i| (i % 251) as u8)
+        .collect::<Vec<_>>();
+    std::fs::write(&input, &bytes).unwrap();
+    let manifest = FriendPayloadEndpoint::stage_file(
+        &book_a,
+        bob.id(),
+        None,
+        &input,
+        "fixture.bin",
+        now + 350,
+    )
+    .await
+    .unwrap();
+    let intent = manifest.id;
+    assert!(
+        FriendPayloadEndpoint::send_file(
+            &a,
+            book_a.clone(),
+            &payloads[0],
+            &manifest,
+            &input,
+            CancellationToken::new(),
+            |_, _| {}
+        )
+        .await
+        .is_err()
+    );
+    FriendOfferEndpoint::deliver(&a, &book_a, intent, bp, &controls[1], now)
+        .await
+        .unwrap();
+    FriendOfferEndpoint::deliver(&a, &book_a, intent, cp, &controls[2], now)
+        .await
+        .unwrap();
+    FriendOfferEndpoint::accept_received(&b, &book_b, &controls[0], ap, intent, now)
+        .await
+        .unwrap();
+    assert!(
+        FriendOfferEndpoint::accept_received(&c, &book_c, &controls[0], ap, intent, now)
+            .await
+            .is_err()
+    );
+    assert!(
+        FriendPayloadEndpoint::send_file(
+            &a,
+            book_a.clone(),
+            &payloads[1],
+            &manifest,
+            &input,
+            CancellationToken::new(),
+            |_, _| {}
+        )
+        .await
+        .is_err()
+    );
+    std::fs::write(&input, vec![123; bytes.len()]).unwrap();
+    assert!(
+        FriendPayloadEndpoint::send_file(
+            &a,
+            book_a.clone(),
+            &payloads[0],
+            &manifest,
+            &input,
+            CancellationToken::new(),
+            |_, _| {}
+        )
+        .await
+        .is_err()
+    );
+    assert!(receiver_b.snapshot().is_empty());
+    std::fs::write(&input, &bytes).unwrap();
+    let status = FriendPayloadEndpoint::send_file(
+        &a,
+        book_a.clone(),
+        &payloads[0],
+        &manifest,
+        &input,
+        CancellationToken::new(),
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(status.state, State::Completed);
+    assert_eq!(status.bytes_transferred, bytes.len() as u64);
+    assert!(receiver_c.snapshot().is_empty());
+    let receipt = receiver_b.snapshot().pop().unwrap();
+    assert_eq!(receipt.key.id, intent);
+    assert_eq!(receipt.status.state, State::Completed);
+    let saved = receipt.saved_path.unwrap();
+    assert_eq!(std::fs::read(&saved).unwrap(), bytes);
+    assert_eq!(
+        inspect_file_offer(intent, &saved, "fixture.bin")
+            .await
+            .unwrap()
+            .sha256,
+        manifest.sha256
+    );
+    let reopened = FriendBook::open(alice.id(), a_data).unwrap();
+    assert!(
+        FriendPayloadEndpoint::send_file(
+            &a,
+            Arc::new(reopened),
+            &payloads[0],
+            &manifest,
+            &input,
+            CancellationToken::new(),
+            |_, _| {}
+        )
+        .await
+        .is_err()
+    );
+    let cancelled = FriendPayloadEndpoint::stage_file(
+        &book_a,
+        bob.id(),
+        Some(bp),
+        &input,
+        "cancel.bin",
+        now + 350,
+    )
+    .await
+    .unwrap();
+    FriendOfferEndpoint::deliver(&a, &book_a, cancelled.id, bp, &controls[1], now)
+        .await
+        .unwrap();
+    FriendOfferEndpoint::accept_received(&b, &book_b, &controls[0], ap, cancelled.id, now)
+        .await
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let trigger = cancel.clone();
+    let state = FriendPayloadEndpoint::send_file(
+        &a,
+        book_a.clone(),
+        &payloads[0],
+        &cancelled,
+        &input,
+        cancel,
+        move |_, status| {
+            if status.state == State::Accepted {
+                trigger.cancel()
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(state.state, State::Cancelled);
+    assert!(!dir_b.path().join("cancel.bin").exists());
+    let cancel_receipt = receiver_b
+        .snapshot()
+        .into_iter()
+        .find(|r| r.key.id == cancelled.id)
+        .unwrap();
+    assert_eq!(cancel_receipt.status.bytes_transferred, 0);
+    assert_eq!(cancel_receipt.status.state, State::Cancelled);
+    let denied = FriendPayloadEndpoint::stage_file(
+        &book_a,
+        bob.id(),
+        Some(bp),
+        &input,
+        "revoked.bin",
+        now + 350,
+    )
+    .await
+    .unwrap();
+    FriendOfferEndpoint::deliver(&a, &book_a, denied.id, bp, &controls[1], now)
+        .await
+        .unwrap();
+    FriendOfferEndpoint::accept_received(&b, &book_b, &controls[0], ap, denied.id, now)
+        .await
+        .unwrap();
+    book_b.revoke_device(alice.id(), ap).unwrap();
+    assert!(
+        FriendPayloadEndpoint::send_file(
+            &a,
+            book_a.clone(),
+            &payloads[0],
+            &denied,
+            &input,
+            CancellationToken::new(),
+            |_, _| {}
+        )
+        .await
+        .is_err()
+    );
+    assert!(!dir_b.path().join("revoked.bin").exists());
+
+    let active = FriendPayloadEndpoint::stage_file(
+        &book_a,
+        bob.id(),
+        Some(cp),
+        &input,
+        "active-revoke.bin",
+        now + 350,
+    )
+    .await
+    .unwrap();
+    FriendOfferEndpoint::deliver(&a, &book_a, active.id, cp, &controls[2], now)
+        .await
+        .unwrap();
+    FriendOfferEndpoint::accept_received(&c, &book_c, &controls[0], ap, active.id, now)
+        .await
+        .unwrap();
+    let sending_book = book_a.clone();
+    let bob_id = bob.id();
+    let attempted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let attempt = attempted.clone();
+    let result = FriendPayloadEndpoint::send_file(
+        &a,
+        book_a.clone(),
+        &payloads[1],
+        &active,
+        &input,
+        CancellationToken::new(),
+        move |_, status| {
+            use std::sync::atomic::Ordering;
+            if status.state == State::Transferring
+                && status.bytes_transferred > 0
+                && !attempt.swap(true, Ordering::SeqCst)
+            {
+                sending_book.revoke_device(bob_id, cp).unwrap();
+            }
+        },
+    )
+    .await;
+    assert!(attempted.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(result.is_err() || result.unwrap().state != State::Completed);
+    assert!(!dir_c.path().join("active-revoke.bin").exists());
+    stop.cancel();
+    for job in jobs {
+        tokio::time::timeout(Duration::from_secs(2), job)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+}

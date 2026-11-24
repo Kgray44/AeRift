@@ -3,6 +3,7 @@ use super::{
     ErrorCode, FriendBook, FriendDecision, PeerId, PersonId, TransferError, Uuid, Variant, Version,
 };
 
+use aerift_transfer::{Offer, Status, TransferKey};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -115,6 +116,8 @@ pub struct FriendIncomingOffer {
     decision: FriendDecision,
     #[serde(default)]
     consent_intent: bool,
+    #[serde(default)]
+    payload_reserved: bool,
 }
 
 impl FriendIncomingOffer {
@@ -141,7 +144,91 @@ impl FriendIncomingOffer {
     }
 }
 
+fn allowed_payload(
+    data: &super::Data,
+    destination: PeerId,
+    key: TransferKey,
+    now: u64,
+) -> Result<usize, TransferError> {
+    let index = data
+        .incoming
+        .iter()
+        .position(|o| {
+            o.issuer == key.peer
+                && o.id() == key.id
+                && o.notice.recipient_device == destination
+                && !o.notice.metadata.expired(now)
+                && o.consent_intent
+                && o.decision == FriendDecision::Granted
+                && o.notice.metadata.kind() == FriendObjectKind::File
+        })
+        .ok_or(ErrorCode::TransferRejected)?;
+    let found = &data.incoming[index];
+    if !data.friends.iter().any(|friend| {
+        friend.person == found.notice.sender
+            && friend.relationship == found.notice.relationship
+            && friend.receive_allowed
+            && friend.devices.contains(&found.issuer)
+    }) {
+        return Err(ErrorCode::TransferRejected.into());
+    }
+    Ok(index)
+}
+
 impl FriendBook {
+    pub(in crate::friends) fn reserve_incoming_payload(
+        &self,
+        local: PeerId,
+        key: TransferKey,
+        manifest: &Offer,
+    ) -> Result<(), TransferError> {
+        let now = unix_seconds()?;
+        let digest = manifest.manifest_digest()?;
+        self.mutate(|state| {
+            let index = allowed_payload(state, local, key, now)?;
+            let granted = &mut state.incoming[index];
+            if granted.payload_reserved
+                || granted.notice.digest != digest
+                || granted.notice.metadata.label() != manifest.name
+                || granted.notice.metadata.size_bytes() != manifest.size_bytes
+            {
+                return Err(ErrorCode::TransferRejected.into());
+            }
+            granted.payload_reserved = true;
+            Ok(())
+        })
+    }
+
+    pub(in crate::friends) fn with_incoming_payload(
+        &self,
+        local: PeerId,
+        key: TransferKey,
+        action: impl FnOnce() -> Result<Status, TransferError>,
+    ) -> Result<Status, TransferError> {
+        // The live recipient runtime shares one book. Serialize final publication
+        // against its revocation and permission changes.
+        let _guard = self.writes.lock().map_err(|_| ErrorCode::InternalError)?;
+        let data = self.read()?;
+        let index = allowed_payload(&data, local, key, unix_seconds()?)?;
+        if !data.incoming[index].payload_reserved {
+            return Err(ErrorCode::TransferRejected.into());
+        }
+        action()
+    }
+
+    pub(in crate::friends) fn check_incoming_payload(
+        &self,
+        local: PeerId,
+        key: TransferKey,
+    ) -> Result<(), TransferError> {
+        let data = self.read()?;
+        let index = allowed_payload(&data, local, key, unix_seconds()?)?;
+        if !data.incoming[index].payload_reserved {
+            return Err(ErrorCode::TransferRejected.into());
+        }
+        Ok(())
+    }
+
     /// Once attached, consent metadata cannot change for any recipient.
     pub fn prepare_fanout(
         &self,
@@ -264,6 +351,7 @@ impl FriendBook {
                 issuer,
                 decision: FriendDecision::Open,
                 consent_intent: false,
+                payload_reserved: false,
             });
             Ok(())
         })

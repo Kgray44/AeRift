@@ -36,6 +36,7 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const READY_QUERY_TIMEOUT: Duration = Duration::from_millis(1200);
 type RequestBody = UnsyncBoxBody<Bytes, io::Error>;
 type Progress = Arc<dyn Fn(Uuid, Status) + Send + Sync>;
+type AuthorityCheck = Arc<dyn Fn() -> Result<(), TransferError> + Send + Sync>;
 
 /// Supply a fresh stream with authenticated TLS 1.3 and HTTP/1.1 ALPN.
 /// Pin the chosen destination leaf and present the local device certificate.
@@ -90,6 +91,34 @@ impl<C: Connector> Sender<C> {
         cancel: CancellationToken,
         progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
     ) -> Result<Status, TransferError> {
+        self.send_with_guard(id, path, name, cancel, progress, None)
+            .await
+    }
+
+    /// For independently authorized transport lanes. Recheck authority before
+    /// metadata and again before exposing any file frame to the connection.
+    pub async fn send_file_guarded(
+        &self,
+        id: Uuid,
+        path: &Path,
+        name: &str,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+        check: impl Fn() -> Result<(), TransferError> + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
+        self.send_with_guard(id, path, name, cancel, progress, Some(Arc::new(check)))
+            .await
+    }
+
+    async fn send_with_guard(
+        &self,
+        id: Uuid,
+        path: &Path,
+        name: &str,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+        check: Option<AuthorityCheck>,
+    ) -> Result<Status, TransferError> {
         if id.get_version() != Some(uuid::Version::Random)
             || id.get_variant() != uuid::Variant::RFC4122
         {
@@ -115,7 +144,7 @@ impl<C: Connector> Sender<C> {
             progress(id, status);
         });
         let result = {
-            let run = self.run(offer.clone(), file, Arc::clone(&progress));
+            let run = self.run(offer.clone(), file, Arc::clone(&progress), check);
             tokio::pin!(run);
             tokio::select! {
                 biased;
@@ -189,7 +218,11 @@ impl<C: Connector> Sender<C> {
         offer: Offer,
         file: tokio::fs::File,
         progress: Progress,
+        check: Option<AuthorityCheck>,
     ) -> Result<Status, TransferError> {
+        if let Some(allowed) = &check {
+            allowed()?;
+        }
         let id = offer.id;
         let encoded = serde_json::to_vec(&offer).map_err(|_| ErrorCode::InvalidRequest)?;
         let mut status =
@@ -216,12 +249,16 @@ impl<C: Connector> Sender<C> {
             return Err(ErrorCode::Conflict.into());
         }
 
+        if let Some(allowed) = &check {
+            allowed()?;
+        }
         let body = FileBody {
             file,
             id,
             remaining: offer.size_bytes,
             sent: 0,
             progress,
+            check,
             buffer: vec![0; BUFFER_SIZE],
         };
         let path = format!("/v1/transfers/{id}/content");
@@ -359,6 +396,13 @@ fn validate_progress(status: Status, offered_bytes: u64) -> Result<(), TransferE
     Ok(())
 }
 
+/// Compute the same file metadata and content hash used by the sender.
+pub async fn inspect_file_offer(id: Uuid, path: &Path, name: &str) -> Result<Offer, TransferError> {
+    let (offer, _) = prepare(id, path, name).await?;
+    offer.validate()?;
+    Ok(offer)
+}
+
 async fn prepare(
     id: Uuid,
     path: &Path,
@@ -411,6 +455,7 @@ struct FileBody {
     remaining: u64,
     sent: u64,
     progress: Progress,
+    check: Option<AuthorityCheck>,
     buffer: Vec<u8>,
 }
 
@@ -434,6 +479,13 @@ impl Body for FileBody {
                 Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())))
             }
             Ok(()) => {
+                if this
+                    .check
+                    .as_ref()
+                    .is_some_and(|allowed| allowed().is_err())
+                {
+                    return Poll::Ready(Some(Err(io::ErrorKind::PermissionDenied.into())));
+                }
                 let data = Bytes::copy_from_slice(buffer.filled());
                 this.remaining -= data.len() as u64;
                 this.sent += data.len() as u64;
