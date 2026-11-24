@@ -383,11 +383,7 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
               </>}
               {destination === "friends" && snapshot?.friends?.version === 1 && port.friends &&
                 <FriendsWorkspace snapshot={snapshot.friends} port={port.friends} mobile />}
-              {destination === "devices" && <div className="ios-section">
-                <DeviceTrust snapshot={snapshot} port={port} />
-                {regions.pairingAction}
-                <p>Pair only with devices you recognize. Removing trust stops future transfers until you pair again.</p>
-              </div>}
+              {destination === "devices" && <DeviceTrust snapshot={snapshot} port={port} actions={regions.pairingAction} />}
             </div>,
           }}
         />

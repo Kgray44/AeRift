@@ -74,3 +74,15 @@ body {
   .aerift-device-trust .aerift-devices > li { grid-template-columns: minmax(0, 1fr) auto; }
   .aerift-device-trust .aerift-devices > li > .ae-button { grid-column: 2; margin-block: -.15rem -.45rem; justify-self: end; }
 }
+
+.aerift-device-trust { display: grid; gap: 1rem; }
+.aerift-device-zone { min-width: 0; padding: clamp(.85rem, 3vw, 1.45rem); }
+.aerift-device-zone-head { display: flex; justify-content: space-between; gap: .85rem; flex-wrap: wrap; align-items: start; }
+.aerift-device-zone-head h3 { margin: 0; }
+.aerift-device-zone-head p { margin: .28rem 0 .66rem; color: var(--ae-muted); max-inline-size: 45ch; }
+.aerift-device-actions { align-self: center; margin-block: 0 .45rem; }
+.aerift-device-zone .aerift-devices > li:last-child { border-block-end: 0; padding-block-end: 0; }
+.aerift-device-confirm { grid-column: 1 / -1; margin-block: .35rem; padding: .65rem .8rem; border-inline-start: 2px solid var(--ae-edge); }
+.aerift-device-confirm p { margin: 0 0 .5rem; }
+.aerift-device-confirm .ae-actions { flex-wrap: wrap; }
+.aerift-device-trust .ae-button { min-block-size: 44px; }
