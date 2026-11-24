@@ -201,10 +201,9 @@ pub(crate) async fn open_ios_browser(
     window: WebviewWindow,
     url: String,
 ) -> Result<Vec<tauri_plugin_aerift_ios::BrowserLink>, TransferError> {
-    if window.label() != "main" || url.len() > 4096 {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
-    tauri_plugin_aerift_ios::open_browser(window.app_handle(), &url)
+    require_main(&window)?;
+    let destination = crate::workspace_link::browser_destination(&url).ok_or(ErrorCode::InvalidRequest)?;
+    tauri_plugin_aerift_ios::open_browser(window.app_handle(), destination.as_str())
         .await
         .map_err(|_| ErrorCode::InvalidRequest.into())
 }

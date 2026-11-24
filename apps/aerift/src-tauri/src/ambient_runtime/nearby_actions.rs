@@ -1,9 +1,12 @@
 //! Windows-native entry points for opt-in A4. No calls from overlay IPC or
 //! browser proposals. The owning tray/menu may call these after integration.
-use super::{ambient_context, emit, AmbientRuntime, CaptureView, Config};
+use super::{AmbientRuntime, CaptureView, Config, ambient_context, emit};
 use aerift_transfer::{
-    ambient::{nearby_runtime::NearbyRuntime, ReceiverCapabilities, Representation},
     Connector, ErrorCode, PeerId, Sender, TransferError,
+    ambient::{
+        ReceiverCapabilities, Representation,
+        nearby_runtime::{NearbyRuntime, PickupLease},
+    },
 };
 use std::time::Duration;
 
@@ -34,7 +37,7 @@ impl AmbientRuntime {
     pub(crate) fn hold_a4_native_pickup(
         &self,
         capture_id: uuid::Uuid,
-    ) -> Result<(), TransferError> {
+    ) -> Result<PickupLease, TransferError> {
         let mut cfg = self.0.config.lock().map_err(|_| ErrorCode::InternalError)?;
         self.sync_a4_policy(&cfg);
         if self.0.a4.source().is_none() {
@@ -49,9 +52,9 @@ impl AmbientRuntime {
             return Err(ErrorCode::InvalidRequest.into());
         }
         let slot = cfg.slot.take().ok_or(ErrorCode::InvalidRequest)?;
-        self.0.a4.pickup(slot.object, slot.captured_at)?;
+        let lease = self.0.a4.pickup(slot.object, slot.captured_at)?;
         emit(&cfg, CaptureView::Idle);
-        Ok(())
+        Ok(lease)
     }
 
     pub(crate) fn a4_current_capture(&self) -> Option<uuid::Uuid> {

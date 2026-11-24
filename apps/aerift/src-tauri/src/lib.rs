@@ -1,3 +1,5 @@
+#[cfg(any(windows, target_os = "ios", target_os = "android"))]
+mod workspace_link;
 #[cfg(windows)]
 mod ambient_context;
 #[cfg(all(windows, feature = "ambient-media-qualification"))]

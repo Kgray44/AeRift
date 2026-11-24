@@ -124,9 +124,9 @@ impl PeerNode {
         if let Some(nearby) = &self.nearby {
             nearby.cancel(Some(peer));
         }
-        self.pairing.remove_trust(peer)?;
+        let result = self.pairing.remove_trust(peer);
         self.receiver.expire_offers();
-        Ok(())
+        result
     }
 
     pub fn sender(
@@ -178,6 +178,7 @@ impl PeerNode {
         connection: impl Connector,
         code: RedeemCode,
     ) -> Result<Device, TransferError> {
+        let admission = self.pairing.begin_outbound(code.peer)?;
         let device = self.pairing.device();
         let request = PairRequest {
             token: code.token,
@@ -189,7 +190,7 @@ impl PeerNode {
         if reply.id != code.peer {
             return Err(ErrorCode::PeerUntrusted.into());
         }
-        self.pairing.record_remote(reply.clone())?;
+        self.pairing.record_outbound(reply.clone(), &admission)?;
         Ok(reply)
     }
 
@@ -224,6 +225,7 @@ impl PeerNode {
         if self.pairing.is_trusted(peer) || peer == self.pairing.device().id {
             return Err(ErrorCode::PairingRejected.into());
         }
+        let admission = self.pairing.begin_outbound(peer)?;
         let connection = self.endpoint(&[endpoint], peer, None)?;
         let socket = connection.connect().await?;
         let mine = self.pairing.device();
@@ -249,7 +251,10 @@ impl PeerNode {
         if started.device.id != peer {
             return Err(ErrorCode::PeerUntrusted.into());
         }
-        Ok(NearbyChallenge::new(started, endpoint, code))
+        if admission.is_cancelled() {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Ok(NearbyChallenge::new(started, endpoint, code, admission))
     }
 
     pub async fn finish_nearby(
@@ -262,6 +267,9 @@ impl PeerNode {
         }
         if challenge.expires_at <= std::time::SystemTime::now() {
             return Err(ErrorCode::PairingExpired.into());
+        }
+        if challenge.admission.is_cancelled() {
+            return Err(ErrorCode::PeerUntrusted.into());
         }
         let connection = self.endpoint(&[challenge.endpoint], challenge.device.id, None)?;
         let socket = connection.connect().await?;
@@ -278,7 +286,8 @@ impl PeerNode {
         if device.id != challenge.device.id {
             return Err(ErrorCode::PeerUntrusted.into());
         }
-        self.pairing.record_remote(device.clone())?;
+        self.pairing
+            .record_outbound(device.clone(), &challenge.admission)?;
         Ok(Some(device))
     }
 

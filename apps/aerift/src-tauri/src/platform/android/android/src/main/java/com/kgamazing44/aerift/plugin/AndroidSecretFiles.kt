@@ -25,6 +25,9 @@ internal class AndroidSecretFiles(context: Context) {
     fun initializeIdentity(candidate: String): String = synchronized(storageLock) {
         val existing = read("identity")
         if (existing == null) {
+            // Existing protected grants pin the missing certificate. Preserve
+            // them for explicit recovery instead of minting a replacement.
+            check(read("trust") == null) { "Protected identity unavailable" }
             write("identity", decode(candidate))
             candidate
         } else Base64.encodeToString(existing, Base64.NO_WRAP)

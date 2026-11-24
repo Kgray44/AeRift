@@ -11,10 +11,18 @@ static TRUST_ACCESS: Mutex<()> = Mutex::new(());
 
 impl SecretStore for IosKeychain {
     fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
-        self.load_identity().map_err(storage_failed)
+        let identity = self.load_identity().map_err(storage_failed)?;
+        if identity.is_none() && self.load_trust().map_err(storage_failed)?.is_some() {
+            return Err(ErrorCode::StorageFailed.into());
+        }
+        Ok(identity)
     }
 
     fn initialize(&self, candidate: &[u8]) -> Result<Vec<u8>, TransferError> {
+        let _access = TRUST_ACCESS.lock().map_err(storage_failed)?;
+        if let Some(current) = SecretStore::load(self)? {
+            return Ok(current);
+        }
         if self.insert_identity(candidate).map_err(storage_failed)? {
             return Ok(candidate.to_vec());
         }

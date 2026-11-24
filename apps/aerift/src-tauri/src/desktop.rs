@@ -198,15 +198,8 @@ async fn a4_action(app: &AppHandle, hold: bool) -> Result<(), TransferError> {
     let capture = runtime
         .a4_current_capture()
         .ok_or(ErrorCode::InvalidRequest)?;
-    runtime.hold_a4_native_pickup(capture)?;
-    let (pickup, generation) = runtime
-        .a4_for_nearby()?
-        .source()
-        .ok_or(ErrorCode::Conflict)?;
-    let frame = pickup
-        .as_ref()
-        .and_then(|item| item.held_frame())
-        .ok_or(ErrorCode::Conflict)?;
+    let lease = runtime.hold_a4_native_pickup(capture)?;
+    let frame = lease.frame().ok_or(ErrorCode::Conflict)?;
     let interaction = frame.projection().0;
     session.publish_a4_projection(frame);
     let result = async {
@@ -214,17 +207,17 @@ async fn a4_action(app: &AppHandle, hold: bool) -> Result<(), TransferError> {
         loop {
             tokio::select! {
                 biased;
-                _ = generation.cancelled() => return Err(ErrorCode::Cancelled.into()),
+                _ = lease.cancelled() => return Err(ErrorCode::Cancelled.into()),
                 _ = tick.tick() => {},
             }
             let nearby = runtime.a4_for_nearby()?;
-            match nearby.resolve_guarded(std::time::Instant::now(), session.as_ref(), &generation) {
+            match nearby.resolve_guarded(std::time::Instant::now(), session.as_ref(), &lease) {
                 Ok(dispatch) => {
                     let sent = session.send_a4(dispatch).await;
                     // Completion is already committed/recorded; only keep the
                     // native preview tail long enough for an existing observer.
                     tokio::select! {
-                        _ = generation.cancelled() => {},
+                        _ = lease.cancelled() => {},
                         _ = tokio::time::sleep(Duration::from_millis(1150)) => {},
                     }
                     return sent.map(|_| ());
@@ -678,15 +671,11 @@ fn wide(value: &str) -> Vec<u16> {
 }
 
 #[tauri::command]
-pub(crate) fn open_workspace_url(url: String) -> Result<(), TransferError> {
-    let parsed = tauri::Url::parse(&url).map_err(|_| ErrorCode::InvalidRequest)?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || parsed.host_str().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-    {
+pub(crate) fn open_workspace_url(window: tauri::WebviewWindow, url: String) -> Result<(), TransferError> {
+    if window.label() != "main" {
         return Err(ErrorCode::InvalidRequest.into());
     }
+    let parsed = crate::workspace_link::browser_destination(&url).ok_or(ErrorCode::InvalidRequest)?;
     let operation = wide("open");
     let address = wide(parsed.as_str());
     // A qualified HTTP(S) URL is sent directly to the OS handler with no shell interpolation.

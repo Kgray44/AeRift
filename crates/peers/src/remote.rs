@@ -231,10 +231,22 @@ impl RemotePeerNode {
     }
 
     pub fn revoke(&self, peer: PeerId) -> Result<(), TransferError> {
-        self.peer.revoke(peer)?;
+        let result = self.peer.revoke(peer);
         #[cfg(unix)]
-        self.receiver.discard_restart_checkpoints_for_peer(peer)?;
-        Ok(())
+        {
+            // Attempt partial-data cleanup even if persistence of the trust
+            // removal failed. Neither error may be reported as durable success.
+            let cleanup = self.receiver.discard_restart_checkpoints_for_peer(peer);
+            result.and(cleanup)
+        }
+        #[cfg(not(unix))]
+        result
+    }
+
+    /// Close only this session's ordinary file receiver and wait for any
+    /// earlier, already-linearized publication. Does not revoke saved peers.
+    pub fn stop_receiving(&self) {
+        self.receiver.stop_receiving();
     }
 
     /// Bind only a dedicated explicit private address, never a wildcard.

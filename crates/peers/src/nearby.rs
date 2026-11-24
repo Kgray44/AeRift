@@ -4,13 +4,14 @@ use aerift_transfer::{ErrorCode, PeerId, TransferError};
 use serde::{Deserialize, Serialize};
 use std::{
     net::SocketAddr,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
 use tokio::{
     sync::watch,
     time::{Instant, timeout_at},
 };
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{Device, Pairing, Platform, pairing::valid_name};
@@ -34,6 +35,7 @@ pub struct NearbyPending {
 pub struct NearbyChallenge {
     pending: NearbyPending,
     pub(crate) endpoint: SocketAddr,
+    pub(crate) admission: Arc<CancellationToken>,
 }
 impl std::ops::Deref for NearbyChallenge {
     type Target = NearbyPending;
@@ -45,9 +47,15 @@ impl NearbyChallenge {
     pub fn matches_endpoint(&self, endpoint: SocketAddr) -> bool {
         self.endpoint == endpoint
     }
-    pub(crate) fn new(started: Started, endpoint: SocketAddr, verification: String) -> Self {
+    pub(crate) fn new(
+        started: Started,
+        endpoint: SocketAddr,
+        verification: String,
+        admission: Arc<CancellationToken>,
+    ) -> Self {
         Self {
             endpoint,
+            admission,
             pending: NearbyPending {
                 id: started.id,
                 device: started.device,
