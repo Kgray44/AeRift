@@ -239,7 +239,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         {visible.length > 0 && <ol>{visible.map(entry => {
           const { object } = entry;
           const captured = object.kind === "clipboard" ? items.find(item => item.object.id === object.objectId)?.object : undefined;
-          return <li key={object.id} className="aerift-workspace-object" data-selected={selected.includes(object.id)}><div>
+          return <li key={object.id} className="ae-surface aerift-workspace-object" data-material="content" data-selected={selected.includes(object.id)}><div>
             <span className="aerift-object-glyph"><SpatialIcon name={object.kind === "url" ? "pair" : object.kind === "collection" ? "workspace" : "file"} size={24} /></span>
             <span className="aerift-object-kind">{object.kind}</span>
             {object.kind === "collection" ? <strong>{object.name}</strong> :

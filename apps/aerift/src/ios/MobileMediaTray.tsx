@@ -90,7 +90,7 @@ export function MobileMediaTray({ source, documents = false, port, regions, copy
 
   const items = (imports ?? []).filter(item => (item.kind === "file") === (source === "files") && (!documents || isWorkspaceDocument(item.name)));
 
-  return <section className="ios-section ios-imports" aria-label={documents ? "Imported documents" : source === "files" ? "Imported files" : "Imported photos and videos"} aria-busy={busy}>
+  return <section className="ae-surface ios-section ios-imports aw-focused-surface" data-material="content" aria-label={documents ? "Imported documents" : source === "files" ? "Imported files" : "Imported photos and videos"} aria-busy={busy}>
     <h3>{documents ? "Imported documents" : "Imported copies"}</h3>
     <p>Keep up to 24 copies on {copy.device}. Your originals stay in place.</p>
     {initialFailure ?

@@ -321,3 +321,10 @@
 @media (forced-colors: active) {
   .af-dock-bead { border-color: Highlight; }
 }
+.aerift-ios .af-liquid-dock .af-dock-label { white-space: nowrap; letter-spacing: -.015em; }
+.af-label-compact { display: none; }
+@media (max-width: 27rem) {
+  .af-label-standard { display: none; }
+  .af-label-compact { display: inline; }
+  .aerift-ios .af-liquid-dock .af-dock-label { font-size: clamp(.57rem, 2.9vw, .71rem); }
+}

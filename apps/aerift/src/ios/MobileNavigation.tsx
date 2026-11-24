@@ -59,7 +59,11 @@ export function MobileNavigation({ destination, navigate, attention, destination
         aria-current={destination === item ? "page" : undefined}
         onClick={() => navigate(item)}>
         <SpatialIcon name={icons[item]} size={21} />
-        <span>{DESTINATIONS[item].label}</span>
+        <span className="af-dock-label" aria-hidden="true">
+          <span className="af-label-standard">{DESTINATIONS[item].label}</span>
+          <span className="af-label-compact">{item === "workspace" ? "Space" : DESTINATIONS[item].label}</span>
+        </span>
+        <span className="ios-sr-only">{DESTINATIONS[item].label}</span>
         {((item === "devices" && attention.devices) || (item === "activity" && attention.activity)) &&
           <span className="ios-attention"><span className="ios-sr-only">{item === "activity" ? "Transfers active" : "Pairing requests"}</span></span>}
       </Button>)}

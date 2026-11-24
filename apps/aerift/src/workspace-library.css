@@ -35,3 +35,4 @@
   [data-motion]:not([data-motion=reduce]) .aw-card-button:hover{background-color:color-mix(in srgb,var(--ae-field) 16%,transparent)}
 }
 .ae-destination-intent{color:var(--ae-muted);font-size:.88rem;line-height:1.45;max-inline-size:50ch;margin:.35rem 0 0}
+.aerift-ios .aw-focused-surface{padding:clamp(.78rem,4vw,1.25rem);border-radius:1.35rem}

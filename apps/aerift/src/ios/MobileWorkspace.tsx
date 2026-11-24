@@ -114,7 +114,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       onAnimationEnd={event => { if (event.target === event.currentTarget && event.animationName.startsWith("ae-route-")) setModuleMotion(undefined); }}>
     {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} />}
     {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} />}
-    {current === "files" && <section className="ios-section" aria-labelledby="ios-files">
+    {current === "files" && <section className="ae-surface ios-section aw-focused-surface" data-material="content" aria-labelledby="ios-files">
       <div className="ios-section-head">
         <div><h4 id="ios-files">{documents ? "Documents on this device" : "Choose a file"}</h4><p>{documents ? "Document copies are filtered from your files." : copy.fileSources}</p></div>
         {documents ? <Button variant="quiet" onClick={() => openSection("files")}>Browse all files</Button> :
@@ -142,7 +142,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       {receivedError && <p role="alert">{receivedError}</p>}
       <p>Delivered files are saved in {copy.receivedFolder}.</p>
     </section>}
-    {current === "photos" && <section className="ios-section" aria-labelledby="ios-photos">
+    {current === "photos" && <section className="ae-surface ios-section aw-focused-surface" data-material="content" aria-labelledby="ios-photos">
       <div className="ios-section-head">
         <div><h4 id="ios-photos">Choose from your photo library</h4>
           <p>AeRift can only access items you choose in the system picker.</p></div>

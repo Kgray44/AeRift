@@ -53,6 +53,8 @@ try {
     const bounds = await dock.getByRole("button").evaluateAll(elements => elements.map(el => el.getBoundingClientRect().toJSON()));
     assert.ok(bounds.every(b => b.width >= 44 && b.height >= 44));
     assert.ok(bounds.every((b, i) => i === 0 || b.left >= bounds[i - 1].right - 1));
+    assert.equal(await dock.locator(".af-label-compact").filter({ hasText: /^Space$/ }).isVisible(), true);
+    assert.ok(await dock.locator(".af-dock-label").evaluateAll(labels => labels.every(label => label.scrollWidth <= label.clientWidth + 1)));
     await snapped(page, platform + "-workspace");
     await open(page, "File Browser");
     await button(page, "Import files").click();
