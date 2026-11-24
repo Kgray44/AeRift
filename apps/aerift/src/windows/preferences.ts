@@ -25,7 +25,7 @@ export function parseDesktopPreferences(value: unknown): DesktopPreferences {
   return {
     experience: restorePreferences(input.experience ?? { ...appearance, version: 1 }),
     route: route === "workspace" || route === "rift" || route === "activity" ||
-      route === "devices" || route === "settings" ? route : "home",
+      route === "devices" || route === "friends" || route === "settings" ? route : "home",
     orbitShortcut: input.orbitShortcut === "off" || input.orbitShortcut === "alt-shift-o" ? input.orbitShortcut : "alt-o",
     gestures: (input.gestures ?? input.gesturesEnabled) === true,
     cameraShortcut: input.cameraShortcut === "off" || input.cameraShortcut === "v" ? input.cameraShortcut : "c",

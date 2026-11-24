@@ -6,6 +6,7 @@ import {
   SpatialIcon, ThemeProvider, TransferWorkspace, type GestureCameraStatus, type WorkspaceConnection,
 } from "@aerift/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FriendsWorkspace } from "../FriendsWorkspace";
 import { DeviceTrust } from "../DeviceTrust";
 import { command, nativeAppPort } from "../nativeAppPort";
 import { DesktopHome } from "./DesktopHome";
@@ -38,6 +39,7 @@ export function DesktopApp() {
   const surfaceRef = useRef<HTMLElement>(null);
   const navigation = getNavigation("desktop", settings.experience, {
     ambient: ambientAvailable ? "available" : "unsupported", camera: "unknown",
+    friends: snapshot?.friends?.version === 1 && nativeAppPort.friends ? "available" : "unsupported",
   });
   const route = navigation.primary.some(item => item.id === settings.route) ? settings.route : "home";
   useDesktopContentEnter(route, surfaceRef, "orbit");
@@ -196,6 +198,8 @@ export function DesktopApp() {
             {connection.state === "disconnected" && <Button onClick={retryConnection}>Retry connection</Button>}
           </div>
         </>}
+        {route === "friends" && snapshot?.friends?.version === 1 && nativeAppPort.friends &&
+          <FriendsWorkspace snapshot={snapshot.friends} port={nativeAppPort.friends} />}
         {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
           if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);
           setSettings(next);

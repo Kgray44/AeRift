@@ -5,6 +5,7 @@ export const DESTINATIONS = {
   home: { id: "home", label: "Home", icon: "home" },
   workspace: { id: "workspace", label: "Workspace", icon: "workspace" },
   rift: { id: "rift", label: "Rift", icon: "rift" },
+  friends: { id: "friends", label: "Friends", icon: "friends" },
   devices: { id: "devices", label: "Devices", icon: "devices" },
   activity: { id: "activity", label: "Activity", icon: "activity" },
   settings: { id: "settings", label: "Settings", icon: "settings" },
@@ -75,6 +76,7 @@ export type CapabilityStatus = "available" | "unknown" | "denied" | "unsupported
 export interface PlatformCapabilities {
   ambient: CapabilityStatus;
   camera: CapabilityStatus;
+  friends?: CapabilityStatus;
 }
 
 export interface NavigationPresentation {
@@ -92,7 +94,9 @@ export function getNavigation(
   const mobile = formFactor === "mobile";
   const primary: Destination[] = [DESTINATIONS.home];
   if (mobile || preferences.windowMode === "full") primary.push(DESTINATIONS.workspace);
-  primary.push(DESTINATIONS.rift, DESTINATIONS.devices, DESTINATIONS.activity);
+  primary.push(DESTINATIONS.rift, DESTINATIONS.devices);
+  if (capabilities.friends === "available") primary.push(DESTINATIONS.friends);
+  primary.push(DESTINATIONS.activity);
   if (!mobile) primary.push(DESTINATIONS.settings);
   return {
     presentation: mobile ? "bottom" : preferences.desktopNavigation,

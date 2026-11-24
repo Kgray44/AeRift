@@ -1,0 +1,314 @@
+use aerift_peers::{FriendAuthority, FriendBook, FriendRecord, FriendStore, SecretStore};
+use aerift_transfer::{ErrorCode, PeerId, TransferError};
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
+
+#[derive(Default)]
+struct Memory(Mutex<Option<Vec<u8>>>);
+impl SecretStore for Memory {
+    fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+    fn initialize(&self, candidate: &[u8]) -> Result<Vec<u8>, TransferError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .get_or_insert(candidate.to_vec())
+            .clone())
+    }
+}
+impl FriendStore for Memory {
+    fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
+        SecretStore::load(self)
+    }
+    fn replace(&self, expected: Option<&[u8]>, data: &[u8]) -> Result<(), TransferError> {
+        let mut s = self.0.lock().unwrap();
+        if s.as_deref() != expected {
+            return Err(ErrorCode::Conflict.into());
+        }
+        *s = Some(data.to_vec());
+        Ok(())
+    }
+}
+
+#[test]
+fn two_approvals_and_exact_devices_bind_invitation_to_person() {
+    let store = Memory::default();
+    let alice = FriendAuthority::load_or_create(&store).unwrap();
+    assert_eq!(
+        FriendAuthority::load_or_create(&store).unwrap().id(),
+        alice.id()
+    );
+    let bob = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let alice_phone = PeerId::from_tls_leaf(b"synthetic-alice");
+    let bob_phone = PeerId::from_tls_leaf(b"synthetic-bob");
+    let bob_desktop = PeerId::from_tls_leaf(b"synthetic-bob-desktop");
+    let invitation = alice.invite(alice_phone, bob.id(), bob_phone, 100).unwrap();
+    assert!(
+        bob.accept(&invitation, alice_phone, bob_desktop, 101)
+            .is_err()
+    );
+    assert!(
+        bob.accept(&invitation, alice_phone, bob_phone, 700)
+            .is_err()
+    );
+    let accepted = bob
+        .accept(&invitation, alice_phone, bob_phone, 101)
+        .unwrap();
+    assert!(
+        alice
+            .confirm(&invitation, &accepted, bob_desktop, 101)
+            .is_err()
+    );
+    let approval = alice
+        .confirm(&invitation, &accepted, bob_phone, 101)
+        .unwrap();
+    assert!(
+        FriendRecord::verify(
+            &invitation,
+            &accepted,
+            &approval,
+            alice.id(),
+            bob_desktop,
+            bob_phone,
+            101
+        )
+        .is_err()
+    );
+    let local = FriendRecord::verify(
+        &invitation,
+        &accepted,
+        &approval,
+        alice.id(),
+        alice_phone,
+        bob_phone,
+        101,
+    )
+    .unwrap();
+    let remote = FriendRecord::verify(
+        &invitation,
+        &accepted,
+        &approval,
+        bob.id(),
+        bob_phone,
+        alice_phone,
+        101,
+    )
+    .unwrap();
+    assert_eq!(local.person(), bob.id());
+    assert_eq!(remote.person(), alice.id());
+}
+
+#[test]
+fn sender_awards_one_device_and_persists_withdrawal_across_reopening() {
+    let alice = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let bob = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let alice_phone = PeerId::from_tls_leaf(b"synthetic-alice");
+    let phone = PeerId::from_tls_leaf(b"synthetic-phone");
+    let laptop = PeerId::from_tls_leaf(b"synthetic-laptop");
+    let invite = alice.invite(alice_phone, bob.id(), phone, 100).unwrap();
+    let consent = bob.accept(&invite, alice_phone, phone, 101).unwrap();
+    let confirm = alice.confirm(&invite, &consent, phone, 102).unwrap();
+    let verified = FriendRecord::verify(
+        &invite,
+        &consent,
+        &confirm,
+        alice.id(),
+        alice_phone,
+        phone,
+        102,
+    )
+    .unwrap();
+    let store = Arc::new(Memory::default());
+    let book = FriendBook::open(alice.id(), store.clone()).unwrap();
+    let wrong_book = FriendBook::open(bob.id(), Arc::new(Memory::default())).unwrap();
+    assert!(wrong_book.add(verified.clone(), 102).is_err());
+    let relationship = verified.relationship();
+    assert!(book.add(verified.clone(), 400).is_err());
+    book.add(verified, 102).unwrap();
+    assert!(FriendBook::open(bob.id(), store.clone()).is_err());
+    book.enroll(bob.enroll(relationship, laptop, 103).unwrap(), laptop, 104)
+        .unwrap();
+    let intent = Uuid::new_v4();
+    book.offer(intent, bob.id(), None, [42; 32]).unwrap();
+    let t = std::thread::scope(|s| {
+        let a = s.spawn(|| book.claim(intent, phone, [42; 32]));
+        let b = s.spawn(|| book.claim(intent, laptop, [42; 32]));
+        assert_ne!(a.join().unwrap().is_ok(), b.join().unwrap().is_ok());
+        book.winner(intent).unwrap().unwrap()
+    });
+    let loser = if t == phone { laptop } else { phone };
+    let book = FriendBook::open(alice.id(), store).unwrap();
+    assert_eq!(book.winner(intent).unwrap(), Some(t));
+    assert_eq!(
+        book.claim(intent, t, [42; 32]).unwrap(),
+        aerift_peers::FriendClaim::AlreadyAwarded
+    );
+    assert!(book.claim(intent, loser, [42; 32]).is_err());
+    assert!(book.claim(intent, t, [41; 32]).is_err());
+    assert!(book.authorize_payload(intent, t, [42; 32]).is_ok());
+    std::thread::scope(|s| {
+        let a = s.spawn(|| book.begin_payload(intent, t, [42; 32]));
+        let b = s.spawn(|| book.begin_payload(intent, t, [42; 32]));
+        assert_ne!(a.join().unwrap().is_ok(), b.join().unwrap().is_ok());
+    });
+    book.revoke_device(bob.id(), t).unwrap();
+    assert!(book.authorize_payload(intent, t, [42; 32]).is_err());
+    assert!(book.claim(intent, loser, [42; 32]).is_err());
+    assert!(
+        book.enroll(bob.enroll(relationship, t, 105).unwrap(), t, 106)
+            .is_err()
+    );
+}
+
+#[test]
+fn altered_invite_and_cross_invite_consent_never_authorize() {
+    use aerift_peers::FriendInvitation;
+    let alice = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let bob = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let a = PeerId::from_tls_leaf(b"a");
+    let b = PeerId::from_tls_leaf(b"b");
+    let invite = alice.invite(a, bob.id(), b, 100).unwrap();
+    let signed = bob.accept(&invite, a, b, 101).unwrap();
+    let other = alice.invite(a, bob.id(), b, 100).unwrap();
+    assert!(alice.confirm(&other, &signed, b, 101).is_err());
+    let mut value = serde_json::to_value(&invite).unwrap();
+    value["issued"] = 99.into();
+    value["expires"] = 399.into();
+    let altered: FriendInvitation = serde_json::from_value(value).unwrap();
+    assert!(bob.accept(&altered, a, b, 101).is_err());
+}
+
+#[test]
+fn denied_friend_or_other_device_cannot_receive_or_claim_specific_offer() {
+    let a = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let b = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let a_phone = PeerId::from_tls_leaf(b"a-phone");
+    let b_phone = PeerId::from_tls_leaf(b"b-phone");
+    let b_laptop = PeerId::from_tls_leaf(b"b-laptop");
+    let untrusted = PeerId::from_tls_leaf(b"nearby-but-not-friend");
+    let invite = a.invite(a_phone, b.id(), b_phone, 10).unwrap();
+    let accepted = b.accept(&invite, a_phone, b_phone, 11).unwrap();
+    let confirmed = a.confirm(&invite, &accepted, b_phone, 12).unwrap();
+    let book = FriendBook::open(a.id(), Arc::new(Memory::default())).unwrap();
+    let friend =
+        FriendRecord::verify(&invite, &accepted, &confirmed, a.id(), a_phone, b_phone, 13).unwrap();
+    let relationship = friend.relationship();
+    book.add(friend.clone(), 13).unwrap();
+    assert!(!book.may_receive_from(b.id(), untrusted).unwrap());
+    assert!(
+        book.enroll(b.enroll(relationship, b_laptop, 13).unwrap(), untrusted, 14)
+            .is_err()
+    );
+    book.enroll(b.enroll(relationship, b_laptop, 14).unwrap(), b_laptop, 15)
+        .unwrap();
+    assert!(book.may_receive_from(b.id(), b_phone).unwrap());
+    book.set_receive_permission(b.id(), false).unwrap();
+    assert!(!book.may_receive_from(b.id(), b_phone).unwrap());
+    let intent = Uuid::new_v4();
+    book.offer(intent, b.id(), Some(b_laptop), [1; 32]).unwrap();
+    assert!(book.claim(intent, b_phone, [1; 32]).is_err());
+    assert!(book.claim(intent, untrusted, [1; 32]).is_err());
+    assert!(book.claim(intent, b_laptop, [1; 32]).is_ok());
+    book.remove(b.id()).unwrap();
+    assert!(book.begin_payload(intent, b_laptop, [1; 32]).is_err());
+    assert!(
+        book.add(friend, 16).is_err(),
+        "the accepted invitation must not be replayable after removing a friendship"
+    );
+    let old_enrollment = b.enroll(relationship, b_laptop, 16).unwrap();
+    let new_invite = a.invite(a_phone, b.id(), b_phone, 17).unwrap();
+    let new_accept = b.accept(&new_invite, a_phone, b_phone, 18).unwrap();
+    let new_confirm = a.confirm(&new_invite, &new_accept, b_phone, 19).unwrap();
+    let new_friend = FriendRecord::verify(
+        &new_invite,
+        &new_accept,
+        &new_confirm,
+        a.id(),
+        a_phone,
+        b_phone,
+        20,
+    )
+    .unwrap();
+    assert_ne!(relationship, new_friend.relationship());
+    book.add(new_friend, 20).unwrap();
+    assert!(book.enroll(old_enrollment, b_laptop, 20).is_err());
+}
+
+#[test]
+fn private_contact_card_bootstraps_only_a_bound_targeted_invite() {
+    let a = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let b = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let c = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let ap = PeerId::from_tls_leaf(b"invite-issuer");
+    let bp = PeerId::from_tls_leaf(b"contact-card-owner");
+    let cp = PeerId::from_tls_leaf(b"not-the-target-device");
+    let card = b.contact_card(bp, 10).unwrap();
+    let invite = a.invite_contact(ap, &card, 11).unwrap();
+    assert!(c.accept(&invite, ap, cp, 12).is_err());
+    assert!(b.accept(&invite, ap, bp, 12).is_ok());
+    assert!(a.invite_contact(ap, &card, 86_410).is_err());
+    assert!(a.invite_contact(ap, &(card + "AA"), 11).is_err());
+}
+
+#[test]
+fn separate_book_instances_cannot_double_award_after_reading_same_revision() {
+    use std::sync::{
+        Barrier,
+        atomic::{AtomicBool, Ordering},
+    };
+    struct RaceStore {
+        inner: Memory,
+        synchronize_reads: AtomicBool,
+        ready: Barrier,
+    }
+    impl FriendStore for RaceStore {
+        fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
+            let snapshot = FriendStore::load(&self.inner)?;
+            if self.synchronize_reads.load(Ordering::SeqCst) {
+                self.ready.wait();
+            }
+            Ok(snapshot)
+        }
+        fn replace(&self, expected: Option<&[u8]>, data: &[u8]) -> Result<(), TransferError> {
+            self.inner.replace(expected, data)
+        }
+    }
+    let a = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let b = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let ap = PeerId::from_tls_leaf(b"a-sender");
+    let bp1 = PeerId::from_tls_leaf(b"b-device-1");
+    let bp2 = PeerId::from_tls_leaf(b"b-device-2");
+    let invite = a.invite(ap, b.id(), bp1, 100).unwrap();
+    let acceptance = b.accept(&invite, ap, bp1, 101).unwrap();
+    let approval = a.confirm(&invite, &acceptance, bp1, 102).unwrap();
+    let verified =
+        FriendRecord::verify(&invite, &acceptance, &approval, a.id(), ap, bp1, 103).unwrap();
+    let relation = verified.relationship();
+    let storage = Arc::new(RaceStore {
+        inner: Memory::default(),
+        synchronize_reads: AtomicBool::new(false),
+        ready: Barrier::new(2),
+    });
+    let first = FriendBook::open(a.id(), storage.clone()).unwrap();
+    let second = FriendBook::open(a.id(), storage.clone()).unwrap();
+    first.add(verified, 103).unwrap();
+    first
+        .enroll(b.enroll(relation, bp2, 104).unwrap(), bp2, 105)
+        .unwrap();
+    let intent = Uuid::new_v4();
+    first.offer(intent, b.id(), None, [7; 32]).unwrap();
+    storage.synchronize_reads.store(true, Ordering::SeqCst);
+    std::thread::scope(|s| {
+        let a = s.spawn(|| first.claim(intent, bp1, [7; 32]));
+        let b = s.spawn(|| second.claim(intent, bp2, [7; 32]));
+        assert_ne!(a.join().unwrap().is_ok(), b.join().unwrap().is_ok());
+    });
+    storage.synchronize_reads.store(false, Ordering::SeqCst);
+    assert!(first.winner(intent).unwrap().is_some());
+    assert_eq!(
+        first.winner(intent).unwrap(),
+        second.winner(intent).unwrap()
+    );
+}

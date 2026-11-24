@@ -6,6 +6,7 @@ import {
 import type { AppPort, AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift/app-contract/experience";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FriendsWorkspace } from "../FriendsWorkspace";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { IosGestureCamera, iosCameraPermission, type IosCameraPermission } from "./IosGestureCamera";
@@ -15,7 +16,7 @@ import { nativeMobileMedia, type MobileMediaPort } from "./mobile-media";
 import { MobileWorkspace, type ModuleVisibility, type PickerSource } from "./MobileWorkspace";
 import { decodeMobileObjects, persistMobileObjects, readMobileObjects, removeMobileObject, type MobileObject } from "./local-objects";
 import { decodeMobileHistory, historyStorageKey, isTerminalRecord, recordTransfers, withArchivedTransfers } from "./mobile-history";
-import { mobileDestinations, mobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
+import { getMobileNavigation, summarizeMobile, type MobileDestination } from "./mobile-experience";
 import { mobileMotionDirection, observeMobileMotionSuppression, type MobileMotionDirection } from "./mobile-motion";
 import "./ios.css";
 
@@ -111,7 +112,13 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
   const [confirmClearPins, setConfirmClearPins] = useState(false);
   const [settingsError, setSettingsError] = useState(false);
   const [route, setRoute] = useState<{ destination: MobileDestination; motion?: MobileMotionDirection }>({ destination: "home" });
-  const { destination } = route;
+  const friendsAvailable = snapshot?.friends?.version === 1 && !!port.friends;
+  const navigation = useMemo(() => getMobileNavigation(friendsAvailable), [friendsAvailable]);
+  const destinations = navigation.primary.map(({ id }) => id).filter((id): id is MobileDestination => id !== "settings");
+  const destination = route.destination === "friends" && !friendsAvailable ? "home" : route.destination;
+  useEffect(() => {
+    if (!friendsAvailable) setRoute(current => current.destination === "friends" ? { destination: "home" } : current);
+  }, [friendsAvailable]);
   const [discoveryError, setDiscoveryError] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
@@ -205,10 +212,10 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
     const placed = lastPlacedRoute.current;
     const from = placed.destination;
     setRoute(current => {
-      const change = createNavigationChange(mobileNavigation, current.destination, next, "user");
+      const change = createNavigationChange(navigation, current.destination, next, "user");
       if (!change || change.to === "settings") return current;
       if (from === change.to) return placed;
-      return { destination: change.to, motion: mobileMotionDirection(mobileDestinations, from, change.to) };
+      return { destination: change.to, motion: mobileMotionDirection(destinations, from, change.to) };
     });
   }
 
@@ -361,6 +368,8 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
                   markClipboardSelection={id => { clipboardSelections.current.add(id); }} />
                 {objectError && <p role="alert">{objectError}</p>}
               </>}
+              {destination === "friends" && snapshot?.friends?.version === 1 && port.friends &&
+                <FriendsWorkspace snapshot={snapshot.friends} port={port.friends} mobile />}
               {destination === "devices" && <div className="ios-section">
                 <DeviceTrust snapshot={snapshot} port={port} />
                 {regions.pairingAction}
@@ -369,7 +378,7 @@ export function IosApp({ port = nativeAppPort, pick = pickNative, media = native
             </div>,
           }}
         />
-        <MobileNavigation destination={destination} navigate={navigate}
+        <MobileNavigation destinations={destinations} destination={destination} navigate={navigate}
           attention={{ devices: summary.pairRequests > 0, activity: summary.active.length > 0 }} />
       </AppShell>
       <Sheet open={settingsOpen} title="Control Center" onClose={closeSettings}>

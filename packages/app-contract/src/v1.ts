@@ -1,3 +1,5 @@
+import type { FriendsPort, FriendsSnapshot } from "./friends.js";
+
 /** Version 1 DTOs for the trusted webview/native boundary. */
 export const PROTOCOL_VERSION = 1;
 
@@ -95,6 +97,10 @@ export type GestureCommand =
   | { version: 1; action: "interrupt"; intentId: string };
 
 export interface AppSnapshot {
+  /** Missing until a native runtime supports authoritative Friends operations. */
+  friends?: FriendsSnapshot;
+  /** Explicit personal grants. Missing on hosts that do not implement My Devices. */
+  personalDeviceIds?: readonly DeviceId[];
   version: 1;
   devices: readonly Device[];
   transfers: readonly Transfer[];
@@ -104,6 +110,7 @@ export interface AppSnapshot {
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ProtocolError };
 
 export interface AppPort {
+  friends?: FriendsPort;
   /** Emit an initial snapshot and ordered updates. The callback's return value is ignored. */
   watch(listener: (snapshot: AppSnapshot) => void): Promise<Result<() => void>>;
   /** Resolve successfully with null when the user closes the picker. */

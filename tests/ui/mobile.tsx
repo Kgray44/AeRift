@@ -1,3 +1,4 @@
+import { friendsFixture } from "./friends-fixture";
 import { createRoot } from "react-dom/client";
 import type { AppPort, AppSnapshot, Transfer } from "@aerift/app-contract";
 import { installMotionFixture, respondToMotionReceipt } from "./motion-fixture";
@@ -33,7 +34,10 @@ function publish(transfer: Transfer) {
   return { ok: true, value: transfer } as const;
 }
 
+const friends = new URLSearchParams(location.search).get("friendsFixture") === "1"
+  ? friendsFixture(() => snapshot, broadcast) : undefined;
 const port: AppPort = {
+  ...(friends ? { friends } : {}),
   async watch(listener) {
     watchers.add(listener);
     listener(snapshot);

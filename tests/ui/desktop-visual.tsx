@@ -1,3 +1,5 @@
+import { friendsFixture } from "./friends-fixture";
+import type { FriendsRequest } from "@aerift/app-contract/friends";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { AppSnapshot, FileSelection, TransferRequest } from "@aerift/app-contract";
@@ -40,7 +42,20 @@ function broadcast(value: AppSnapshot) {
   for (const id of subscribers.keys()) emit(id, value);
 }
 if (motionFixture) installMotionFixture(first.id, () => snapshot, broadcast);
+const friends = query.get("friendsFixture") === "1" ? friendsFixture(() => snapshot, broadcast) : undefined;
 mockIPC((cmd, args) => {
+  if (friends && cmd === "friends_create_contact_card") return friends.createContactCard().then(result => {
+    if (!result.ok) throw result.error;
+    return result.value;
+  });
+  if (friends && cmd === "friends_create_invitation") return friends.createInvitation((args as { recipientCard: string }).recipientCard).then(result => {
+    if (!result.ok) throw result.error;
+    return result.value;
+  });
+  if (friends && cmd === "friends_pick_object") return friends.pickObject("file").then(result => result.ok ? result.value : null);
+  if (friends && cmd === "friends_apply") return friends.apply((args as { request: FriendsRequest }).request).then(result => {
+    if (!result.ok) throw result.error;
+  });
   if (cmd === "watch_app") {
     if (state === "offline") throw { code: "connection_failed" };
     const channel = (args as { updates: { id: number } }).updates;

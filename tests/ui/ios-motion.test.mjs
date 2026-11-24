@@ -49,8 +49,8 @@ test("persistent views mirror their entrance in RTL and opt out for both Reduce 
 
 test("immediate route reversals use the live state and do not move the last presented page", () => {
   const app = ios("IosApp.tsx");
-  assert.match(app, /setRoute\(current => \{\s+const change = createNavigationChange\(mobileNavigation, current\.destination,/);
-  assert.match(app, /motion: mobileMotionDirection\(mobileDestinations, from, change\.to\)/);
+  assert.match(app, /setRoute\(current => \{\s+const change = createNavigationChange\(navigation, current\.destination,/);
+  assert.match(app, /motion: mobileMotionDirection\(destinations, from, change\.to\)/);
   assert.match(app, /if \(settingsOpen \|\| lastFocusedRoute\.current === destination\) return/);
 });
 
