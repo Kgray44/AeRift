@@ -348,3 +348,12 @@
   font: inherit;
 }
 .ae-pairing textarea { resize: vertical; }
+
+.ae-pair-verification {
+  font-size: clamp(1.75rem, 8vw, 2.5rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  letter-spacing: .20em;
+  margin-block: var(--ae-space-2);
+  overflow-wrap: anywhere;
+}

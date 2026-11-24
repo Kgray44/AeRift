@@ -2,6 +2,7 @@
 
 mod discovery;
 mod identity;
+mod nearby;
 mod network;
 mod pairing;
 
@@ -9,3 +10,5 @@ pub use discovery::{DiscoveredPeer, Discovery, SERVICE_TYPE};
 pub use identity::{Identity, SecretStore};
 pub use network::{PeerNode, PinnedEndpoint};
 pub use pairing::{Device, InvitationCode, Pairing, PendingPairing, Platform, TrustStore};
+
+pub use nearby::{NearbyChallenge, NearbyPending};

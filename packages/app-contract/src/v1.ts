@@ -41,7 +41,18 @@ export interface PairingInvitation {
   expiresAt: string;
 }
 
+export interface NearbyPairingVerification {
+  requestId: string;
+  device: Device;
+  expiresAt: string;
+  verification: string;
+  outgoing?: boolean;
+  approved: boolean;
+}
+
 export type PairingRequest =
+  | { action: "start_nearby"; deviceId: DeviceId }
+  | { action: "confirm_nearby"; requestId: string; accept: boolean; outgoing: boolean }
   | { action: "create" }
   | { action: "redeem"; code: string }
   | { action: "confirm"; requestId: string; accept: boolean }
@@ -51,7 +62,8 @@ export type PairingResult =
   | { state: "invitation"; invitation: PairingInvitation }
   | { state: "paired"; device: Device }
   | { state: "rejected" }
-  | { state: "revoked" };
+  | { state: "revoked" }
+  | { state: "nearby_started" | "nearby_waiting" };
 
 export interface FileInfo {
   name: string;
@@ -98,6 +110,9 @@ export interface AppSnapshot {
   version: 1;
   devices: readonly Device[];
   transfers: readonly Transfer[];
+  nearbyVerification?: boolean;
+  nearbyPairingIncoming?: NearbyPairingVerification | null;
+  nearbyPairingOutgoing?: NearbyPairingVerification | null;
   pendingPairing: readonly { requestId: string; device: Device; expiresAt: string }[];
 }
 

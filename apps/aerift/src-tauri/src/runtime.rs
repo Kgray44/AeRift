@@ -15,7 +15,7 @@ use std::{
     ptr::null_mut,
 };
 
-use aerift_peers::{Device, DiscoveredPeer, PeerNode};
+use aerift_peers::{Device, DiscoveredPeer, NearbyChallenge, NearbyPending, PeerNode};
 #[cfg(windows)]
 use aerift_peers::{Discovery, Identity, Platform};
 use aerift_transfer::{
@@ -72,6 +72,34 @@ struct PairingView {
     device: PeerView,
     expires_at: String,
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NearbyPairingView {
+    request_id: Uuid,
+    device: PeerView,
+    expires_at: String,
+    verification: String,
+    #[serde(skip_serializing_if = "is_false")]
+    outgoing: bool,
+    approved: bool,
+}
+fn is_false(value: &bool) -> bool {
+    !value
+}
+fn nearby_pairing_view(pending: &NearbyPending, outgoing: bool) -> Option<NearbyPairingView> {
+    Some(NearbyPairingView {
+        request_id: pending.id,
+        device: PeerView {
+            device: pending.device.clone(),
+            paired: false,
+            online: true,
+        },
+        expires_at: timestamp(pending.expires_at).ok()?,
+        verification: pending.verification.clone(),
+        outgoing,
+        approved: pending.approved,
+    })
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +134,9 @@ pub(crate) struct AppSnapshot {
     devices: Vec<PeerView>,
     transfers: Vec<TransferView>,
     pending_pairing: Vec<PairingView>,
+    nearby_pairing_incoming: Option<NearbyPairingView>,
+    nearby_pairing_outgoing: Option<NearbyPairingView>,
+    nearby_verification: bool,
     #[cfg(target_os = "ios")]
     local_network: BonjourState,
 }
@@ -117,10 +148,25 @@ pub(crate) struct AppSnapshot {
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum PairRequest {
+    StartNearby {
+        device_id: PeerId,
+    },
+    ConfirmNearby {
+        request_id: Uuid,
+        accept: bool,
+        outgoing: bool,
+    },
     Create,
-    Redeem { code: String },
-    Confirm { request_id: Uuid, accept: bool },
-    Revoke { device_id: PeerId },
+    Redeem {
+        code: String,
+    },
+    Confirm {
+        request_id: Uuid,
+        accept: bool,
+    },
+    Revoke {
+        device_id: PeerId,
+    },
 }
 
 #[derive(Serialize)]
@@ -137,6 +183,8 @@ pub(crate) enum PairResult {
     Paired { device: PeerView },
     Rejected,
     Revoked,
+    NearbyStarted,
+    NearbyWaiting,
 }
 
 #[derive(Deserialize)]
@@ -175,6 +223,7 @@ struct Outgoing {
 #[derive(Default)]
 struct LiveState {
     peers: Vec<DiscoveredPeer>,
+    nearby_outgoing: Option<NearbyChallenge>,
     outgoing: Vec<Outgoing>,
     #[cfg(target_os = "ios")]
     local_network: Option<BonjourState>,
@@ -212,6 +261,7 @@ pub(crate) struct Session {
     receiver: Arc<Receiver>,
     state: Mutex<LiveState>,
     receive_approvals: Mutex<()>,
+    nearby_initiation: tokio::sync::Mutex<()>,
     changes: watch::Sender<u64>,
     stop: CancellationToken,
 }
@@ -244,6 +294,7 @@ impl AppRuntime {
         let mut changed = session.changes.subscribe();
         let mut incoming = session.receiver.subscribe();
         let mut pairing = session.peer.pairing().subscribe();
+        let mut nearby = session.peer.subscribe_nearby();
         let id = Uuid::new_v4();
         let stop = session.stop.child_token();
         updates
@@ -259,6 +310,7 @@ impl AppRuntime {
                     result = changed.changed() => if result.is_err() { break },
                     result = incoming.changed() => if result.is_err() { break },
                     result = pairing.changed() => if result.is_err() { break },
+                    result = nearby.changed() => if result.is_err() { break },
                 }
                 // Stream several chunks between UI paints. Terminal receipts remain in the snapshot.
                 tokio::time::sleep(Duration::from_millis(80)).await;
@@ -358,6 +410,7 @@ impl Session {
             peer,
             receiver,
             receive_approvals: Mutex::new(()),
+            nearby_initiation: tokio::sync::Mutex::new(()),
             state: Mutex::new(LiveState {
                 peers: discovery
                     .as_ref()
@@ -378,8 +431,11 @@ impl Session {
                     active.changed();
                 }
             };
+            let discovery_scope = Arc::downgrade(&active);
             tokio::select! {
-                _ = active.peer.serve(listener, active.stop.clone()) => {},
+                _ = active.peer.serve_with_nearby(listener, active.stop.clone(), move |id, source| {
+                    discovery_scope.upgrade().is_some_and(|session| session.nearby_source(id, source))
+                }) => {},
                 _ = browse => {},
             }
             lock(&active.state).peers.clear();
@@ -451,6 +507,17 @@ impl Session {
             devices: devices.into_values().collect(),
             transfers,
             pending_pairing,
+            nearby_pairing_incoming: self
+                .peer
+                .subscribe_nearby()
+                .borrow()
+                .as_ref()
+                .and_then(|pending| nearby_pairing_view(pending, false)),
+            nearby_pairing_outgoing: state
+                .nearby_outgoing
+                .as_ref()
+                .and_then(|pending| nearby_pairing_view(pending, true)),
+            nearby_verification: true,
             #[cfg(target_os = "ios")]
             local_network: state.local_network.unwrap_or(BonjourState::Disabled),
         }
@@ -463,6 +530,22 @@ impl Session {
             .find(|peer| peer.device.id == id)
             .and_then(|peer| peer.endpoints.iter().find(|addr| addr.is_ipv4()).copied())
             .ok_or_else(|| ErrorCode::PeerUnavailable.into())
+    }
+
+    fn nearby_source(&self, id: PeerId, source: SocketAddr) -> bool {
+        let state = lock(&self.state);
+        #[cfg(target_os = "ios")]
+        if !matches!(state.local_network, Some(BonjourState::Ready)) {
+            return false;
+        }
+        source.is_ipv4()
+            && state.peers.iter().any(|peer| {
+                peer.device.id == id
+                    && peer
+                        .endpoints
+                        .iter()
+                        .any(|endpoint| endpoint.ip() == source.ip())
+            })
     }
 
     fn paired_view(&self, device: Device) -> PairResult {
@@ -481,6 +564,96 @@ impl Session {
         request: PairRequest,
     ) -> Result<PairResult, TransferError> {
         let result = match request {
+            PairRequest::StartNearby { device_id } => {
+                let _start = self
+                    .nearby_initiation
+                    .try_lock()
+                    .map_err(|_| ErrorCode::PairingRejected)?;
+                let endpoint = self.endpoint(device_id)?;
+                if lock(&self.state).nearby_outgoing.is_some()
+                    || !self.nearby_source(device_id, endpoint)
+                {
+                    return Err(ErrorCode::PairingRejected.into());
+                }
+                let pending = self.peer.begin_nearby(endpoint, device_id).await?;
+                if !self.nearby_source(device_id, endpoint) {
+                    let _ = self.peer.finish_nearby(pending, false).await;
+                    return Err(ErrorCode::PeerUnavailable.into());
+                }
+                let id = pending.id;
+                let wait = pending
+                    .expires_at
+                    .duration_since(SystemTime::now())
+                    .unwrap_or_default();
+                lock(&self.state).nearby_outgoing = Some(pending);
+                let session = Arc::downgrade(self);
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(wait).await;
+                    if let Some(session) = session.upgrade() {
+                        let mut state = lock(&session.state);
+                        if state
+                            .nearby_outgoing
+                            .as_ref()
+                            .is_some_and(|pending| pending.id == id)
+                        {
+                            state.nearby_outgoing = None;
+                            drop(state);
+                            session.changed();
+                        }
+                    }
+                });
+                PairResult::NearbyStarted
+            }
+            PairRequest::ConfirmNearby {
+                request_id,
+                accept,
+                outgoing,
+            } => {
+                if outgoing {
+                    let _confirm = self
+                        .nearby_initiation
+                        .try_lock()
+                        .map_err(|_| ErrorCode::PairingRejected)?;
+                    let pending = lock(&self.state)
+                        .nearby_outgoing
+                        .as_ref()
+                        .filter(|pending| pending.id == request_id)
+                        .cloned()
+                        .ok_or(ErrorCode::PairingExpired)?;
+                    let outcome = async {
+                        let endpoint = self.endpoint(pending.device.id)?;
+                        if !pending.matches_endpoint(endpoint)
+                            || !self.nearby_source(pending.device.id, endpoint)
+                        {
+                            return Err(ErrorCode::PeerUnavailable.into());
+                        }
+                        self.peer.finish_nearby(pending, accept).await
+                    }
+                    .await;
+                    {
+                        let mut state = lock(&self.state);
+                        if state
+                            .nearby_outgoing
+                            .as_ref()
+                            .is_some_and(|pending| pending.id == request_id)
+                        {
+                            state.nearby_outgoing = None;
+                        }
+                    }
+                    self.changed();
+                    match outcome? {
+                        Some(device) => self.paired_view(device),
+                        None => PairResult::Rejected,
+                    }
+                } else {
+                    self.peer.confirm_nearby(request_id, accept)?;
+                    if accept {
+                        PairResult::NearbyWaiting
+                    } else {
+                        PairResult::Rejected
+                    }
+                }
+            }
             PairRequest::Create => {
                 let invitation = self.peer.pairing().create_invitation()?;
                 PairResult::Invitation {

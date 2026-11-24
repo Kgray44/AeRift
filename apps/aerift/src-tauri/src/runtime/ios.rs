@@ -56,13 +56,22 @@ impl Session {
             peer,
             receiver,
             receive_approvals: Mutex::new(()),
+            nearby_initiation: tokio::sync::Mutex::new(()),
             state: Mutex::default(),
             changes: watch::channel(0).0,
             stop,
         });
         let active = Arc::clone(&session);
         tauri::async_runtime::spawn(async move {
-            let _ = active.peer.serve(listener, active.stop.clone()).await;
+            let discovery_scope = Arc::downgrade(&active);
+            let _ = active
+                .peer
+                .serve_with_nearby(listener, active.stop.clone(), move |id, source| {
+                    discovery_scope
+                        .upgrade()
+                        .is_some_and(|session| session.nearby_source(id, source))
+                })
+                .await;
             active.update_discovery(BonjourUpdate {
                 state: BonjourState::Unavailable,
                 peers: Vec::new(),
@@ -124,6 +133,7 @@ impl Session {
                 .filter_map(|peer| peer.try_into().ok())
                 .collect();
             if suspended {
+                state.nearby_outgoing = None;
                 self.receiver.set_ready_until(None);
                 for entry in &state.outgoing {
                     if !entry.view.status.state.is_terminal() {
@@ -133,6 +143,7 @@ impl Session {
             }
         }
         if suspended {
+            self.peer.cancel_nearby();
             for entry in self.receiver.snapshot() {
                 if !entry.status.state.is_terminal() {
                     let _ = self.receiver.cancel(entry.key);

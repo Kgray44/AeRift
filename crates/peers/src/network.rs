@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Device, Identity, Pairing, Platform, TrustStore,
+    nearby::{self, Nearby, NearbyChallenge, NearbyPending},
     pairing::{PairRequest, RedeemCode},
 };
 
@@ -30,6 +31,7 @@ pub struct PeerNode {
     identity: Identity,
     pairing: Arc<Pairing>,
     receiver: Arc<Receiver>,
+    nearby: Arc<Nearby>,
 }
 
 impl PeerNode {
@@ -49,6 +51,7 @@ impl PeerNode {
             identity,
             pairing: Arc::new(Pairing::new(device, store)?),
             receiver,
+            nearby: Arc::new(Nearby::new()),
         })
     }
 
@@ -57,6 +60,7 @@ impl PeerNode {
     }
 
     pub fn revoke(&self, peer: PeerId) -> Result<(), TransferError> {
+        self.nearby.cancel(Some(peer));
         self.pairing.remove_trust(peer)?;
         self.receiver.expire_offers();
         Ok(())
@@ -97,6 +101,81 @@ impl PeerNode {
         Ok(reply)
     }
 
+    pub fn subscribe_nearby(&self) -> tokio::sync::watch::Receiver<Option<NearbyPending>> {
+        self.nearby.subscribe()
+    }
+
+    pub fn confirm_nearby(&self, id: uuid::Uuid, approve: bool) -> Result<(), TransferError> {
+        self.nearby.confirm(id, approve)
+    }
+
+    pub fn cancel_nearby(&self) {
+        self.nearby.cancel(None);
+    }
+
+    pub async fn begin_nearby(
+        &self,
+        endpoint: SocketAddr,
+        peer: PeerId,
+    ) -> Result<NearbyChallenge, TransferError> {
+        if self.pairing.is_trusted(peer) || peer == self.pairing.device().id {
+            return Err(ErrorCode::PairingRejected.into());
+        }
+        let connection = self.endpoint(endpoint, peer, None)?;
+        let socket = connection.connect().await?;
+        let mine = self.pairing.device();
+        let context = nearby::context(mine.id, peer);
+        let code = socket
+            .get_ref()
+            .1
+            .export_keying_material([0; 8], nearby::EXPORTER, Some(&context))
+            .map(nearby::digits)
+            .map_err(|_| ErrorCode::PeerUntrusted)?;
+        let request = nearby::Start {
+            name: mine.name.clone(),
+            platform: mine.platform,
+        };
+        let started: nearby::Started = pair_call(
+            socket,
+            &connection,
+            nearby::START,
+            &request,
+            CONNECT_TIMEOUT,
+        )
+        .await?;
+        if started.device.id != peer {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Ok(NearbyChallenge::new(started, endpoint, code))
+    }
+
+    pub async fn finish_nearby(
+        &self,
+        challenge: NearbyChallenge,
+        accept: bool,
+    ) -> Result<Option<Device>, TransferError> {
+        if challenge.expires_at <= std::time::SystemTime::now() {
+            return Err(ErrorCode::PairingExpired.into());
+        }
+        let connection = self.endpoint(challenge.endpoint, challenge.device.id, None)?;
+        let socket = connection.connect().await?;
+        let request = nearby::Finish {
+            id: challenge.id,
+            accept,
+        };
+        let reply: Option<Device> =
+            pair_call(socket, &connection, nearby::FINISH, &request, nearby::TTL).await?;
+        if !accept {
+            return Ok(None);
+        }
+        let device = reply.ok_or(ErrorCode::PairingRejected)?;
+        if device.id != challenge.device.id {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        self.pairing.record_remote(device.clone())?;
+        Ok(Some(device))
+    }
+
     /// Start on an address chosen by the native platform, then publish its bound port
     /// via DNS-SD. A single listener handles both pairing and transfer.
     pub async fn serve(
@@ -104,6 +183,19 @@ impl PeerNode {
         listener: TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), TransferError> {
+        self.serve_with_nearby(listener, shutdown, |_, _| false)
+            .await
+    }
+
+    /// Only native, discovered on-link candidates may enter Nearby pairing.
+    /// Other transports use `serve`, where Nearby pairing is unavailable.
+    pub async fn serve_with_nearby(
+        &self,
+        listener: TcpListener,
+        shutdown: CancellationToken,
+        is_nearby: impl Fn(PeerId, SocketAddr) -> bool + Send + Sync + 'static,
+    ) -> Result<(), TransferError> {
+        let is_nearby = Arc::new(is_nearby);
         let tls = TlsAcceptor::from(Arc::new(self.identity.server_config()?));
         let connections = Arc::new(Semaphore::new(48));
         let unknown = Arc::new(Semaphore::new(8));
@@ -116,15 +208,18 @@ impl PeerNode {
                 _ = housekeeping.tick() => {
                     self.receiver.expire_offers();
                     self.pairing.expire_invitation();
+                    self.nearby.expire();
                 }
                 _ = tasks.join_next(), if !tasks.is_empty() => {}
                 next = listener.accept() => {
-                    let (socket, _) = next.map_err(|_| ErrorCode::NetworkError)?;
+                    let (socket, source) = next.map_err(|_| ErrorCode::NetworkError)?;
                     let Ok(permit) = Arc::clone(&connections).try_acquire_owned() else { continue };
                     let tls = tls.clone();
                     let pairing = Arc::clone(&self.pairing);
                     let receiver = Arc::clone(&self.receiver);
                     let unknown = Arc::clone(&unknown);
+                    let nearby = Arc::clone(&self.nearby);
+                    let is_nearby = Arc::clone(&is_nearby);
                     tasks.spawn(async move {
                         let _permit = permit;
                         let Ok(Ok(stream)) = timeout(CONNECT_TIMEOUT, tls.accept(socket)).await else { return };
@@ -138,10 +233,26 @@ impl PeerNode {
                             let Ok(permit) = unknown.try_acquire_owned() else { return };
                             Some(permit)
                         };
-                        let service = service_fn(|request| {
+                        let context = nearby::context(peer, pairing.device().id);
+                        let nearby_secret = session.export_keying_material([0; 8], nearby::EXPORTER, Some(&context)).ok();
+                        let service = service_fn(|request: Request<Incoming>| {
+                            let nearby_request = matches!(request.uri().path(), nearby::START | nearby::FINISH);
+                            let nearby_permission = !nearby_request || is_nearby(peer, source);
+                            let nearby = Arc::clone(&nearby);
                             let pairing = Arc::clone(&pairing);
                             let receiver = Arc::clone(&receiver);
-                            async move { Ok::<_, Infallible>(route(request, peer, pairing, receiver).await) }
+                            async move {
+                                let response = if nearby_request {
+                                    if nearby_permission {
+                                        nearby_route(request, peer, &pairing, &nearby, nearby_secret).await
+                                    } else {
+                                        error(ErrorCode::PeerUnavailable.into())
+                                    }
+                                } else {
+                                    route(request, peer, pairing, receiver).await
+                                };
+                                Ok::<_, Infallible>(response)
+                            }
                         });
                         let _ = hyper::server::conn::http1::Builder::new()
                             .timer(TokioTimer::new())
@@ -267,12 +378,75 @@ async fn route(
     }
 }
 
+async fn nearby_route(
+    request: Request<Incoming>,
+    peer: PeerId,
+    pairing: &Pairing,
+    nearby: &Nearby,
+    secret: Option<[u8; 8]>,
+) -> Reply {
+    if request.method() != Method::POST
+        || request.uri().query().is_some()
+        || request.version() != hyper::Version::HTTP_11
+    {
+        return error(ErrorCode::InvalidRequest.into());
+    }
+    let start = request.uri().path() == nearby::START;
+    let body = match timeout(
+        CONNECT_TIMEOUT,
+        Limited::new(request.into_body(), CONTROL_LIMIT).collect(),
+    )
+    .await
+    {
+        Ok(Ok(body)) => body.to_bytes(),
+        _ => return error(ErrorCode::InvalidRequest.into()),
+    };
+    if start {
+        let (Some(secret), Ok(request)) = (secret, serde_json::from_slice(&body)) else {
+            return error(ErrorCode::InvalidRequest.into());
+        };
+        match nearby.start(request, peer, pairing, nearby::digits(secret)) {
+            Ok(started) => reply(StatusCode::OK, &started),
+            Err(failure) => error(failure),
+        }
+    } else {
+        let Ok(request) = serde_json::from_slice(&body) else {
+            return error(ErrorCode::InvalidRequest.into());
+        };
+        match nearby.finish(peer, request, pairing).await {
+            Ok(finished) => reply(StatusCode::OK, &finished),
+            Err(failure) => error(failure),
+        }
+    }
+}
+
 async fn pair_remote(endpoint: PinnedEndpoint, data: Vec<u8>) -> Result<Device, TransferError> {
     let socket = endpoint.connect().await?;
+    pair_call_bytes(socket, &endpoint, PAIR_ROUTE, data, REDEEM_TIMEOUT).await
+}
+
+async fn pair_call<T: serde::de::DeserializeOwned>(
+    socket: TlsStream<TcpStream>,
+    endpoint: &PinnedEndpoint,
+    path: &str,
+    data: &impl serde::Serialize,
+    duration: Duration,
+) -> Result<T, TransferError> {
+    let data = serde_json::to_vec(data).map_err(|_| ErrorCode::InternalError)?;
+    pair_call_bytes(socket, endpoint, path, data, duration).await
+}
+
+async fn pair_call_bytes<T: serde::de::DeserializeOwned>(
+    socket: TlsStream<TcpStream>,
+    endpoint: &PinnedEndpoint,
+    path: &str,
+    data: Vec<u8>,
+    duration: Duration,
+) -> Result<T, TransferError> {
     let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(socket))
         .await
         .map_err(|_| ErrorCode::NetworkError)?;
-    let request = Request::post(PAIR_ROUTE)
+    let request = Request::post(path)
         .header(header::HOST, endpoint.authority())
         .header(header::CONNECTION, "close")
         .header(header::CONTENT_TYPE, "application/json")
@@ -296,7 +470,7 @@ async fn pair_remote(endpoint: PinnedEndpoint, data: Vec<u8>) -> Result<Device, 
         }
         serde_json::from_slice(&body).map_err(|_| ErrorCode::NetworkError.into())
     };
-    timeout(REDEEM_TIMEOUT, async {
+    timeout(duration, async {
         tokio::pin!(result);
         tokio::select! {
             biased;
@@ -310,6 +484,7 @@ async fn pair_remote(endpoint: PinnedEndpoint, data: Vec<u8>) -> Result<Device, 
 
 fn error(failure: TransferError) -> Reply {
     let status = match failure.code {
+        ErrorCode::PeerUnavailable => StatusCode::NOT_FOUND,
         ErrorCode::PairingExpired => StatusCode::GONE,
         ErrorCode::InvalidRequest => StatusCode::BAD_REQUEST,
         ErrorCode::PairingRejected | ErrorCode::PeerUntrusted => StatusCode::FORBIDDEN,
