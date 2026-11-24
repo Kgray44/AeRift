@@ -3,8 +3,8 @@ mod windows;
 
 #[cfg(windows)]
 fn main() -> std::process::ExitCode {
-    if windows::run().is_err() {
-        eprintln!("Browser pipe qualification failed; no payload logged");
+    if let Err(error) = windows::run() {
+        eprintln!("Browser pipe qualification failed: {error}; no payload logged");
         std::process::ExitCode::FAILURE
     } else {
         std::process::ExitCode::SUCCESS

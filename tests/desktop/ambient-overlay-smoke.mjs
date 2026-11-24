@@ -1,6 +1,8 @@
 // Isolated synthetic rendering; does not inspect, launch or input into a real desktop app.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
@@ -20,6 +22,8 @@ try {
     await pause(100);
   }
   browser = await chromium.launch();
+  const evidence = process.env.AERIFT_SYNTHETIC_OVERLAY_EVIDENCE;
+  if (evidence) await mkdir(evidence, { recursive: true });
   for (const [scheme, motion] of [["dark", "no-preference"], ["light", "no-preference"], ["dark", "reduce"]]) {
     const context = await browser.newContext({
       viewport: { width: 332, height: 148 },
@@ -77,6 +81,7 @@ try {
       }));
       console.log(`Synthetic ${scheme} overlay browser frame intervals: ${JSON.stringify(stats)}`);
       assert.ok(stats.frames === 45 && stats.medianMs > 0);
+      if (evidence) await page.screenshot({ path: join(evidence, `synthetic-carry-${scheme}.png`), omitBackground: true });
     }
     await send({ version: 1, interaction: "cafefade", sequence: 4, phase: "receiving", progress: 1 });
     await page.locator("progress[value='1']").waitFor();

@@ -51,6 +51,25 @@ fn check(ok: bool) -> io::Result<()> {
     }
 }
 
+/// Only fixed stage names, the OS code and standard error kind are logged.
+/// Never format the underlying error, path, pipe name, SID or proposal.
+trait At<T> {
+    fn at(self, stage: &'static str) -> io::Result<T>;
+}
+impl<T> At<T> for io::Result<T> {
+    fn at(self, stage: &'static str) -> io::Result<T> {
+        self.map_err(|error| {
+            if let Some(code) = error.raw_os_error() {
+                io::Error::other(format!("{stage}: OS error {code}"))
+            } else if error.kind() == io::ErrorKind::Other {
+                io::Error::other(format!("{stage}: policy/fixture refused"))
+            } else {
+                io::Error::other(format!("{stage}: {:?}", error.kind()))
+            }
+        })
+    }
+}
+
 struct Alloc(*mut std::ffi::c_void);
 impl Drop for Alloc {
     fn drop(&mut self) {
@@ -62,7 +81,9 @@ impl Drop for Alloc {
 
 fn logon_sid() -> io::Result<String> {
     let mut token: HANDLE = null_mut();
-    check(unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } != 0)?;
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(io::Error::last_os_error()).at("open process token");
+    }
     let token = unsafe { OwnedHandle::from_raw_handle(token) };
     let mut bytes = 0u32;
     let outcome = unsafe {
@@ -74,26 +95,28 @@ fn logon_sid() -> io::Result<String> {
             &mut bytes,
         )
     };
-    check(
-        outcome == 0
-            && io::Error::last_os_error().raw_os_error() == Some(ERROR_INSUFFICIENT_BUFFER as i32),
-    )?;
+    let probe_error = io::Error::last_os_error();
+    if outcome != 0 || probe_error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
+        return Err(probe_error).at("size logon SID query");
+    }
     // Native TOKEN_GROUPS contains pointers. Use an aligned, bounded buffer.
-    check((size_of::<TOKEN_GROUPS>() as u32..=8192).contains(&bytes))?;
+    check((size_of::<TOKEN_GROUPS>() as u32..=8192).contains(&bytes))
+        .at("bound logon SID buffer")?;
     let mut data = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
-    check(
-        unsafe {
-            GetTokenInformation(
-                token.as_raw_handle(),
-                TokenLogonSid,
-                data.as_mut_ptr().cast(),
-                bytes,
-                &mut bytes,
-            )
-        } != 0,
-    )?;
+    if unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenLogonSid,
+            data.as_mut_ptr().cast(),
+            bytes,
+            &mut bytes,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error()).at("read logon SID");
+    }
     let group = unsafe { &*data.as_ptr().cast::<TOKEN_GROUPS>() };
-    check(group.GroupCount == 1)?;
+    check(group.GroupCount == 1).at("exactly one logon SID")?;
     let mut sid = null_mut();
     check(unsafe { ConvertSidToStringSidW(group.Groups[0].Sid, &mut sid) } != 0)?;
     let _free = Alloc(sid.cast());
@@ -116,16 +139,17 @@ fn server(name: &str) -> io::Result<File> {
     // session can connect; a second per-process check is still mandatory.
     let sddl = wide(&format!("D:P(A;;0x{PIPE_ACCESS:x};;;{})", logon_sid()?));
     let mut sd = null_mut();
-    check(
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl.as_ptr(),
-                SDDL_REVISION_1,
-                &mut sd,
-                null_mut(),
-            )
-        } != 0,
-    )?;
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut sd,
+            null_mut(),
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error()).at("build strict logon ACL");
+    }
     let _free = Alloc(sd);
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -145,7 +169,7 @@ fn server(name: &str) -> io::Result<File> {
         )
     };
     if raw == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
+        return Err(io::Error::last_os_error()).at("create first local pipe");
     }
     Ok(unsafe { File::from_raw_handle(raw) })
 }
@@ -187,21 +211,24 @@ fn server_pid(pipe: &File) -> io::Result<u32> {
 
 fn child() -> io::Result<()> {
     let mut bootstrap = [0u8; 20];
-    io::stdin().lock().read_exact(&mut bootstrap)?;
+    io::stdin()
+        .lock()
+        .read_exact(&mut bootstrap)
+        .at("child read inherited bootstrap")?;
     let id = Uuid::from_bytes(bootstrap[..16].try_into().unwrap());
     let expected_server = u32::from_ne_bytes(bootstrap[16..].try_into().unwrap());
-    let mut pipe = client(&pipe_name(id))?;
-    check(server_pid(&pipe)? == expected_server)?;
+    let mut pipe = client(&pipe_name(id)).at("child open pipe")?;
+    check(server_pid(&pipe).at("read server PID")? == expected_server).at("match server PID")?;
     // No pipe name, ticket or payload on command line, stdout or stderr.
-    io::stdout().write_all(&[1])?;
+    io::stdout().write_all(&[1]).at("write fixed result")?;
     io::stdout().flush()?;
     let mut ticket = [0u8; 16];
-    pipe.read_exact(&mut ticket)?;
+    pipe.read_exact(&mut ticket).at("child read ticket")?;
     pipe.write_all(&ticket)?;
     pipe.write_all(&(HTTP_FREE_FIXTURE.len() as u32).to_ne_bytes())?;
     pipe.write_all(HTTP_FREE_FIXTURE.as_bytes())?;
     let mut result = [0u8; 1];
-    pipe.read_exact(&mut result)?;
+    pipe.read_exact(&mut result).at("child read result")?;
     check(result == [1])
 }
 
@@ -210,22 +237,28 @@ fn fixture() -> io::Result<()> {
     let name = pipe_name(id);
     let mut pipe = server(&name)?;
     // Even an authorized-logon peer is refused without the pinned spawned PID.
-    let unrelated = client(&name)?;
-    connected(&pipe)?;
-    check(client_pid(&pipe)? == std::process::id())?;
-    check(verify_client(&pipe, u32::MAX).is_err())?;
-    check(unsafe { DisconnectNamedPipe(pipe.as_raw_handle()) } != 0)?;
+    let unrelated = client(&name).at("open unpinned fixture endpoint")?;
+    connected(&pipe).at("connect preopened endpoint")?;
+    check(client_pid(&pipe).at("read fixture client PID")? == std::process::id())
+        .at("match fixture client PID")?;
+    check(verify_client(&pipe, u32::MAX).is_err()).at("refuse unpinned fixture endpoint")?;
+    if unsafe { DisconnectNamedPipe(pipe.as_raw_handle()) } == 0 {
+        return Err(io::Error::last_os_error()).at("disconnect unpinned fixture endpoint");
+    }
     drop(unrelated);
 
     let mut child = Command::new(std::env::current_exe()?)
         .arg("--qualification-child")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::inherit())
+        .spawn()
+        .at("spawn isolated transport child")?;
     let result = (|| {
         let mut bootstrap = child.stdin.take().ok_or(io::Error::other("no bootstrap"))?;
-        bootstrap.write_all(id.as_bytes())?;
+        bootstrap
+            .write_all(id.as_bytes())
+            .at("parent write inherited endpoint")?;
         bootstrap.write_all(&std::process::id().to_ne_bytes())?;
         drop(bootstrap);
         let mut ready = [0];
@@ -233,24 +266,29 @@ fn fixture() -> io::Result<()> {
             .stdout
             .take()
             .ok_or(io::Error::other("no control"))?
-            .read_exact(&mut ready)?;
-        check(ready == [1])?;
-        connected(&pipe)?;
-        verify_client(&pipe, child.id())?;
+            .read_exact(&mut ready)
+            .at("receive child readiness")?;
+        check(ready == [1]).at("match child readiness")?;
+        connected(&pipe).at("connect pinned child endpoint")?;
+        verify_client(&pipe, child.id()).at("verify pinned child endpoint")?;
 
         let mut pickup = BrowserPickup::default();
         let first = Instant::now();
         let ticket = pickup.arm(first);
-        pipe.write_all(ticket.as_bytes())?;
+        pipe.write_all(ticket.as_bytes())
+            .at("parent release one-use capability")?;
         let mut wire_ticket = [0; 16];
-        pipe.read_exact(&mut wire_ticket)?;
+        pipe.read_exact(&mut wire_ticket)
+            .at("parent read echoed capability")?;
         let mut length = [0; 4];
-        pipe.read_exact(&mut length)?;
+        pipe.read_exact(&mut length)
+            .at("parent read bounded header")?;
         let size = u32::from_ne_bytes(length) as usize;
         check((1..=MAX_MESSAGE_BYTES).contains(&size))?;
         let mut frame = vec![0; size + 4];
         frame[..4].copy_from_slice(&length);
-        pipe.read_exact(&mut frame[4..])?;
+        pipe.read_exact(&mut frame[4..])
+            .at("parent read bounded fixture")?;
         let origin = ExtensionOrigin::authorize(ORIGIN, ORIGIN)
             .map_err(|_| io::Error::other("pickup gate refused"))?;
         let review = pickup
@@ -268,7 +306,7 @@ fn fixture() -> io::Result<()> {
             .map_err(|_| io::Error::other("pickup gate refused"))?;
         check(captured.entries().len() == 1)?;
         check(pickup.confirm(review.id, Instant::now()).is_err())?;
-        pipe.write_all(&[1])?;
+        pipe.write_all(&[1]).at("write fixed result")?;
         check(child.wait()?.success())
     })();
     if result.is_err() {

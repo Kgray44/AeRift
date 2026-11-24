@@ -64,4 +64,12 @@ jobs:
       - run: npm ci
       - run: npm install --no-save --package-lock=false playwright@1.56.1
       - run: npx playwright install chromium
-      - run: node tests/desktop/ambient-overlay-smoke.mjs
+      - name: Verify and capture synthetic overlay
+        run: node tests/desktop/ambient-overlay-smoke.mjs
+        env:
+          AERIFT_SYNTHETIC_OVERLAY_EVIDENCE: ${{ runner.temp }}/aerift-synthetic-overlay
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ambient-glass-synthetic-chromium
+          path: ${{ runner.temp }}/aerift-synthetic-overlay/*.png
+          if-no-files-found: error
