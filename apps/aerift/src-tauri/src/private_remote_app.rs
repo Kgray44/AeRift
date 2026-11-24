@@ -530,10 +530,11 @@ pub(crate) async fn windows_redeem_remote(
         .try_lock()
         .map_err(|_| ErrorCode::Conflict)?;
     let (node, stop, _profile) = active_host(&runtime).await?;
+    let routes = [route];
     tokio::select! {
         biased;
         _ = stop.cancelled() => Err(ErrorCode::Cancelled.into()),
-        result = node.redeem(&[route], &invite) => result.map(|_| ()),
+        result = node.redeem(&routes, &invite) => result.map(|_| ()),
     }
 }
 
@@ -558,13 +559,15 @@ pub(crate) async fn windows_send_remote_file(
         Duration::from_secs(120),
         Duration::from_secs(1800),
     )?;
-    let selected =
-        tauri::async_runtime::spawn_blocking(move || window.dialog().file().blocking_pick_file())
-            .await
-            .map_err(|_| ErrorCode::InternalError)?
-            .ok_or(ErrorCode::Cancelled)?
-            .into_path()
-            .map_err(|_| ErrorCode::InvalidRequest)?;
+    let picker_window = window.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        picker_window.dialog().file().blocking_pick_file()
+    })
+    .await
+    .map_err(|_| ErrorCode::InternalError)?
+    .ok_or(ErrorCode::Cancelled)?
+    .into_path()
+    .map_err(|_| ErrorCode::InvalidRequest)?;
     let name = selected
         .file_name()
         .and_then(|value| value.to_str())
