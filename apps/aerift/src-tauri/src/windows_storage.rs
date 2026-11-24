@@ -249,3 +249,6 @@ mod friends_tests {
         assert_eq!(store.load().unwrap().as_deref(), Some(b"winner".as_slice()));
     }
 }
+
+#[cfg(test)]
+mod friends_qualification;
