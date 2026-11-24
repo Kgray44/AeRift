@@ -104,7 +104,6 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 35
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
@@ -118,6 +117,8 @@ jobs:
           node-version: '22'
       - name: Verify native qualification with temporary synthetic profiles
         shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
@@ -153,6 +154,8 @@ jobs:
             'friends_windows_delegated_profile_reopens_without_a_person_private_key')
       - name: Compile the opt-in Windows app without launching or publishing it
         shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
         run: |
           npm ci
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
