@@ -4,6 +4,8 @@ import { Button, Popover, SpatialIcon } from "@aerift/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { useDesktopContentEnter } from "./desktopContentMotion";
+import { WorkspaceCategoryHeading, WorkspaceLibrary, useWorkspaceLibrary } from "../WorkspaceLibrary";
+import { isWorkspaceDocument, workspaceSections, type WorkspaceSectionId } from "../workspace-categories";
 import { applyWorkspaceChanges, loadWorkspace, type WorkspaceEntry } from "./workspaceStore";
 
 function newObject(name: string) {
@@ -42,10 +44,11 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   clipboardAllowed: boolean;
 }) {
   const modules = getVisibleModules(preferences);
-  const [moduleId, setModuleId] = useState<ModuleId>("files");
-  const current = modules.find(module => module.id === moduleId) ?? modules[0];
+  const workspace = useWorkspaceLibrary(id => modules.some(module => module.id === id));
+  const section = workspace.section;
+  const current = section ? { id: section.module, label: section.label } : undefined;
   const itemsRef = useRef<HTMLElement>(null);
-  useDesktopContentEnter(current?.id, itemsRef);
+  useDesktopContentEnter(section?.id, itemsRef);
   const [entries, setEntries] = useState<WorkspaceEntry[]>();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>();
@@ -55,7 +58,14 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const noteEditor = useRef<HTMLDetailsElement>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const items = entries ?? [];
-  const visible = current ? items.filter(({ object }) => belongsTo(object, current.id)) : [];
+  const inCategory = (object: DigitalObject, id: WorkspaceSectionId, module: ModuleId) =>
+    belongsTo(object, module) && (id !== "documents" || (object.kind === "file" && isWorkspaceDocument(object.name, object.mediaType)));
+  const visible = section ? items.filter(({ object }) => inCategory(object, section.id, section.module)) : [];
+  const counts = entries && Object.fromEntries(workspaceSections.map(({ id, module }) =>
+    [id, entries.filter(({ object }) => inCategory(object, id, module)).length]));
+  function openSection(id: WorkspaceSectionId) {
+    setError(undefined); setStatus(undefined); setPreview(undefined); setEditing(undefined); workspace.open(id);
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -92,12 +102,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     const additions: WorkspaceEntry[] = [];
     for (const file of files) {
       const kind = file.type.startsWith("image/") ? "photo" : file.type.startsWith("video/") ? "video" : "file";
-      if (mediaOnly && kind === "file") continue;
+      if ((mediaOnly && kind === "file") || (section?.id === "documents" && !isWorkspaceDocument(file.name, file.type))) continue;
       additions.push({ object: { ...newObject(file.name), kind: mediaOnly ? kind : "file",
         sizeBytes: file.size, mediaType: file.type || undefined }, asset: file });
     }
     if (additions.length) void change(() => additions, `Imported ${additions.length} ${additions.length === 1 ? "item" : "items"}.`);
-    else if (files.length) setError("Choose an image or video file.");
+    else if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>, kind: "note" | "url" | "collection") {
@@ -181,21 +191,16 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const selectedVisible = visible.filter(({ object }) => selected.includes(object.id)).map(({ object }) => object.id);
 
   return <div className="aerift-workspace">
-    <nav className="aerift-desktop-nav" aria-label="Workspace modules">
-      {modules.map(module => <Button key={module.id} variant={module.id === current?.id ? "primary" : "quiet"}
-        aria-current={module.id === current?.id ? "page" : undefined}
-        onClick={() => { setModuleId(module.id); setError(undefined); setStatus(undefined); }}>{module.label}</Button>)}
-    </nav>
-    {!current && <p>Enable workspace modules in Settings.</p>}
-    {current && <div className="aerift-section-heading"><h3>{current.label}</h3><span>{visible.length} {visible.length === 1 ? "object" : "objects"} · On this device</span></div>}
+    {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} counts={counts} />}
+    {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={workspace.back} />}
     {!entries && !error && <p>Opening Workspace…</p>}
     {error && <p role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
     {current && <div className="aerift-workspace-content">
       <div className="aerift-workspace-controls">
         {(current?.id === "files" || current?.id === "photos") &&
-          <label>Import {current.id === "photos" ? "photos and videos" : "files"}
-            <input type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : undefined}
+          <label>Import {current.id === "photos" ? "photos and videos" : section?.id === "documents" ? "documents" : "files"}
+            <input type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
               onChange={event => {
                 importFiles(Array.from(event.currentTarget.files ?? []), current.id === "photos");
                 event.currentTarget.value = "";
@@ -234,7 +239,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         {visible.length > 0 && <ol>{visible.map(entry => {
           const { object } = entry;
           const captured = object.kind === "clipboard" ? items.find(item => item.object.id === object.objectId)?.object : undefined;
-          return <li key={object.id} className="aerift-workspace-object" data-selected={selected.includes(object.id)}><div>
+          return <li key={object.id} className="ae-surface aerift-workspace-object" data-material="content" data-selected={selected.includes(object.id)}><div>
             <span className="aerift-object-glyph"><SpatialIcon name={object.kind === "url" ? "pair" : object.kind === "collection" ? "workspace" : "file"} size={24} /></span>
             <span className="aerift-object-kind">{object.kind}</span>
             {object.kind === "collection" ? <strong>{object.name}</strong> :

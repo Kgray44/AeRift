@@ -1,3 +1,4 @@
+import { destinationIntent } from "../destination-intent";
 import {
   AppBrand, AppShell, Button, GestureCameraIndicator, GlassSurface, SettingsPanel, Sheet,
   SpatialIcon, ThemeProvider, TransferProgress, TransferWorkspace,
@@ -343,6 +344,7 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
                 </Button>}
               <div className="ios-destination-heading">
                 <h2 ref={destinationHeading} tabIndex={-1}>{DESTINATIONS[destination].label}</h2>
+                {destinationIntent[destination] && <p className="ae-destination-intent">{destinationIntent[destination]}</p>}
               </div>
               {destination === "home" && <>
                 <GlassSurface material="content" className="ios-overview" data-ae-lens-role="control" role="region" aria-label="Connection overview">

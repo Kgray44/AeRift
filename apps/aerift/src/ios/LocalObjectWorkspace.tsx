@@ -232,7 +232,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     updateMembers(collection, next);
   }
 
-  return <section className="ios-section ios-object-editor" aria-label={module}>
+  return <section className="ae-surface ios-section ios-object-editor aw-focused-surface" data-material="content" aria-label={module}>
     {notes && <p>Save plain text or Markdown and attach imported files, photos, or videos.</p>}
     {browser && <p>{copy.browserTip}</p>}
     {clips && <>

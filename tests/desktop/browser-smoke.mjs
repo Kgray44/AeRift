@@ -149,24 +149,33 @@ try {
   const nav = label => slot.getByRole("button", { name: label, exact: true });
   await nav("Workspace").click();
   await destination("Workspace").waitFor();
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  async function openCategory(name) {
+    const back = page.getByRole("button", { name: "Back to Workspace", exact: true });
+    if (await back.isVisible()) await back.click();
+    await page.getByRole("button", { name, exact: true }).click();
+    assert.equal(await page.getByRole("heading", { name, exact: true, level: 3 }).evaluate(el => el === document.activeElement), true);
+    const disclosure = page.locator(".aerift-workspace-create:not([open]) summary").first();
+    if (["Notes","Web Browser"].includes(name) && await disclosure.isVisible()) await disclosure.click();
+  }
+  await capture(page, "dark-workspace-library");
+  await openCategory('Notes');
   await page.getByLabel("Title").fill("Expedition notes");
   await page.getByLabel("Note", { exact: true }).fill("Review the field recording.");
   await page.getByRole("button", { name: "Add note" }).click();
   await page.getByText("Review the field recording.").waitFor();
   await page.getByRole("checkbox", { name: "Expedition notes" }).check();
-  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await openCategory('File Browser');
   await page.getByLabel("Import files").setInputFiles({
     name: "sample.txt", mimeType: "text/plain", buffer: Buffer.from("Example text"),
   });
   await page.getByRole("checkbox", { name: "sample.txt" }).check();
-  await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await openCategory('Collections');
   await page.getByLabel("Name", { exact: true }).fill("Expedition");
   await page.getByRole("button", { name: "Create collection" }).click();
   await page.getByText("Expedition", { exact: true }).waitFor();
   await capture(page, "dark-full-workspace");
 
-  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await openCategory('Images & Videos');
   await page.getByLabel("Import photos and videos").setInputFiles({
     name: "sample.png", mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jXNYAAAAASUVORK5CYII=", "base64"),
@@ -178,7 +187,7 @@ try {
   const imageHandle = await importedPhoto.elementHandle();
   await page.waitForFunction(img => img.complete && img.naturalWidth > 0, imageHandle);
 
-  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await openCategory('Web Browser');
   await page.getByLabel("Title").fill("Project reference");
   await page.getByLabel("Web address").fill("https://example.test/");
   await page.getByRole("button", { name: "Save link" }).click();
@@ -186,7 +195,7 @@ try {
   await page.getByRole("button", { name: "Open in browser" }).click();
   assert.equal(await page.evaluate(() => window.desktopFixture.last("open_workspace_url").url), "https://example.test/");
 
-  await page.getByRole("button", { name: "Clipboard", exact: true }).click();
+  await openCategory('Clipboard');
   await page.getByRole("button", { name: "Capture clipboard text" }).click();
   await page.getByText("A deliberately captured test snippet", { exact: true }).waitFor();
 
@@ -218,7 +227,7 @@ try {
   await nav("Workspace").click();
   await page.reload();
   await destination("Workspace").waitFor();
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await openCategory('Notes');
   await page.getByText("Review the field recording.").waitFor();
   await page.setViewportSize({ width: 500, height: 720 });
   await capture(page, "light-compact-workspace");

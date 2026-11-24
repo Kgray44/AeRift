@@ -14,7 +14,7 @@ test("desktop routes reuse the live Orbit content and defer to an active Orbit m
 
 test("desktop Workspace navigation preserves native disclosures and animates only the changed items view", async () => {
   const workspace = await source("DesktopWorkspace.tsx");
-  assert.match(workspace, /useDesktopContentEnter\(current\?\.id, itemsRef\)/);
+  assert.match(workspace, /useDesktopContentEnter\(section\?\.id, itemsRef\)/);
   assert.match(workspace, /<section ref=\{itemsRef\}[^>]*className="aerift-workspace-items"/);
   assert.match(workspace, /<details className="aerift-workspace-create" ref=\{noteEditor\}>/);
   assert.match(workspace, /noteEditor\.current\.open = true/);

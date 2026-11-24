@@ -1,4 +1,5 @@
 import { DesktopInbox } from "./DesktopInbox";
+import { destinationIntent } from "../destination-intent";
 import { Channel } from "@tauri-apps/api/core";
 import type { FileSelection } from "@aerift/app-contract";
 import { DESTINATIONS, getNavigation, type DestinationId } from "@aerift/app-contract/experience";
@@ -226,7 +227,8 @@ export function DesktopApp() {
       <OrbitSurface className="aerift-desktop-surface" data-destination={route} ref={surfaceRef}
         aria-labelledby="aerift-desktop-destination">
         <div className="aerift-destination-heading">
-          <h2 id="aerift-desktop-destination" data-orbit-focus tabIndex={-1}>{DESTINATIONS[route].label}</h2>
+          <div><h2 id="aerift-desktop-destination" data-orbit-focus tabIndex={-1}>{DESTINATIONS[route].label}</h2>
+            {destinationIntent[route] && <p className="ae-destination-intent">{destinationIntent[route]}</p>}</div>
           {route === "rift" && <div className="ae-actions">
             {!pairedOnline && <Button variant="quiet" onClick={() => navigate("devices")}>Find devices</Button>}
             <Button variant="quiet" onClick={() => navigate("activity")}>Transfer activity</Button>
