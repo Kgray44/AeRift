@@ -51,6 +51,16 @@ try {
       const original = 'const HOST = "com.aerift.ambient_browser";';
       assert.equal(value.split(original).length, 2);
       value = value.replace(original, `const HOST = "${host}";`);
+      // Diagnostics in the fixture copy only: no inputs or content are logged.
+      value = value.replace('let status = "Unavailable";', 'let status = "Unavailable"; let phase = "tab";')
+        .replace('const focused =', 'phase = "focus"; const focused =')
+        .replace('const [frame] =', 'phase = "snapshot"; const [frame] =')
+        .replace('const snapshot =', 'phase = "plan"; const snapshot =')
+        .replace('const [same] =', 'phase = "recheck"; const [same] =')
+        .replace('const reply =', 'phase = "native"; const reply =')
+        .replace('if (reply?.version', 'phase = "reply"; if (reply?.version')
+        .replace('} catch {', '} catch (error) { globalThis.fixtureError = phase === "native" ? String(error.message) : error.name;')
+        .replace('} finally {', '} finally { globalThis.fixturePhase = phase;');
     }
     await writeFile(join(sandbox, name), value);
   }
@@ -115,7 +125,10 @@ try {
       if (await getTitle() === expected) return;
       await delay(50);
     }
-    throw new Error(`Browser action did not reach ${expected}`);
+    const diagnostic = await worker.evaluate(() => ({
+      phase: globalThis.fixturePhase, error: globalThis.fixtureError,
+    }));
+    throw new Error(`Browser action did not reach ${expected}; ${JSON.stringify(diagnostic)}`);
   };
   assert.equal(await getTitle(), "Prepare AeRift pickup (does not send)");
   await page.triggerExtensionAction(extension);
