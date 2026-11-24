@@ -4,11 +4,14 @@ import path from "node:path";
 
 // A single workflow commit runs the exact candidate from protected main.
 // Publish is explicit and creates a new, source-bound transport branch.
-export function validateInputs({ candidate, mode, version, build }) {
-  if (!/^[0-9a-f]{40}(?![\s\S])/.test(candidate ?? "")) throw new Error("AERIFT_CANDIDATE_INVALID");
+export function validateInputs(input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("AERIFT_INPUT_INVALID");
+  const { candidate, mode, version, build } = input;
+  // The typed metadata boundary does not accept regex string coercion.
+  if (typeof candidate !== "string" || !/^[0-9a-f]{40}(?![\s\S])/.test(candidate)) throw new Error("AERIFT_CANDIDATE_INVALID");
   if (!["unsigned", "signed", "upload", "observe"].includes(mode)) throw new Error("AERIFT_MODE_INVALID");
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?![\s\S])/.test(version ?? "")) throw new Error("AERIFT_VERSION_INVALID");
-  if (!/^[1-9][0-9]{0,3}(\.[0-9]{1,2}){0,2}(?![\s\S])/.test(build ?? "")) throw new Error("AERIFT_BUILD_INVALID");
+  if (typeof version !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+(?![\s\S])/.test(version)) throw new Error("AERIFT_VERSION_INVALID");
+  if (typeof build !== "string" || !/^[1-9][0-9]{0,3}(\.[0-9]{1,2}){0,2}(?![\s\S])/.test(build)) throw new Error("AERIFT_BUILD_INVALID");
   return { candidate, mode, version, build };
 }
 

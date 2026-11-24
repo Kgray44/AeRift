@@ -9,6 +9,9 @@ use aerift_transfer::{ErrorCode, PeerId, TransferError};
 
 use crate::protected_store::ProtectedFile;
 
+#[path = "identity_continuity.rs"]
+mod identity_continuity;
+
 pub(crate) fn lock_profile(directory: &Path) -> Result<File, TransferError> {
     fs::create_dir_all(directory).map_err(storage_failed)?;
     let lock = OpenOptions::new()
@@ -21,21 +24,55 @@ pub(crate) fn lock_profile(directory: &Path) -> Result<File, TransferError> {
     Ok(lock)
 }
 
-pub(crate) struct WindowsIdentity(ProtectedFile);
+pub(crate) struct WindowsIdentity {
+    file: ProtectedFile,
+    device_profile: Option<PathBuf>,
+}
 
 impl WindowsIdentity {
     pub(crate) fn new(directory: &Path) -> Self {
-        Self(ProtectedFile::new(directory, "identity.dpapi"))
+        Self {
+            file: ProtectedFile::new(directory, "identity.dpapi"),
+            device_profile: Some(directory.to_owned()),
+        }
+    }
+
+    fn friends_authority(directory: &Path) -> Self {
+        Self {
+            file: ProtectedFile::new(directory, "person.dpapi"),
+            device_profile: None,
+        }
+    }
+
+    /// A device certificate is pinned across these independent books. If any
+    /// of them survives, a missing certificate is a recovery condition, not
+    /// permission to silently generate a different local device identity.
+    fn ensure_fresh_device_profile(&self) -> Result<(), TransferError> {
+        let Some(root) = &self.device_profile else {
+            return Ok(());
+        };
+        identity_continuity::require_fresh_device_profile(root).map_err(storage_failed)
     }
 }
 
 impl SecretStore for WindowsIdentity {
     fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
-        self.0.load().map_err(storage_failed)
+        let current = self.file.load().map_err(storage_failed)?;
+        if current.is_none() {
+            self.ensure_fresh_device_profile()?;
+        }
+        Ok(current)
     }
 
     fn initialize(&self, candidate: &[u8]) -> Result<Vec<u8>, TransferError> {
-        if self.0.create_if_absent(candidate).map_err(storage_failed)? {
+        if let Some(current) = self.load()? {
+            return Ok(current);
+        }
+        if self
+            .file
+            .create_if_absent(candidate)
+            .map_err(storage_failed)?
+        {
             return Ok(candidate.to_vec());
         }
         self.load()?.ok_or_else(|| ErrorCode::StorageFailed.into())
@@ -124,7 +161,7 @@ pub(crate) fn open_friends(
 ) -> Result<(FriendAuthority, Arc<FriendBook>), TransferError> {
     let profile = directory.join("friends-v1");
     let store = Arc::new(WindowsFriendStore::new(&profile)?);
-    let identity = WindowsIdentity(ProtectedFile::new(&profile, "person.dpapi"));
+    let identity = WindowsIdentity::friends_authority(&profile);
     if store.load()?.is_some() && identity.load()?.is_none() {
         return Err(ErrorCode::StorageFailed.into());
     }
@@ -237,9 +274,8 @@ mod friends_tests {
         assert!(TrustStore::load(&WindowsTrust::new(dir.path()))
             .unwrap()
             .is_empty());
-        assert!(SecretStore::load(&WindowsIdentity::new(dir.path()))
-            .unwrap()
-            .is_none());
+        assert!(!dir.path().join("identity.dpapi").exists());
+        assert!(SecretStore::load(&WindowsIdentity::new(dir.path())).is_err());
         let original = authority.id();
         drop(book);
         drop(authority);
@@ -281,3 +317,43 @@ mod friends_tests {
 #[cfg(test)]
 #[path = "windows_storage/friends_qualification.rs"]
 mod friends_qualification;
+
+#[cfg(test)]
+mod identity_continuity_tests {
+    use super::*;
+    use aerift_peers::Identity;
+
+    #[test]
+    fn new_device_profile_creates_once_and_keeps_identity_after_grants_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Identity::load_or_create(&WindowsIdentity::new(dir.path())).unwrap();
+        ProtectedFile::new(dir.path(), "trust.dpapi")
+            .replace(b"[]")
+            .unwrap();
+        let after = Identity::load_or_create(&WindowsIdentity::new(dir.path())).unwrap();
+        assert_eq!(first.id(), after.id());
+    }
+
+    #[test]
+    fn each_existing_grant_book_prevents_unattended_identity_replacement() {
+        for path in [
+            "trust.dpapi",
+            "remote-trust-v1.dpapi",
+            "friends-v1/book.dpapi",
+            "friends-member-v1/book.dpapi",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let relative = Path::new(path);
+            let file = match path {
+                "trust.dpapi" => "trust.dpapi",
+                "remote-trust-v1.dpapi" => "remote-trust-v1.dpapi",
+                _ => "book.dpapi",
+            };
+            ProtectedFile::new(&dir.path().join(relative.parent().unwrap()), file)
+                .replace(b"[]")
+                .unwrap();
+            assert!(Identity::load_or_create(&WindowsIdentity::new(dir.path())).is_err());
+            assert!(!dir.path().join("identity.dpapi").exists());
+        }
+    }
+}

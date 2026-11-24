@@ -486,6 +486,17 @@ pub(crate) async fn private_remote_action(
             return Ok(reply);
         };
         session.stop.cancel();
+        // A v2 finalize may already run on a blocking worker after the
+        // listener aborts its HTTP task. Close publication before returning
+        // Stop, without changing saved Remote grants or blocking the UI.
+        let node = session.node.clone();
+        let barrier_lock = session.profile.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _profile = barrier_lock;
+            node.stop_receiving();
+        })
+        .await
+        .map_err(|_| ErrorCode::InternalError)?;
         // Keep the exclusive old profile lock until listener shutdown completes.
         (&mut session.task)
             .await

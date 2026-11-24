@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -47,6 +50,7 @@ pub struct Receiver {
     journal: Option<Journal>,
     ready_until: Mutex<Option<Instant>>,
     entries: Mutex<HashMap<TransferKey, Entry>>,
+    stopped: AtomicBool,
     changes: watch::Sender<u64>,
 }
 
@@ -198,6 +202,7 @@ impl Receiver {
             journal: None,
             ready_until: Mutex::default(),
             entries: Mutex::default(),
+            stopped: AtomicBool::new(false),
             changes,
         })
     }
@@ -327,6 +332,22 @@ impl Receiver {
         Ok(entry.transfer.status)
     }
 
+    /// Close this receiver's session without modifying persisted peer grants.
+    /// Shares the lock held across final publication: releases unpublished
+    /// stages and returns only after any earlier publication leaves that gate.
+    /// A later session must construct a fresh Receiver.
+    pub fn stop_receiving(&self) {
+        let mut entries = self.entries();
+        self.stopped.store(true, Ordering::Relaxed);
+        let mut changed = false;
+        for entry in entries.values_mut() {
+            changed |= Self::cancel_entry(entry);
+        }
+        if changed {
+            self.changed();
+        }
+    }
+
     /// Call after removing trust to cancel the peer's offers and active streams.
     pub fn cancel_peer(&self, peer: PeerId) {
         let mut entries = self.entries();
@@ -382,6 +403,10 @@ impl Receiver {
         offer.validate()?;
         let key = TransferKey { peer, id: offer.id };
         let mut entries = self.entries();
+        // Read and write this session barrier only under the same entries lock.
+        if self.stopped.load(Ordering::Relaxed) {
+            return Err(ErrorCode::Cancelled.into());
+        }
         if trust.is_cancelled() {
             return Err(ErrorCode::PeerUntrusted.into());
         }
@@ -1113,6 +1138,88 @@ mod tests {
         assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
         assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
         assert_eq!(std::fs::read(final_path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn stopped_receiver_rejects_verified_checkpoint_and_keeps_prior_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        let rx = Arc::new(
+            Receiver::new_resumable(
+                directory.path(),
+                ReceiveLimits {
+                    active_bytes: 1024,
+                    session_offers: 4,
+                },
+            )
+            .unwrap(),
+        );
+        let trust = CancellationToken::new();
+        let prepare = |file: &str, bytes: &[u8]| {
+            let key = TransferKey {
+                peer: PeerId::from_tls_leaf(b"synthetic receiver-session peer"),
+                id: Uuid::new_v4(),
+            };
+            let offer = Offer {
+                id: key.id,
+                name: file.into(),
+                size_bytes: bytes.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(bytes)),
+            };
+            rx.offer_resumable(key.peer, offer.clone(), &trust).unwrap();
+            rx.respond(key, true).unwrap();
+            rx.append_resumable(key, 0, bytes).unwrap();
+            (key, offer)
+        };
+        let (prior, _) = prepare("prior.bin", b"already delivered");
+        let published = rx.commit_resumable(prior).unwrap();
+        assert_eq!(published.state, State::Completed);
+        let (pending, pending_offer) = prepare("unpublished.bin", b"fully acknowledged");
+        // Model a benign worker paused after taking its checkpoint but before
+        // publication. No socket or timing assumptions needed.
+        let (worker, stage) = {
+            let mut entries = rx.entries();
+            let entry = Receiver::entry(&mut entries, pending).unwrap();
+            entry.committing = true;
+            let Some(ResumeStage::Memory(checkpoint)) = entry.checkpoint.take() else {
+                panic!("fixture requires an in-process verified checkpoint");
+            };
+            (
+                Upload {
+                    receiver: rx.clone(),
+                    key: pending,
+                    offer: entry.transfer.offer.clone(),
+                    cancel: entry.cancel.clone(),
+                    trust: entry.trust.clone(),
+                    inbox: None,
+                },
+                checkpoint.finish().unwrap(),
+            )
+        };
+        rx.stop_receiving();
+        rx.stop_receiving();
+        assert!(rx.commit_resumable(pending).is_err());
+        assert_eq!(
+            worker.publish(stage).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+        assert!(!directory.path().join("unpublished.bin").exists());
+        assert_eq!(
+            rx.status_resumable(pending).unwrap().state,
+            State::Cancelled
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(rx.commit_resumable(prior).unwrap(), published);
+        assert_eq!(
+            std::fs::read(directory.path().join("prior.bin")).unwrap(),
+            b"already delivered"
+        );
+        assert_eq!(
+            rx.offer_resumable(pending.peer, pending_offer, &trust)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert!(!trust.is_cancelled());
     }
 
     #[test]

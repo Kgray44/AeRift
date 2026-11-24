@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{Connector, ErrorCode, PeerId, Sender, Status, TransferError};
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -24,6 +24,27 @@ struct Lifecycle {
     paused: bool,
     generation: CancellationToken,
     pickup: Option<Arc<NearbyDrop>>,
+}
+
+/// One native runner's exact pickup. It cannot be constructed outside this
+/// runtime, and it does not keep the file alive after replacement or revocation.
+#[derive(Debug)]
+pub struct PickupLease {
+    pickup: Weak<NearbyDrop>,
+    generation: CancellationToken,
+}
+
+impl PickupLease {
+    pub fn frame(&self) -> Option<Frame> {
+        if self.generation.is_cancelled() {
+            return None;
+        }
+        self.pickup.upgrade()?.held_frame()
+    }
+
+    pub async fn cancelled(&self) {
+        self.generation.cancelled().await;
+    }
 }
 
 pub struct NativeDispatch {
@@ -62,15 +83,23 @@ impl NearbyRuntime {
 
     /// Call only from a trusted, explicit local pickup after native A2
     /// resolution. It consumes the frozen object, never a renderer path.
-    pub fn pickup(&self, capture: FrozenCapture, now: Instant) -> Result<(), TransferError> {
+    pub fn pickup(
+        &self,
+        capture: FrozenCapture,
+        now: Instant,
+    ) -> Result<PickupLease, TransferError> {
         let mut state = self.state.lock().map_err(|_| ErrorCode::InternalError)?;
         if !state.allowed() {
             return Err(ErrorCode::Conflict.into());
         }
-        let next = NearbyDrop::open(capture, now).ok_or(ErrorCode::InvalidRequest)?;
+        let next = Arc::new(NearbyDrop::open(capture, now).ok_or(ErrorCode::InvalidRequest)?);
         state.invalidate();
-        state.pickup = Some(Arc::new(next));
-        Ok(())
+        let lease = PickupLease {
+            pickup: Arc::downgrade(&next),
+            generation: state.generation.clone(),
+        };
+        state.pickup = Some(next);
+        Ok(lease)
     }
 
     /// Keep the generation token alongside the source when attaching to the
@@ -86,13 +115,16 @@ impl NearbyRuntime {
         &self,
         now: Instant,
         authority: &impl DropAuthority,
-        generation: &CancellationToken,
+        lease: &PickupLease,
     ) -> Result<NativeDispatch, DropError> {
         let state = self.state.lock().map_err(|_| DropError::Closed)?;
-        if generation.is_cancelled() || !state.allowed() {
+        if lease.generation.is_cancelled() || !state.allowed() {
             return Err(DropError::Closed);
         }
-        let source = state.pickup.as_ref().ok_or(DropError::NoDrop)?;
+        let source = state.pickup.as_ref().ok_or(DropError::Closed)?;
+        if !lease.pickup.ptr_eq(&Arc::downgrade(source)) {
+            return Err(DropError::Closed);
+        }
         let dispatch = source.resolve(now, authority)?;
         Ok(NativeDispatch {
             dispatch,
@@ -160,6 +192,65 @@ impl NativeDispatch {
 mod tests {
     use super::*;
     use crate::ambient::{Candidate, CaptureContext, CaptureLimits, freeze};
+
+    #[test]
+    fn local_pickup_lease_binds_resolution_to_one_runtime_and_capture() {
+        struct NoAuthority;
+        impl DropAuthority for NoAuthority {
+            fn permits(&self, _: PeerId, _: Lane) -> bool {
+                false
+            }
+        }
+        let first_runtime = NearbyRuntime::default();
+        let other_runtime = NearbyRuntime::default();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"fixture").unwrap();
+        let capture = || {
+            freeze(
+                CaptureContext {
+                    explicit_selection: vec![Candidate::path(file.path().to_owned())],
+                    ..Default::default()
+                },
+                CaptureLimits::default(),
+            )
+            .unwrap()
+        };
+
+        let now = Instant::now();
+        first_runtime.set_policy(true, true, false);
+        other_runtime.set_policy(true, true, false);
+        let first = first_runtime.pickup(capture(), now).unwrap();
+        let other = other_runtime.pickup(capture(), now).unwrap();
+        assert_eq!(
+            first_runtime
+                .resolve_guarded(now, &NoAuthority, &other)
+                .err(),
+            Some(DropError::Closed)
+        );
+        assert_eq!(
+            first_runtime
+                .resolve_guarded(now, &NoAuthority, &first)
+                .err(),
+            Some(DropError::NoDrop)
+        );
+        let current = first_runtime.pickup(capture(), now).unwrap();
+        assert!(first.frame().is_none());
+        assert!(current.frame().is_some());
+        assert_eq!(
+            first_runtime
+                .resolve_guarded(now, &NoAuthority, &first)
+                .err(),
+            Some(DropError::Closed)
+        );
+        first_runtime.set_policy(true, false, false);
+        assert!(current.frame().is_none());
+        assert_eq!(
+            first_runtime
+                .resolve_guarded(now, &NoAuthority, &current)
+                .err(),
+            Some(DropError::Closed)
+        );
+    }
 
     #[test]
     fn explicit_opt_in_lock_pause_and_cancel_invalidate_without_restoring_pickup() {

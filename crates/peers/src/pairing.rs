@@ -3,8 +3,8 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex, Weak},
     time::{Duration, SystemTime},
 };
 use subtle::ConstantTimeEq;
@@ -97,6 +97,8 @@ pub struct Pairing {
 struct PairState {
     trusted: HashMap<PeerId, (Device, CancellationToken)>,
     invitation: Option<Invitation>,
+    revocation_uncommitted: HashSet<PeerId>,
+    outbound: HashMap<PeerId, Weak<CancellationToken>>,
 }
 
 struct Invitation {
@@ -131,6 +133,8 @@ impl Pairing {
             state: Mutex::new(PairState {
                 trusted,
                 invitation: None,
+                revocation_uncommitted: HashSet::new(),
+                outbound: HashMap::new(),
             }),
             pending,
         })
@@ -182,6 +186,9 @@ impl Pairing {
         let expires_at = SystemTime::now() + INVITATION_TTL;
         let code = format!("aerift:v1:{}:{}", self.me.id, URL_SAFE_NO_PAD.encode(token));
         let mut state = self.state();
+        if expected.is_some_and(|peer| state.revocation_uncommitted.contains(&peer)) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
         self.invalidate(&mut state, ErrorCode::PairingRejected);
         state.invitation = Some(Invitation {
             token,
@@ -216,6 +223,9 @@ impl Pairing {
             return Ok(());
         }
         let peer = request.pending.device.clone();
+        if state.revocation_uncommitted.contains(&peer.id) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
         self.store.put(&peer)?;
         request.reply.send_replace(Some(Ok(self.me.clone())));
         let entry = state
@@ -227,11 +237,58 @@ impl Pairing {
         Ok(())
     }
 
+    /// Fence an outbound native pairing operation before it awaits the peer.
+    /// A weak reference does not retain inactive pairing operations.
+    pub(crate) fn begin_outbound(
+        &self,
+        peer: PeerId,
+    ) -> Result<Arc<CancellationToken>, TransferError> {
+        let mut state = self.state();
+        if state.revocation_uncommitted.contains(&peer) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        state.outbound.retain(|_, guard| guard.strong_count() != 0);
+        if let Some(existing) = state.outbound.get(&peer).and_then(Weak::upgrade) {
+            return Ok(existing);
+        }
+        let guard = Arc::new(CancellationToken::new());
+        state.outbound.insert(peer, Arc::downgrade(&guard));
+        Ok(guard)
+    }
+
+    pub(crate) fn record_outbound(
+        &self,
+        device: Device,
+        guard: &Arc<CancellationToken>,
+    ) -> Result<(), TransferError> {
+        let mut state = self.state();
+        if guard.is_cancelled()
+            || !state
+                .outbound
+                .get(&device.id)
+                .and_then(Weak::upgrade)
+                .is_some_and(|current| Arc::ptr_eq(&current, guard))
+        {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        self.record_remote_locked(&mut state, device)
+    }
+
     pub(crate) fn record_remote(&self, device: Device) -> Result<(), TransferError> {
+        self.record_remote_locked(&mut self.state(), device)
+    }
+
+    fn record_remote_locked(
+        &self,
+        state: &mut PairState,
+        device: Device,
+    ) -> Result<(), TransferError> {
         if !valid_name(&device.name) || self.me.id == device.id {
             return Err(ErrorCode::InvalidRequest.into());
         }
-        let mut state = self.state();
+        if state.revocation_uncommitted.contains(&device.id) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
         self.store.put(&device)?;
         let entry = state
             .trusted
@@ -243,19 +300,31 @@ impl Pairing {
 
     pub(crate) fn remove_trust(&self, peer: PeerId) -> Result<(), TransferError> {
         let mut state = self.state();
-        self.store.remove(peer)?;
+        if let Some(guard) = state.outbound.remove(&peer).and_then(|weak| weak.upgrade()) {
+            guard.cancel();
+        }
         if let Some((_, lease)) = state.trusted.remove(&peer) {
             lease.cancel();
         }
-        if state
-            .invitation
-            .as_ref()
-            .and_then(|invitation| invitation.request.as_ref())
-            .is_some_and(|request| request.pending.device.id == peer)
-        {
+        if state.invitation.as_ref().is_some_and(|invitation| {
+            invitation.expected == Some(peer)
+                || invitation
+                    .request
+                    .as_ref()
+                    .is_some_and(|request| request.pending.device.id == peer)
+        }) {
             self.invalidate(&mut state, ErrorCode::PairingRejected);
         }
-        Ok(())
+        // A durable store error must not keep session leases usable or let an
+        // outstanding approval restore the grant. Report failure honestly and
+        // quarantine this peer until that same durable removal is retried.
+        let result = self.store.remove(peer);
+        if result.is_err() {
+            state.revocation_uncommitted.insert(peer);
+        } else {
+            state.revocation_uncommitted.remove(&peer);
+        }
+        result
     }
 
     pub(crate) async fn redeem(
@@ -266,6 +335,9 @@ impl Pairing {
         let (mut reply, deadline) = {
             let mut state = self.state();
             self.expire(&mut state);
+            if state.revocation_uncommitted.contains(&peer) {
+                return Err(ErrorCode::PairingRejected.into());
+            }
             let invitation = state.invitation.as_mut().ok_or(ErrorCode::PairingExpired)?;
             if invitation.failures >= MAX_BAD_ATTEMPTS {
                 return Err(ErrorCode::PairingRejected.into());
@@ -376,6 +448,103 @@ mod tests {
         fn remove(&self, _peer: PeerId) -> Result<(), TransferError> {
             Ok(())
         }
+    }
+
+    #[derive(Default)]
+    struct ControlledTrust {
+        grants: Mutex<HashMap<PeerId, Device>>,
+        failing: std::sync::atomic::AtomicBool,
+    }
+    impl TrustStore for ControlledTrust {
+        fn load(&self) -> Result<Vec<Device>, TransferError> {
+            Ok(self.grants.lock().unwrap().values().cloned().collect())
+        }
+        fn put(&self, device: &Device) -> Result<(), TransferError> {
+            self.grants
+                .lock()
+                .unwrap()
+                .insert(device.id, device.clone());
+            Ok(())
+        }
+        fn remove(&self, peer: PeerId) -> Result<(), TransferError> {
+            if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(ErrorCode::StorageFailed.into());
+            }
+            self.grants.lock().unwrap().remove(&peer);
+            Ok(())
+        }
+    }
+    fn fixture(label: &'static str) -> Device {
+        Device {
+            id: PeerId::from_tls_leaf(label.as_bytes()),
+            name: label.into(),
+            platform: Platform::Windows,
+        }
+    }
+
+    #[test]
+    fn successful_revocation_cancels_the_exact_peer_lease_and_persists() {
+        let me = fixture("local");
+        let revoked = fixture("revoked");
+        let other = fixture("unrelated");
+        let store = Arc::new(ControlledTrust::default());
+        let pairing = Pairing::new(me.clone(), store.clone()).unwrap();
+        pairing.record_remote(revoked.clone()).unwrap();
+        pairing.record_remote(other.clone()).unwrap();
+        let original = pairing.trust(revoked.id).unwrap();
+        let pending = pairing.begin_outbound(revoked.id).unwrap();
+        let unrelated_pending = pairing.begin_outbound(other.id).unwrap();
+        let unaffected = pairing.trust(other.id).unwrap();
+        pairing.remove_trust(revoked.id).unwrap();
+        assert!(original.is_cancelled());
+        assert!(!unaffected.is_cancelled());
+        assert!(pending.is_cancelled());
+        assert!(!unrelated_pending.is_cancelled());
+        assert!(pairing.record_outbound(revoked.clone(), &pending).is_err());
+        let reloaded = Pairing::new(me, store).unwrap();
+        assert!(!reloaded.is_trusted(revoked.id));
+        assert!(reloaded.is_trusted(other.id));
+        let fresh = pairing.begin_outbound(revoked.id).unwrap();
+        assert!(!fresh.is_cancelled());
+        pairing.record_outbound(revoked, &fresh).unwrap();
+    }
+
+    #[test]
+    fn unsuccessful_persistence_removes_live_lease_but_never_claims_durability() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let me = fixture("local");
+        let revoked = fixture("retiring");
+        let other = fixture("unrelated");
+        let store = Arc::new(ControlledTrust::default());
+        let pairing = Pairing::new(me.clone(), store.clone()).unwrap();
+        pairing.record_remote(revoked.clone()).unwrap();
+        pairing.record_remote(other.clone()).unwrap();
+        let original = pairing.trust(revoked.id).unwrap();
+        pairing.create_invitation_for(Some(revoked.id)).unwrap();
+        store.failing.store(true, SeqCst);
+        assert_eq!(
+            pairing.remove_trust(revoked.id).unwrap_err().code,
+            ErrorCode::StorageFailed
+        );
+        assert!(original.is_cancelled());
+        assert!(pairing.trust(revoked.id).is_none());
+        assert!(pairing.state().invitation.is_none());
+        assert!(pairing.record_remote(revoked.clone()).is_err());
+        assert!(pairing.begin_outbound(revoked.id).is_err());
+        assert!(pairing.create_invitation_for(Some(revoked.id)).is_err());
+        assert!(pairing.is_trusted(other.id));
+        assert!(
+            store
+                .load()
+                .unwrap()
+                .iter()
+                .any(|device| device.id == revoked.id)
+        );
+        store.failing.store(false, SeqCst);
+        pairing.remove_trust(revoked.id).unwrap();
+        let reloaded = Pairing::new(me, store).unwrap();
+        assert!(!reloaded.is_trusted(revoked.id));
+        assert!(reloaded.is_trusted(other.id));
     }
 
     #[tokio::test]

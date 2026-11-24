@@ -201,37 +201,11 @@ pub(crate) async fn present_android_received(
 #[tauri::command]
 pub(crate) async fn open_android_browser(window: WebviewWindow, url: String) -> Result<Vec<BrowserLink>, TransferError> {
     require_main(&window)?;
-    let url = validated_url(&url)?;
+    let url = crate::workspace_link::browser_destination(&url).ok_or(ErrorCode::InvalidRequest)?;
     let links = platform::open_browser(window.app_handle(), url.as_str()).await?;
     Ok(links.into_iter().take(32).filter_map(|item| {
-        let url = validated_url(&item.url).ok()?;
+        let url = crate::workspace_link::browser_destination(&item.url)?;
         let title = item.title.filter(|title| title.len() <= 180 && !title.chars().any(char::is_control));
         Some(BrowserLink { url: url.into(), title })
     }).collect())
-}
-
-fn validated_url(url: &str) -> Result<url::Url, TransferError> {
-    if url.len() > 4096 || url.chars().any(char::is_control) {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
-    let parsed = url::Url::parse(url).map_err(|_| ErrorCode::InvalidRequest)?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host().is_none()
-        || !parsed.username().is_empty() || parsed.password().is_some()
-    {
-        return Err(ErrorCode::InvalidRequest.into());
-    }
-    Ok(parsed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn browser_only_accepts_credential_free_http_destinations() {
-        assert!(validated_url("https://example.com/a").is_ok());
-        for url in ["file:///etc/hosts", "javascript:alert(1)", "https://user:pass@example.com", "http://exam\nple.com"] {
-            assert!(validated_url(url).is_err(), "must reject unsafe input");
-        }
-    }
 }
