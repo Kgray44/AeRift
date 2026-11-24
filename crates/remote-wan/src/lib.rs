@@ -120,6 +120,9 @@ impl WanEndpoint {
     /// Admit only explicitly allowed outer keys (from pending targeted invites
     /// or authorized Remote devices). The caller must apply live authorization
     /// and the existing inner Remote checks separately, including revocation.
+    /// This is not cancellation-safe: it owns the connection while waiting
+    /// for the first stream. Only cancel it when intentionally dropping that
+    /// connection (for example, on endpoint shutdown).
     pub async fn accept(
         &self,
         allowed: &HashSet<EndpointId>,
