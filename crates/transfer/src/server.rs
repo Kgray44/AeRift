@@ -1,7 +1,7 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Body, Incoming},
@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::receiver::Upload;
 use crate::{
-    ErrorCode, Offer, PeerId, RECEIVER_READY_ROUTE, Receiver, ReceiverReady, TransferError,
-    TransferKey, parse_id, read_control,
+    ErrorCode, Offer, PeerId, RECEIVER_READY_ROUTE, RESUMABLE_CHUNK_SIZE, RESUMABLE_ROUTE,
+    Receiver, ReceiverReady, TransferError, TransferKey, parse_id, read_control,
 };
 
 type Reply = Response<Full<Bytes>>;
@@ -70,6 +70,13 @@ pub async fn serve_request(
     if request.uri().query().is_some() || request.version() != hyper::Version::HTTP_11 {
         return error(ErrorCode::InvalidRequest.into());
     }
+    if path == RESUMABLE_ROUTE
+        || path
+            .strip_prefix(RESUMABLE_ROUTE)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+    {
+        return resumable(request, peer, receiver, trust).await;
+    }
     if !path.starts_with("/v1/") {
         return error(ErrorCode::UnsupportedVersion.into());
     }
@@ -104,8 +111,8 @@ pub async fn serve_request(
     };
     let key = TransferKey { peer, id };
     let result = match (request.method(), content) {
-        (&Method::GET, false) => receiver.status(key),
-        (&Method::DELETE, false) => receiver.cancel(key),
+        (&Method::GET, false) => receiver.status_legacy(key),
+        (&Method::DELETE, false) => receiver.cancel_legacy(key),
         (&Method::PUT, true) => {
             let Some(size) = content_length(&request) else {
                 return error(ErrorCode::InvalidRequest.into());
@@ -162,6 +169,107 @@ async fn offer(
             },
             &status,
         ),
+        Err(failure) => error(failure),
+    }
+}
+
+async fn resumable(
+    request: Request<Incoming>,
+    peer: PeerId,
+    receiver: Arc<Receiver>,
+    trust: CancellationToken,
+) -> Reply {
+    if !receiver.resumable_enabled() {
+        return error(ErrorCode::UnsupportedVersion.into());
+    }
+    if request.uri().path() == RESUMABLE_ROUTE {
+        if request.method() != Method::POST {
+            return error(ErrorCode::InvalidRequest.into());
+        }
+        let body =
+            match tokio::time::timeout(Duration::from_secs(10), read_control(request.into_body()))
+                .await
+            {
+                Ok(Ok(body)) => body,
+                _ => return error(ErrorCode::InvalidRequest.into()),
+            };
+        let Ok(offer) = serde_json::from_slice::<Offer>(&body) else {
+            return error(ErrorCode::InvalidRequest.into());
+        };
+        return match receiver.offer_resumable(peer, offer, &trust) {
+            Ok((created, status)) => json(
+                if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                },
+                &status,
+            ),
+            Err(failure) => error(failure),
+        };
+    }
+    let Some(rest) = request
+        .uri()
+        .path()
+        .strip_prefix(RESUMABLE_ROUTE)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+    else {
+        return error(ErrorCode::InvalidRequest.into());
+    };
+    let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
+    let Some(id) = parse_id(id) else {
+        return error(ErrorCode::InvalidRequest.into());
+    };
+    let key = TransferKey { peer, id };
+    let empty = request.body().size_hint().exact() == Some(0);
+    let result = match (request.method(), action) {
+        (&Method::GET, "") if empty => receiver.status_resumable(key),
+        (&Method::DELETE, "") if empty => receiver.cancel_resumable(key),
+        (&Method::POST, "commit") if empty => {
+            tokio::task::spawn_blocking(move || receiver.commit_resumable(key))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
+        (&Method::PUT, action) if action.starts_with("chunks/") => {
+            let raw = &action["chunks/".len()..];
+            let Ok(offset) = raw.parse::<u64>() else {
+                return error(ErrorCode::InvalidRequest.into());
+            };
+            if offset.to_string() != raw {
+                return error(ErrorCode::InvalidRequest.into());
+            }
+            let Some(size) = content_length(&request)
+                .filter(|size| *size > 0 && *size <= RESUMABLE_CHUNK_SIZE as u64)
+            else {
+                return error(ErrorCode::InvalidRequest.into());
+            };
+            // Reject missing/unaccepted or wrong-mode transfers before allocating
+            // a block body. The blocking operation checks authority again.
+            if let Err(failure) = receiver.can_append_resumable(key, offset, size) {
+                return error(failure);
+            }
+            let body = tokio::select! {
+                biased;
+                _ = trust.cancelled() => return error(ErrorCode::PeerUntrusted.into()),
+                body = tokio::time::timeout(Duration::from_secs(30), Limited::new(request.into_body(), RESUMABLE_CHUNK_SIZE).collect()) => {
+                    match body {
+                        Ok(Ok(body)) => {
+                            let bytes = body.to_bytes();
+                            if bytes.len() as u64 != size { return error(ErrorCode::NetworkError.into()); }
+                            bytes
+                        },
+                        _ => return error(ErrorCode::NetworkError.into()),
+                    }
+                }
+            };
+            tokio::task::spawn_blocking(move || receiver.append_resumable(key, offset, &body))
+                .await
+                .unwrap_or_else(|_| Err(ErrorCode::InternalError.into()))
+        }
+        _ => Err(ErrorCode::InvalidRequest.into()),
+    };
+    match result {
+        Ok(status) => json(StatusCode::OK, &status),
         Err(failure) => error(failure),
     }
 }

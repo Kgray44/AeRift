@@ -7,11 +7,18 @@ use aerift_transfer::{ErrorCode, PeerId, ReceiveLimits, Receiver, State, Transfe
 use std::{
     collections::HashMap,
     fs,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use support::Store;
-use tokio::{net::TcpListener, time::timeout};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    time::timeout,
+};
 use tokio_util::sync::CancellationToken;
 
 const DECISION: Duration = Duration::from_secs(4);
@@ -254,6 +261,92 @@ async fn exercise_scope_boundary() {
     assert_eq!(fs::read(b_remote_dir.join("approved.bin")).unwrap(), bytes);
     assert!(!b_lan_dir.join("approved.bin").exists());
 
+    // Use the separate version over the real Remote TLS listener. It must
+    // publish once, only after approval and an authenticated commit receipt.
+    let mut resumed_data = vec![0x68; 2 * 1024 * 1024 + 173];
+    resumed_data[1024 * 1024 + 13] = 0x77;
+    fs::write(&source, &resumed_data).unwrap();
+    let id = uuid::Uuid::new_v4();
+    let resume_id = id;
+    let bridge = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let interrupted_routes = [bridge.local_addr().unwrap()];
+    let chunk_streams = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let proxy = tokio::spawn({
+        let chunk_streams = chunk_streams.clone();
+        let dropped = dropped.clone();
+        async move { interrupt_second_chunk(bridge, address, chunk_streams, dropped).await }
+    });
+    let resumable = a_remote
+        .sender(&interrupted_routes, b_profile.id, DECISION, UPLOAD)
+        .unwrap();
+    let write = tokio::spawn({
+        let source = source.clone();
+        async move {
+            resumable
+                .send_resumable_file_with_id(
+                    resume_id,
+                    &source,
+                    "resumable.bin",
+                    CancellationToken::new(),
+                    |_, _| {},
+                )
+                .await
+                .unwrap()
+        }
+    });
+    let pending = timeout(WAIT, async {
+        loop {
+            if let Some(offer) = b_remote
+                .transfers()
+                .into_iter()
+                .find(|offer| offer.key.id == id && offer.status.state == State::Pending)
+            {
+                break offer;
+            }
+            transfers.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!b_remote_dir.join("resumable.bin").exists());
+    b_remote.respond(pending.key, true).unwrap();
+    let receipt = timeout(Duration::from_secs(8), write)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.state, State::Completed);
+    assert_eq!(receipt.bytes_transferred, resumed_data.len() as u64);
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    assert!(chunk_streams.load(Ordering::SeqCst) >= 3);
+    proxy.abort();
+    let _ = proxy.await;
+    assert_eq!(
+        fs::read(b_remote_dir.join("resumable.bin")).unwrap(),
+        resumed_data
+    );
+    let resumable = a_remote
+        .sender(&routes, b_profile.id, DECISION, UPLOAD)
+        .unwrap();
+    assert_eq!(
+        resumable.status(id).await.unwrap_err().code,
+        ErrorCode::Conflict
+    );
+    assert_eq!(
+        resumable
+            .send_resumable_file_with_id(
+                id,
+                &source,
+                "resumable.bin",
+                CancellationToken::new(),
+                |_, _| {}
+            )
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert!(!b_remote_dir.join("1-resumable.bin").exists());
+
     // Revoke the recipient-side Remote grant; the same identity remains nearby-trusted.
     b_remote.revoke(a_profile.id).unwrap();
     assert!(b_remote_trust.load_remote().unwrap().is_empty());
@@ -281,4 +374,54 @@ async fn exercise_scope_boundary() {
     assert_eq!(a_remote_trust.load_remote().unwrap()[0].id, b_profile.id);
     stop.cancel();
     timeout(WAIT, serve).await.unwrap().unwrap();
+}
+
+// Use real routed TCP byte streams and leave the mTLS session end to end.
+// The proxy never decrypts anything. After two large encrypted sends are
+// observed, cut the second before the receiver has its full block.
+async fn interrupt_second_chunk(
+    listener: TcpListener,
+    target: std::net::SocketAddr,
+    chunk_streams: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+) {
+    let mut streams = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            _ = streams.join_next(), if !streams.is_empty() => {}
+            result = listener.accept() => {
+                let (incoming, _) = result.unwrap();
+                let chunk_streams = chunk_streams.clone();
+                let dropped = dropped.clone();
+                streams.spawn(async move {
+                    let mut outgoing = TcpStream::connect(target).await?;
+                    let mut incoming = incoming;
+                    let (mut sender, mut to_sender) = incoming.split();
+                    let (mut receiver, mut to_receiver) = outgoing.split();
+                    let upload = async {
+                        let mut count = 0;
+                        let mut frame = [0; 8192];
+                        loop {
+                            let read = sender.read(&mut frame).await?;
+                            if read == 0 { break; }
+                            let next = count + read;
+                            if count < 256 * 1024 && next >= 256 * 1024
+                                && chunk_streams.fetch_add(1, Ordering::SeqCst) == 1
+                            {
+                                dropped.fetch_add(1, Ordering::SeqCst);
+                                return Ok::<_, std::io::Error>(());
+                            }
+                            to_receiver.write_all(&frame[..read]).await?;
+                            count = next;
+                        }
+                        to_receiver.shutdown().await
+                    };
+                    tokio::select! {
+                        result = upload => result,
+                        result = tokio::io::copy(&mut receiver, &mut to_sender) => result.map(|_| ()),
+                    }
+                });
+            }
+        }
+    }
 }

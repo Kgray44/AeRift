@@ -5,13 +5,17 @@ use std::{
     time::Duration,
 };
 
+use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{ErrorCode, Offer, PeerId, State, Status, TransferError};
+use crate::{
+    ErrorCode, Offer, PeerId, RESUMABLE_CHUNK_SIZE, State, Status, TransferError,
+    checkpoint::{self, Checkpoint},
+};
 
 const OFFER_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -34,6 +38,7 @@ pub struct Receiver {
     destination: PathBuf,
     staging: PathBuf,
     limits: ReceiveLimits,
+    resumable: bool,
     ready_until: Mutex<Option<Instant>>,
     entries: Mutex<HashMap<TransferKey, Entry>>,
     changes: watch::Sender<u64>,
@@ -47,8 +52,17 @@ pub struct ReceiveLimits {
     pub session_offers: usize,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Mode {
+    Legacy,
+    Resumable,
+}
+
 struct Entry {
     transfer: IncomingTransfer,
+    mode: Mode,
+    checkpoint: Option<Checkpoint>,
+    committing: bool,
     cancel: CancellationToken,
     trust: CancellationToken,
     deadline: Instant,
@@ -58,6 +72,18 @@ impl Receiver {
     /// The native host provides a private, receiver-owned directory.
     pub fn new(destination: &Path, limits: ReceiveLimits) -> Result<Self, TransferError> {
         Self::with_staging_directory(destination, destination, limits)
+    }
+
+    /// Opt in to versioned resumable file uploads on an isolated Remote host.
+    /// Normal Nearby Receivers do not accept the new version.
+    pub fn new_resumable(destination: &Path, limits: ReceiveLimits) -> Result<Self, TransferError> {
+        let mut receiver = Self::new(destination, limits)?;
+        receiver.resumable = true;
+        Ok(receiver)
+    }
+
+    pub(crate) fn resumable_enabled(&self) -> bool {
+        self.resumable
     }
 
     /// Stage incomplete transfers in a private, receiver-owned directory.
@@ -83,6 +109,7 @@ impl Receiver {
             destination,
             staging,
             limits,
+            resumable: false,
             ready_until: Mutex::default(),
             entries: Mutex::default(),
             changes,
@@ -200,6 +227,28 @@ impl Receiver {
         offer: Offer,
         trust: &CancellationToken,
     ) -> Result<(bool, Status), TransferError> {
+        self.offer_mode(peer, offer, trust, Mode::Legacy)
+    }
+
+    pub(crate) fn offer_resumable(
+        &self,
+        peer: PeerId,
+        offer: Offer,
+        trust: &CancellationToken,
+    ) -> Result<(bool, Status), TransferError> {
+        if !self.resumable {
+            return Err(ErrorCode::UnsupportedVersion.into());
+        }
+        self.offer_mode(peer, offer, trust, Mode::Resumable)
+    }
+
+    fn offer_mode(
+        &self,
+        peer: PeerId,
+        offer: Offer,
+        trust: &CancellationToken,
+        mode: Mode,
+    ) -> Result<(bool, Status), TransferError> {
         offer.validate()?;
         let key = TransferKey { peer, id: offer.id };
         let mut entries = self.entries();
@@ -210,7 +259,7 @@ impl Receiver {
             if Self::reap_entry(entry, Instant::now()) {
                 self.changed();
             }
-            if entry.transfer.offer == offer {
+            if entry.transfer.offer == offer && entry.mode == mode {
                 return Ok((false, entry.transfer.status));
             }
             return Err(ErrorCode::Conflict.into());
@@ -228,6 +277,9 @@ impl Receiver {
                     status,
                     saved_path: None,
                 },
+                mode,
+                checkpoint: None,
+                committing: false,
                 cancel: CancellationToken::new(),
                 trust: trust.clone(),
                 deadline: Instant::now() + OFFER_TIMEOUT,
@@ -247,6 +299,9 @@ impl Receiver {
         if Self::reap_entry(entry, Instant::now()) {
             self.changed();
         }
+        if entry.mode != Mode::Legacy {
+            return Err(ErrorCode::Conflict.into());
+        }
         match entry.transfer.status.state {
             State::Rejected => return Err(ErrorCode::TransferRejected.into()),
             State::Accepted => {}
@@ -264,6 +319,169 @@ impl Receiver {
             cancel: entry.cancel.clone(),
             trust: entry.trust.clone(),
         })
+    }
+
+    pub(crate) fn status_legacy(&self, key: TransferKey) -> Result<Status, TransferError> {
+        self.status_mode(key, Mode::Legacy, false)
+    }
+
+    pub(crate) fn cancel_legacy(&self, key: TransferKey) -> Result<Status, TransferError> {
+        self.status_mode(key, Mode::Legacy, true)
+    }
+
+    pub(crate) fn status_resumable(&self, key: TransferKey) -> Result<Status, TransferError> {
+        self.status_mode(key, Mode::Resumable, false)
+    }
+
+    pub(crate) fn cancel_resumable(&self, key: TransferKey) -> Result<Status, TransferError> {
+        self.status_mode(key, Mode::Resumable, true)
+    }
+
+    fn status_mode(
+        &self,
+        key: TransferKey,
+        mode: Mode,
+        cancel: bool,
+    ) -> Result<Status, TransferError> {
+        let mut entries = self.entries();
+        let entry = Self::entry(&mut entries, key)?;
+        if entry.mode != mode {
+            return Err(ErrorCode::Conflict.into());
+        }
+        let changed = if cancel {
+            Self::cancel_entry(entry)
+        } else {
+            Self::reap_entry(entry, Instant::now())
+        };
+        if changed {
+            self.changed();
+        }
+        Ok(entry.transfer.status)
+    }
+
+    pub(crate) fn can_append_resumable(
+        &self,
+        key: TransferKey,
+        offset: u64,
+        size: u64,
+    ) -> Result<(), TransferError> {
+        let mut entries = self.entries();
+        let entry = Self::entry(&mut entries, key)?;
+        self.check_chunk(entry, offset, size)
+    }
+
+    fn check_chunk(&self, entry: &mut Entry, offset: u64, size: u64) -> Result<(), TransferError> {
+        self.require_resumable(entry)?;
+        let max = RESUMABLE_CHUNK_SIZE as u64;
+        let remaining = entry.transfer.offer.size_bytes.saturating_sub(offset);
+        if !offset.is_multiple_of(max)
+            || offset > entry.transfer.status.bytes_transferred
+            || size == 0
+            || size != remaining.min(max)
+        {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        Ok(())
+    }
+
+    fn require_resumable(&self, entry: &mut Entry) -> Result<(), TransferError> {
+        if Self::reap_entry(entry, Instant::now()) {
+            self.changed();
+        }
+        if entry.mode != Mode::Resumable
+            || entry.committing
+            || !matches!(
+                entry.transfer.status.state,
+                State::Accepted | State::Transferring
+            )
+        {
+            return Err(ErrorCode::Conflict.into());
+        }
+        Ok(())
+    }
+
+    fn create_checkpoint(&self, offer: &Offer) -> Result<Checkpoint, TransferError> {
+        let mut digest = [0_u8; 32];
+        for (i, byte) in digest.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&offer.sha256[i * 2..i * 2 + 2], 16)
+                .map_err(|_| ErrorCode::InvalidRequest)?;
+        }
+        Checkpoint::create(&self.staging, offer.size_bytes, digest).map_err(checkpoint_failure)
+    }
+
+    pub(crate) fn append_resumable(
+        &self,
+        key: TransferKey,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<Status, TransferError> {
+        let digest = Sha256::digest(data).into();
+        let mut entries = self.entries();
+        let entry = Self::entry(&mut entries, key)?;
+        self.check_chunk(entry, offset, data.len() as u64)?;
+        if entry.checkpoint.is_none() {
+            entry.checkpoint = Some(self.create_checkpoint(&entry.transfer.offer)?);
+        }
+        let checkpoint = entry.checkpoint.as_mut().ok_or(ErrorCode::InternalError)?;
+        let committed = checkpoint
+            .append(offset, data.len(), digest, &mut std::io::Cursor::new(data))
+            .map_err(checkpoint_failure)?;
+        if Self::reap_entry(entry, Instant::now()) {
+            self.changed();
+            return Err(ErrorCode::Cancelled.into());
+        }
+        if committed > entry.transfer.status.bytes_transferred {
+            entry.transfer.status.state = State::Transferring;
+            entry.transfer.status.bytes_transferred = committed;
+            entry.deadline = Instant::now() + OFFER_TIMEOUT;
+            self.changed();
+        }
+        Ok(entry.transfer.status)
+    }
+
+    pub(crate) fn commit_resumable(
+        self: &Arc<Self>,
+        key: TransferKey,
+    ) -> Result<Status, TransferError> {
+        let (upload, checkpoint) = {
+            let mut entries = self.entries();
+            let entry = Self::entry(&mut entries, key)?;
+            if entry.mode == Mode::Resumable && entry.transfer.status.state == State::Completed {
+                return Ok(entry.transfer.status); // lost verified commit response
+            }
+            self.require_resumable(entry)?;
+            if entry.transfer.status.bytes_transferred != entry.transfer.offer.size_bytes {
+                return Err(ErrorCode::Conflict.into());
+            }
+            let checkpoint = entry
+                .checkpoint
+                .take()
+                .map_or_else(|| self.create_checkpoint(&entry.transfer.offer), Ok)?;
+            if checkpoint.offset() != entry.transfer.offer.size_bytes {
+                return Err(ErrorCode::IntegrityFailed.into());
+            }
+            entry.committing = true;
+            entry.transfer.status.state = State::Transferring;
+            self.changed();
+            (
+                Upload {
+                    receiver: self.clone(),
+                    key,
+                    offer: entry.transfer.offer.clone(),
+                    cancel: entry.cancel.clone(),
+                    trust: entry.trust.clone(),
+                },
+                checkpoint,
+            )
+        };
+        let result = checkpoint
+            .finish()
+            .map_err(checkpoint_failure)
+            .and_then(|file| upload.publish(file));
+        if let Err(error) = result {
+            upload.fail(error);
+        }
+        result
     }
 
     fn entries(&self) -> MutexGuard<'_, HashMap<TransferKey, Entry>> {
@@ -287,11 +505,15 @@ impl Receiver {
         if entry.trust.is_cancelled() {
             return Self::cancel_entry(entry);
         }
-        if matches!(
+        if (matches!(
             entry.transfer.status.state,
             State::Pending | State::Accepted
-        ) && entry.deadline <= now
+        ) || (entry.mode == Mode::Resumable
+            && !entry.committing
+            && entry.transfer.status.state == State::Transferring))
+            && entry.deadline <= now
         {
+            entry.checkpoint.take();
             entry.transfer.status.state = State::Failed;
             entry.transfer.status.error = Some(ErrorCode::PeerUnavailable.into());
             return true;
@@ -318,9 +540,23 @@ impl Receiver {
             return false;
         }
         entry.transfer.status.state = State::Cancelled;
+        entry.checkpoint.take();
         entry.cancel.cancel();
         true
     }
+}
+
+fn checkpoint_failure(error: checkpoint::Error) -> TransferError {
+    match error {
+        checkpoint::Error::InvalidRange => ErrorCode::InvalidRequest,
+        checkpoint::Error::PrefixMismatch
+        | checkpoint::Error::BlockDigest
+        | checkpoint::Error::FileDigest => ErrorCode::IntegrityFailed,
+        checkpoint::Error::Incomplete => ErrorCode::Conflict,
+        checkpoint::Error::Interrupted => ErrorCode::NetworkError,
+        checkpoint::Error::Storage => ErrorCode::StorageFailed,
+    }
+    .into()
 }
 
 pub(crate) struct Upload {
@@ -407,6 +643,76 @@ impl Drop for Upload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resumable_prefix_is_never_completion_and_requires_explicit_acceptance() {
+        use sha2::{Digest, Sha256};
+        let directory = tempfile::tempdir().unwrap();
+        let rx = Arc::new(
+            Receiver::new_resumable(
+                directory.path(),
+                ReceiveLimits {
+                    active_bytes: 8 * 1024 * 1024,
+                    session_offers: 4,
+                },
+            )
+            .unwrap(),
+        );
+        let first = vec![42; crate::RESUMABLE_CHUNK_SIZE];
+        let last = [17, 63, 55];
+        let mut bytes = first.clone();
+        bytes.extend_from_slice(&last);
+        let key = TransferKey {
+            peer: PeerId::from_tls_leaf(b"authenticated fixture"),
+            id: Uuid::new_v4(),
+        };
+        let offer = Offer {
+            id: key.id,
+            name: "resume-fixture.bin".to_owned(),
+            size_bytes: bytes.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+        };
+        let trust = CancellationToken::new();
+        rx.offer_resumable(key.peer, offer.clone(), &trust).unwrap();
+        assert!(rx.append_resumable(key, 0, &first).is_err());
+        rx.respond(key, true).unwrap();
+        assert!(rx.offer(key.peer, offer, &trust).is_err());
+        assert!(
+            rx.status_resumable(TransferKey {
+                peer: PeerId::from_tls_leaf(b"other peer"),
+                id: key.id
+            })
+            .is_err()
+        );
+        assert_eq!(
+            rx.append_resumable(key, 0, &first)
+                .unwrap()
+                .bytes_transferred,
+            first.len() as u64
+        );
+        assert!(rx.commit_resumable(key).is_err());
+        assert!(
+            rx.append_resumable(key, first.len() as u64 + 1, &last)
+                .is_err()
+        );
+        assert_eq!(
+            rx.append_resumable(key, 0, &first)
+                .unwrap()
+                .bytes_transferred,
+            first.len() as u64
+        );
+        assert_eq!(
+            rx.append_resumable(key, first.len() as u64, &last)
+                .unwrap()
+                .state,
+            State::Transferring
+        );
+        let final_path = directory.path().join("resume-fixture.bin");
+        assert!(!final_path.exists());
+        assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
+        assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
+        assert_eq!(std::fs::read(final_path).unwrap(), bytes);
+    }
 
     #[test]
     fn expired_accepted_offer_releases_storage_reservation() {

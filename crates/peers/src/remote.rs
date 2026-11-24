@@ -58,7 +58,7 @@ impl RemotePeerNode {
         destination: &Path,
         limits: ReceiveLimits,
     ) -> Result<Self, TransferError> {
-        let receiver = Arc::new(Receiver::new(destination, limits)?);
+        let receiver = Arc::new(Receiver::new_resumable(destination, limits)?);
         let peer = PeerNode::with_lane(
             identity,
             name,

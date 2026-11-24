@@ -1,5 +1,6 @@
 //! AeRift v1 file transport on a peer-authenticated HTTP/1.1 stream.
 
+mod checkpoint;
 mod client;
 mod model;
 mod receiver;
@@ -13,6 +14,9 @@ pub use server::{serve, serve_request};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Limited};
 use hyper::body::Incoming;
+
+pub(crate) const RESUMABLE_ROUTE: &str = "/v2/resumable/transfers";
+pub(crate) const RESUMABLE_CHUNK_SIZE: usize = 1024 * 1024;
 
 const RECEIVER_READY_ROUTE: &str = "/v1/receiver-ready";
 
