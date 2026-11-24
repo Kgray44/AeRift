@@ -230,6 +230,9 @@ pub(crate) fn set_desktop_ambient(app: AppHandle, enabled: bool) -> Result<(), T
 }
 
 pub(crate) fn handle_shortcut(app: &AppHandle, key: &Shortcut, state: ShortcutState) {
+    if !app.state::<AppRuntime>().nearby_enabled() {
+        return;
+    }
     if key == &ambient_runtime::capture_shortcut() {
         if state == ShortcutState::Pressed {
             app.state::<AmbientRuntime>().request_pickup();

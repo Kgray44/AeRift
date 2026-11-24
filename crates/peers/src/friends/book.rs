@@ -87,7 +87,33 @@ struct Offer {
     delivery_tickets: Vec<(PeerId, Uuid)>,
 }
 
+pub struct FriendContactView {
+    pub person: PersonId,
+    pub devices: Vec<PeerId>,
+    pub receive_allowed: bool,
+}
+
 impl FriendBook {
+    pub fn contacts(&self) -> Result<Vec<FriendContactView>, TransferError> {
+        Ok(self
+            .read()?
+            .friends
+            .into_iter()
+            .map(|f| FriendContactView {
+                person: f.person,
+                devices: f.devices,
+                receive_allowed: f.receive_allowed,
+            })
+            .collect())
+    }
+
+    pub fn contact_id(&self, id: &str) -> Result<PersonId, TransferError> {
+        self.contacts()?
+            .into_iter()
+            .find(|f| f.person.to_string() == id)
+            .map(|f| f.person)
+            .ok_or_else(|| ErrorCode::PeerUntrusted.into())
+    }
     pub fn open(owner: PersonId, store: Arc<dyn FriendStore>) -> Result<Self, TransferError> {
         Self::decode(owner, store.load()?.as_deref())?;
         Ok(Self {

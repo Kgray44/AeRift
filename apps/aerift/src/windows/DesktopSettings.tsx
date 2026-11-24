@@ -1,3 +1,4 @@
+import { RemoteModeSettings } from "./RemoteModeSettings";
 import { Button, SettingsPanel, type AppearanceSettings, type GestureCameraStatus } from "@aerift/ui";
 import { WORKSPACE_MODULES, type ModuleId } from "@aerift/app-contract/experience";
 import { useEffect, useState } from "react";
@@ -109,6 +110,7 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
   }
 
   return <div className="aerift-settings-grid">
+    <RemoteModeSettings />
     <section aria-labelledby="experience-heading">
       <h3 id="experience-heading">Experience</h3><p className="aerift-settings-intro">Make room for the way you work.</p>
       <label>Window mode

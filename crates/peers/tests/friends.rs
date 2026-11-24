@@ -246,6 +246,18 @@ fn private_contact_card_bootstraps_only_a_bound_targeted_invite() {
     let cp = PeerId::from_tls_leaf(b"not-the-target-device");
     let card = b.contact_card(bp, 10).unwrap();
     let invite = a.invite_contact(ap, &card, 11).unwrap();
+    let route = "127.0.0.1:43999".parse().unwrap();
+    let signature = a.sign_route(&invite, route).unwrap();
+    assert_eq!(invite.review(b.id(), bp, 12).unwrap(), a.id());
+    assert!(invite.review(b.id(), cp, 12).is_err());
+    assert!(invite.review(b.id(), bp, invite.expires_at()).is_err());
+    assert!(invite.verify_route(route, &signature).is_ok());
+    assert!(
+        invite
+            .verify_route("127.0.0.1:44000".parse().unwrap(), &signature)
+            .is_err()
+    );
+    assert!(c.sign_route(&invite, route).is_err());
     assert!(c.accept(&invite, ap, cp, 12).is_err());
     assert!(b.accept(&invite, ap, bp, 12).is_ok());
     assert!(a.invite_contact(ap, &card, 86_410).is_err());
@@ -925,4 +937,119 @@ async fn friends_payload_reaches_only_winner_with_verified_digest_and_receipt() 
             .unwrap()
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn explicit_file_window_uses_exact_route_and_consent_then_reports_durable_file() {
+    use aerift_peers::{FriendFileRoute, FriendFileWindow, Identity};
+    use aerift_transfer::State;
+    use std::{
+        fs,
+        net::Ipv4Addr,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    let al = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let bo = FriendAuthority::load_or_create(&Memory::default()).unwrap();
+    let a = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let b = Arc::new(Identity::load_or_create(&Memory::default()).unwrap());
+    let a_id = a.id();
+    let b_id = b.id();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let invite = al.invite(a_id, bo.id(), b_id, now).unwrap();
+    let consent = bo.accept(&invite, a_id, b_id, now).unwrap();
+    let approval = al.confirm(&invite, &consent, b_id, now).unwrap();
+    let a_book = Arc::new(FriendBook::open(al.id(), Arc::new(Memory::default())).unwrap());
+    let b_book = Arc::new(FriendBook::open(bo.id(), Arc::new(Memory::default())).unwrap());
+    a_book
+        .add(
+            FriendRecord::verify(&invite, &consent, &approval, al.id(), a_id, b_id, now).unwrap(),
+            now,
+        )
+        .unwrap();
+    b_book
+        .add(
+            FriendRecord::verify(&invite, &consent, &approval, bo.id(), b_id, a_id, now).unwrap(),
+            now,
+        )
+        .unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let dest_a = tempfile::tempdir().unwrap();
+    let dest_b = tempfile::tempdir().unwrap();
+    let input = source.path().join("private-test.dat");
+    let bytes: Vec<_> = (0..189_982).map(|i| (i % 251) as u8).collect();
+    fs::write(&input, &bytes).unwrap();
+    let window_a = FriendFileWindow::open(a.clone(), a_book, dest_a.path(), Ipv4Addr::LOCALHOST)
+        .await
+        .unwrap();
+    assert!(
+        FriendFileWindow::open(
+            b.clone(),
+            b_book.clone(),
+            dest_b.path(),
+            Ipv4Addr::UNSPECIFIED
+        )
+        .await
+        .is_err()
+    );
+    let window_b = FriendFileWindow::open(b, b_book, dest_b.path(), Ipv4Addr::LOCALHOST)
+        .await
+        .unwrap();
+    assert!(FriendFileRoute::new(window_a.route().offers, window_a.route().offers).is_err());
+    assert!(
+        window_a
+            .offer(bo.id(), b_id, input.clone(), window_a.route())
+            .await
+            .is_err()
+    );
+    assert!(window_b.incoming().unwrap().is_empty());
+
+    let first = window_a
+        .offer(bo.id(), b_id, input.clone(), window_b.route())
+        .await
+        .unwrap();
+    assert!(window_a.send(first).await.is_err());
+    assert!(window_b.receipts().is_empty());
+    assert_eq!(window_b.incoming().unwrap()[0].issuer(), a_id);
+    window_b.decline(a_id, first).await.unwrap();
+    assert!(
+        window_b
+            .accept(a_id, first, window_a.route().offers)
+            .await
+            .is_err()
+    );
+    assert!(window_a.send(first).await.is_err());
+    window_a.withdraw(first).await.unwrap();
+
+    let second = window_a
+        .offer(bo.id(), b_id, input.clone(), window_b.route())
+        .await
+        .unwrap();
+    assert!(
+        window_b
+            .accept(a_id, second, window_b.route().offers)
+            .await
+            .is_err()
+    );
+    assert!(window_a.send(second).await.is_err());
+    window_b
+        .accept(a_id, second, window_a.route().offers)
+        .await
+        .unwrap();
+    assert_eq!(window_a.outgoing().unwrap(), Some((second, b_id, true)));
+    let sent = window_a.send(second).await.unwrap();
+    assert_eq!(sent.state, State::Completed);
+    assert_eq!(sent.bytes_transferred, bytes.len() as u64);
+    assert_eq!(window_b.receipts(), [(a_id, second, sent)]);
+    assert_eq!(
+        fs::read(dest_b.path().join("private-test.dat")).unwrap(),
+        bytes
+    );
+    assert!(window_a.send(second).await.is_err());
+
+    window_b.stop();
+    assert!(!window_b.is_open());
+    assert!(window_b.incoming().is_err());
 }

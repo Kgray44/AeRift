@@ -80,9 +80,49 @@ fn valid_time(issued: u64, expires: u64, now: u64) -> bool {
     expires.checked_sub(issued) == Some(TTL) && (issued..expires).contains(&now)
 }
 
+impl std::fmt::Display for PersonId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
 impl FriendInvitation {
     pub fn id(&self) -> Uuid {
         self.nonce
+    }
+    /// Validate the signed handoff before displaying a consent prompt, without signing or dialing.
+    pub fn review(
+        &self,
+        recipient: PersonId,
+        device: PeerId,
+        now: u64,
+    ) -> Result<PersonId, TransferError> {
+        self.verify(now)?;
+        if self.recipient != recipient || self.recipient_device != device {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Ok(self.issuer)
+    }
+    /// A privately shared route is only a transport hint, never a peer grant.
+    pub fn verify_route(
+        &self,
+        route: std::net::SocketAddr,
+        signature: &str,
+    ) -> Result<(), TransferError> {
+        verify(
+            self.issuer,
+            &canonical(("aerift/friends/private-route/1", self.body(), route))?,
+            signature,
+        )
+    }
+    pub fn expires_at(&self) -> u64 {
+        self.expires
+    }
+    pub fn recipient(&self) -> PersonId {
+        self.recipient
     }
     fn body(&self) -> impl Serialize + '_ {
         (
@@ -169,6 +209,17 @@ impl FriendAuthority {
         Ed25519KeyPair::from_pkcs8(&data)
             .map(Self)
             .map_err(|_| ErrorCode::StorageFailed.into())
+    }
+    pub fn sign_route(
+        &self,
+        invite: &FriendInvitation,
+        route: std::net::SocketAddr,
+    ) -> Result<String, TransferError> {
+        if self.id() != invite.issuer {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        let message = canonical(("aerift/friends/private-route/1", invite.body(), route))?;
+        Ok(URL_SAFE_NO_PAD.encode(self.0.sign(&message).as_ref()))
     }
     pub fn id(&self) -> PersonId {
         let mut key = [0; 32];
