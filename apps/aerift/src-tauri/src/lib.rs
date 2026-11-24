@@ -1,7 +1,3 @@
-#[cfg(target_os = "android")]
-mod android;
-#[cfg(target_os = "android")]
-mod android_received;
 #[cfg(windows)]
 mod ambient_context;
 #[cfg(all(windows, feature = "ambient-media-qualification"))]
@@ -16,15 +12,19 @@ mod ambient_media_foundation;
 mod ambient_native_model;
 #[cfg(windows)]
 mod ambient_runtime;
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+mod android_received;
 #[cfg(windows)]
 mod desktop;
 #[cfg(windows)]
 mod desktop_explorer;
 #[cfg(target_os = "ios")]
 mod ios;
-#[cfg(all(windows, feature = "private-remote-app"))]
+#[cfg(windows)]
 mod private_remote_app;
-#[cfg(all(windows, feature = "private-remote-app"))]
+#[cfg(windows)]
 mod private_remote_profile;
 #[cfg(windows)]
 mod protected_store;
@@ -127,8 +127,17 @@ pub fn run() {
         )
         .manage(runtime::AppRuntime::default())
         .manage(ambient_runtime::AmbientRuntime::default())
+        .manage(private_remote_app::RemoteRuntime::default())
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
+            private_remote_app::windows_remote_mode,
+            private_remote_app::windows_set_remote_mode,
+            private_remote_app::windows_exit_for_remote_mode,
+            private_remote_app::private_remote_snapshot,
+            private_remote_app::private_remote_start,
+            private_remote_app::private_remote_action,
+            private_remote_app::windows_redeem_remote,
+            private_remote_app::windows_send_remote_file,
             windows::watch_app,
             ambient_runtime::watch_ambient_capture,
             ambient_runtime::set_ambient_capture,
@@ -155,10 +164,28 @@ pub fn run() {
             desktop_explorer::desktop_explorer_enabled,
             desktop_explorer::set_desktop_explorer,
         ])
-        .on_webview_event(windows::handle_webview_event)
-        .on_window_event(desktop::handle_window)
+        .on_webview_event(|webview, event| {
+            use tauri::Manager;
+            if webview.state::<runtime::AppRuntime>().nearby_enabled() {
+                windows::handle_webview_event(webview, event);
+            }
+        })
+        .on_window_event(|window, event| {
+            use tauri::Manager;
+            if window.state::<runtime::AppRuntime>().nearby_enabled() {
+                desktop::handle_window(window, event);
+            }
+        })
         .setup(|app| {
             use tauri::Manager;
+            let remote = app.state::<private_remote_app::RemoteRuntime>();
+            let mode = private_remote_app::load_mode(app.handle());
+            let nearby = matches!(&mode, Ok(None));
+            remote.configure(mode);
+            app.state::<runtime::AppRuntime>().configure_nearby(nearby);
+            if !nearby {
+                return Ok(());
+            }
             app.state::<ambient_runtime::AmbientRuntime>()
                 .start_lifecycle_watch();
             let args = std::env::args_os().skip(1).collect::<Vec<_>>();

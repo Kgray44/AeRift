@@ -236,6 +236,8 @@ struct LiveState {
 }
 
 pub(crate) struct AppRuntime {
+    #[cfg(windows)]
+    nearby_enabled: std::sync::OnceLock<bool>,
     session: OnceCell<Arc<Session>>,
     stop: CancellationToken,
     subscriptions: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
@@ -244,6 +246,8 @@ pub(crate) struct AppRuntime {
 impl Default for AppRuntime {
     fn default() -> Self {
         Self {
+            #[cfg(windows)]
+            nearby_enabled: std::sync::OnceLock::new(),
             session: OnceCell::new(),
             stop: CancellationToken::new(),
             subscriptions: Arc::new(Mutex::new(HashMap::new())),
@@ -276,7 +280,20 @@ pub(crate) struct Session {
 
 impl AppRuntime {
     #[cfg(windows)]
+    pub(crate) fn configure_nearby(&self, enabled: bool) {
+        let _ = self.nearby_enabled.set(enabled);
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn nearby_enabled(&self) -> bool {
+        self.nearby_enabled.get().copied() == Some(true)
+    }
+
+    #[cfg(windows)]
     pub(crate) async fn session(&self, root: PathBuf) -> Result<Arc<Session>, TransferError> {
+        if !self.nearby_enabled() {
+            return Err(ErrorCode::PeerUnavailable.into());
+        }
         self.session
             .get_or_try_init(|| Session::open(root, self.stop.child_token(), true))
             .await

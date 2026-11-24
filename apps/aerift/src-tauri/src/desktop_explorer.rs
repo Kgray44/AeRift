@@ -128,6 +128,12 @@ fn requested_path(args: &[OsString]) -> Option<&Path> {
 }
 
 pub(crate) fn stage_launch_file(app: &AppHandle, args: &[OsString], cwd: Option<&Path>) -> bool {
+    if !app
+        .try_state::<crate::runtime::AppRuntime>()
+        .is_some_and(|runtime| runtime.nearby_enabled())
+    {
+        return false;
+    }
     let Some(path) = requested_path(args) else {
         return false;
     };
