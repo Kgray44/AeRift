@@ -36,8 +36,8 @@ test("only the iOS content gets keyed animation; transfer and dock are persisten
   const workspace = ios("MobileWorkspace.tsx");
   assert.match(app, /key=\{destination\} className="ios-page"[^>]+data-ae-route-enter=\{route\.motion\}/);
   assert.doesNotMatch(app, /<(?:TransferWorkspace|MobileNavigation)\s+key=/);
-  assert.match(workspace, /key=\{current\} data-ae-route-enter=\{[^}]+\}/);
-  assert.match(workspace, /aria-pressed=\{id === current\}/);
+  assert.match(workspace, /key=\{section\?\.id \?\? "library"\} data-ae-route-enter=\{[^}]+\}/);
+  assert.match(workspace, /<WorkspaceCategoryHeading\b[^>]+onBack=\{back\}/);
 });
 
 test("persistent views mirror their entrance in RTL and opt out for both Reduce Motion settings", () => {

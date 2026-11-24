@@ -8,6 +8,13 @@ async (page) => {
     await heading.waitFor();
     check(await heading.evaluate(e => document.activeElement === e), name + " focus");
   };
+  async function openCategory(name) {
+    const back = page.getByRole("button", { name: "Back to Workspace", exact: true });
+    if (await back.isVisible()) await back.click();
+    await page.getByRole("button", { name, exact: true }).click();
+    const heading = page.getByRole("heading", { name, exact: true, level: 3 });
+    check(await heading.evaluate(el => el === document.activeElement), name + " focus");
+  }
   const config = async () => {
     await page.getByRole("button", { name: "Control Center", exact: true }).click();
     return page.getByRole("dialog", { name: "Control Center" });
@@ -23,7 +30,7 @@ async (page) => {
   await page.locator('.ae-theme[data-scheme="light"]').waitFor();
   await screenshot("light-home-390");
   await go("Workspace");
-  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await openCategory('Images & Videos');
   await page.getByRole("button", { name: "Choose for Rift", exact: true }).click();
   await page.getByRole("heading", { name: "Ready for Rift", exact: true }).waitFor();
   await screenshot("light-workspace-390");
@@ -53,13 +60,13 @@ async (page) => {
   await page.locator('.ae-theme[data-scheme="dark"]').waitFor();
   await screenshot("dark-activity-390");
   await go("Workspace");
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await openCategory('Notes');
   await page.getByText("New note", { exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Packing list");
   await page.getByLabel("Note", { exact: true }).fill("Charts and camera");
   await page.getByRole("button", { name: "Save note", exact: true }).click();
   await page.getByText("Packing list", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await openCategory('Collections');
   await page.getByText("New collection", { exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Harbor Trip");
   await page.getByRole("button", { name: "Create collection", exact: true }).click();
@@ -71,7 +78,7 @@ async (page) => {
   check(await page.locator(".ae-theme").getAttribute("data-motion") === "reduce", "motion persisted");
   await go("Workspace");
   await page.getByRole("button", { name: "Clipboard", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await openCategory('Collections');
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByRole("button", { name: "Remove Packing list from collection" }).waitFor();
   for (const [width, height] of [[320, 640], [844, 390], [1024, 768]]) {
@@ -88,7 +95,7 @@ async (page) => {
     if (width !== 1024) await go("Devices");
   }
   await go("Workspace");
-  await page.getByRole("button", { name: "Clipboard", exact: true }).click();
+  await openCategory('Clipboard');
   await page.getByText("New text pin", { exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Dock code");
   await page.getByLabel("Text to pin", { exact: true }).fill("fixture-sensitive-text");
@@ -102,9 +109,9 @@ async (page) => {
   await deviceHeading.waitFor();
   check(await deviceHeading.evaluate(e => document.activeElement === e), "settings-to-devices focus");
   await go("Workspace");
-  await page.getByRole("button", { name: "Clipboard", exact: true }).click();
+  await openCategory('Clipboard');
   check(await page.getByText("Dock code", { exact: true }).count() === 0, "explicit clear removed saved pin");
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await openCategory('Notes');
   await page.evaluate(() => {
     window.__TAURI_INTERNALS__ = {
       invoke: command => {
@@ -137,7 +144,7 @@ async (page) => {
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   check(await history.getByText("Cancelled", { exact: true }).count() === 0, "clear removes archived outcomes");
   await go("Workspace");
-  await page.getByRole("button", { name: "Collections", exact: true }).click();
+  await openCategory('Collections');
   await page.evaluate(() => {
     window.__TAURI_INTERNALS__.invoke = (command, args) => {
       if (command !== "stage_ios_text") throw new Error("Unexpected fixture command");
@@ -161,7 +168,7 @@ async (page) => {
       throw new Error("Unexpected fixture command");
     } };
   });
-  await page.getByRole("button", { name: "Clipboard", exact: true }).click();
+  await openCategory('Clipboard');
   const pasteImage = page.getByRole("button", { name: "Paste image for Rift", exact: true });
   await pasteImage.waitFor();
   check(await pasteImage.isDisabled(), "clipboard image sharing starts disabled");
@@ -184,12 +191,13 @@ async (page) => {
     animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await go("Workspace");
+  await openCategory("File Browser");
   const files = page.getByRole("region", { name: "Imported files", exact: true });
   await files.getByRole("button", { name: "Import files", exact: true }).click();
   await files.getByText("Harbor log.txt", { exact: true }).waitFor();
   check((await files.getByRole("listitem").allTextContents())[0].includes("Navigation chart.pdf"),
     "file import order survives staging");
-  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await openCategory('Images & Videos');
   const media = page.getByRole("region", { name: "Imported photos and videos", exact: true });
   await media.getByRole("button", { name: "Import photos or videos", exact: true }).click();
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
@@ -206,18 +214,18 @@ async (page) => {
   await go("Rift");
   await page.locator(".ae-dock-file").getByText("Harbor approach.mov", { exact: true }).waitFor();
   await go("Workspace");
-  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await openCategory('Images & Videos');
   await media.getByRole("button", { name: "Remove Harbor aerial.heic", exact: true }).click();
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removes only the selected imported copy");
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
   await page.reload();
   await go("Workspace");
-  await page.getByRole("button", { name: "Photos and videos", exact: true }).click();
+  await openCategory('Images & Videos');
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removal survives restart");
   await media.getByRole("button", { name: "Select for Rift", exact: true }).click();
   await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await openCategory('Notes');
   const notes = page.getByRole("region", { name: "notes", exact: true });
   await notes.getByRole("button", { name: "Edit", exact: true }).click();
   const attachmentPicker = notes.getByLabel("Imported copy", { exact: true });
@@ -237,7 +245,7 @@ async (page) => {
   });
   await page.reload();
   await go("Workspace");
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await openCategory('Notes');
   await notes.getByText("2 attachments", { exact: true }).click();
   const savedNote = notes.locator(".ios-object-list > li").filter({ hasText: "Packing list" });
   await savedNote.getByText("Note edited by an earlier build.", { exact: true }).waitFor();
@@ -250,16 +258,17 @@ async (page) => {
   await page.locator(".ae-dock-file").getByText("Navigation chart.pdf", { exact: true }).waitFor();
 
   await go("Workspace");
+  await openCategory("File Browser");
   await files.getByRole("button", { name: "Remove Navigation chart.pdf", exact: true }).click();
   await files.getByRole("button", { name: "Remove Navigation chart.pdf", exact: true }).waitFor({ state: "detached" });
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await openCategory('Notes');
   await notes.getByText("2 attachments", { exact: true }).click();
   await attachments.first().getByText("Imported copy unavailable", { exact: true }).waitFor();
   await notes.getByRole("button", { name: "Edit", exact: true }).click();
   await notes.getByRole("button", { name: "Detach Attachment 1", exact: true }).click();
   await notes.getByRole("button", { name: "Save changes", exact: true }).click();
   await notes.getByText("1 attachment", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await openCategory('Web Browser');
   await page.evaluate(() => {
     window.__TAURI_INTERNALS__ = { invoke: (command, args) => {
       if (command !== "open_ios_browser" || args.url !== "https://example.test/start") {
@@ -273,7 +282,7 @@ async (page) => {
   await page.getByRole("status").filter({ hasText: "Link collected." }).waitFor();
   await page.reload();
   await go("Workspace");
-  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await openCategory('Web Browser');
   const browser = page.getByRole("region", { name: "browser", exact: true });
   const currentLink = browser.getByRole("listitem").filter({ hasText: "Harbor guide" });
   await currentLink.waitFor();

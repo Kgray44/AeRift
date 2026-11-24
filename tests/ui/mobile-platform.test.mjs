@@ -111,6 +111,7 @@ test("Files renders either the persisted Android catalog or iOS live summary, ne
   const workspace = read("ios/MobileWorkspace.tsx");
   assert.match(workspace, /if \(current !== "files" \|\| !operations\.listReceived\) return;/);
   assert.match(workspace, /\[catalogRefresh, current, latestArrival, operations\]/);
-  assert.match(workspace, /const visibleReceived = operations\.listReceived\s*\? catalog\.slice\(0, catalogLimit\)\s*: received\.slice\(0, 5\)/);
+  assert.match(workspace, /const visibleReceived = \(operations\.listReceived\s*\? catalog\s*: received\.map/);
+  assert.match(workspace, /\.filter\(item => !documents \|\| isWorkspaceDocument/);
   assert.match(workspace, /presentReceived\(item\.id, "share"\)/);
 });

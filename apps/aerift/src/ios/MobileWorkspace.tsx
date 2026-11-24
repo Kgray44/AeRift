@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { WORKSPACE_MODULES } from "@aerift/app-contract/experience";
+import { WorkspaceCategoryHeading, WorkspaceLibrary, useWorkspaceLibrary } from "../WorkspaceLibrary";
+import { isWorkspaceDocument, workspaceSections } from "../workspace-categories";
 import { MobileMediaTray } from "./MobileMediaTray";
 import type { MediaSource } from "./mobile-media";
 import type { ObservedMediaPort } from "./mobile-media-observer";
@@ -7,8 +8,8 @@ import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
 import type { MobileOperations, MobilePlatformCopy, ReceivedCopy } from "./mobile-platform";
 import type { AppPort, Transfer } from "@aerift/app-contract";
-import { mobileMotionDirection, observeMobileMotionSuppression, type MobileMotionDirection } from "./mobile-motion";
-import { Button, SpatialIcon, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
+import { observeMobileMotionSuppression, type MobileMotionDirection } from "./mobile-motion";
+import { Button, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
 
 export type PickerSource = MediaSource;
 export type ModuleVisibility = Record<PickerSource | LocalModule, boolean>;
@@ -44,10 +45,19 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       setReceivedAction(undefined);
     }
   }
-  const [picked, setPicked] = useState<{ id: PickerSource | LocalModule; motion?: MobileMotionDirection }>();
-  const visible = WORKSPACE_MODULES.filter(({ id }) => modules[id]);
-  const ordered = visible.map(({ id }) => id);
-  const current = picked && ordered.includes(picked.id) ? picked.id : ordered[0];
+  const workspace = useWorkspaceLibrary(id => modules[id]);
+  const section = workspace.section;
+  const current = section?.module;
+  const documents = section?.id === "documents";
+  const [moduleMotion, setModuleMotion] = useState<MobileMotionDirection>();
+  function openSection(id: (typeof workspaceSections)[number]["id"]) {
+    setModuleMotion("forward");
+    workspace.open(id);
+  }
+  function back() {
+    setModuleMotion("back");
+    workspace.back();
+  }
   const [catalog, setCatalog] = useState<readonly ReceivedCopy[]>([]);
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "error">("loading");
   const [catalogRefresh, setCatalogRefresh] = useState(0);
@@ -70,22 +80,14 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
     }).catch(() => { if (active) setCatalogState("error"); });
     return () => { active = false; };
   }, [catalogRefresh, current, latestArrival, operations]);
-  const visibleReceived = operations.listReceived
-    ? catalog.slice(0, catalogLimit)
-    : received.slice(0, 5).map(item => ({ id: item.id, ...item.file }));
+  const visibleReceived = (operations.listReceived
+    ? catalog
+    : received.map(item => ({ id: item.id, ...item.file })))
+    .filter(item => !documents || isWorkspaceDocument(item.name)).slice(0, operations.listReceived ? catalogLimit : 5);
 
-  const moduleMotion = picked?.id === current ? picked?.motion : undefined;
-  const clearModuleMotion = (placed: typeof picked) =>
-    setPicked(latest => latest === placed && latest?.motion ? { id: latest.id } : latest);
   useEffect(() => {
-    if (moduleMotion) return observeMobileMotionSuppression(reducedMotion, () => clearModuleMotion(picked));
-  }, [moduleMotion, picked, reducedMotion]);
-  function selectModule(id: PickerSource | LocalModule) {
-    setPicked(previous => {
-      const active = previous && ordered.includes(previous.id) ? previous.id : ordered[0];
-      return active === id ? previous : { id, motion: mobileMotionDirection(ordered, active, id) };
-    });
-  }
+    if (moduleMotion) return observeMobileMotionSuppression(reducedMotion, () => setModuleMotion(undefined));
+  }, [moduleMotion, reducedMotion]);
   async function present(action: "preview" | "export") {
     if (!regions.selection || presenting) return;
     setPresentationError("");
@@ -108,18 +110,15 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       </div>
       {presentationError && <p role="alert">{presentationError}</p>}
     </section>}
-    {visible.length ? <nav className="ios-module-picker" aria-label="Workspace modules">
-      {visible.map(({ id, label, icon }) => <Button key={id} variant="quiet" aria-pressed={id === current}
-        data-ae-lens-role={id === current ? "control" : undefined} onClick={() => selectModule(id)}>
-        <SpatialIcon name={icon} size={16} /><span>{label}</span>
-      </Button>)}
-    </nav> : <p>Enable a workspace module in Settings.</p>}
-    {current && <div className="ios-module-moment" key={current} data-ae-route-enter={moduleMotion}
-      onAnimationEnd={event => { if (event.target === event.currentTarget && event.animationName.startsWith("ae-route-")) clearModuleMotion(picked); }}>
+    <div className="ios-module-moment" key={section?.id ?? "library"} data-ae-route-enter={moduleMotion}
+      onAnimationEnd={event => { if (event.target === event.currentTarget && event.animationName.startsWith("ae-route-")) setModuleMotion(undefined); }}>
+    {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} />}
+    {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} />}
     {current === "files" && <section className="ios-section" aria-labelledby="ios-files">
       <div className="ios-section-head">
-        <div><h3 id="ios-files">Files</h3><p>{copy.fileSources}</p></div>
-        <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose for Rift</Button>
+        <div><h4 id="ios-files">{documents ? "Documents on this device" : "Choose a file"}</h4><p>{documents ? "Document copies are filtered from your files." : copy.fileSources}</p></div>
+        {documents ? <Button variant="quiet" onClick={() => openSection("files")}>Browse all files</Button> :
+          <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose for Rift</Button>}
       </div>
       {(operations.listReceived || visibleReceived.length > 0) && <h4>Received on {copy.device}</h4>}
       {operations.listReceived && catalogState === "loading" && !catalog.length &&
@@ -128,7 +127,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
         <p role="alert">AeRift couldn't refresh received copies.</p>
         <Button variant="quiet" onClick={() => setCatalogRefresh(value => value + 1)}>Retry received list</Button>
       </div>}
-      {operations.listReceived && catalogState === "ready" && !catalog.length && <p>No received files yet.</p>}
+      {operations.listReceived && catalogState === "ready" && !visibleReceived.length && <p>{documents ? "No received documents yet." : "No received files yet."}</p>}
       {visibleReceived.length > 0 && <ul className="ios-list">{visibleReceived.map(item => <li key={item.id}>
         {item.name}
         {operations.presentReceived && <div className="ae-actions">
@@ -138,26 +137,26 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
             onClick={() => void presentReceived(item.id, "share")}>Share copy</Button>
         </div>}
       </li>)}</ul>}
-      {operations.listReceived && catalogLimit < catalog.length &&
+      {operations.listReceived && catalogLimit < catalog.filter(item => !documents || isWorkspaceDocument(item.name)).length &&
         <Button variant="quiet" onClick={() => setCatalogLimit(limit => limit + 20)}>Show more received copies</Button>}
       {receivedError && <p role="alert">{receivedError}</p>}
       <p>Delivered files are saved in {copy.receivedFolder}.</p>
     </section>}
     {current === "photos" && <section className="ios-section" aria-labelledby="ios-photos">
       <div className="ios-section-head">
-        <div><h3 id="ios-photos">Photos and videos</h3>
+        <div><h4 id="ios-photos">Choose from your photo library</h4>
           <p>AeRift can only access items you choose in the system picker.</p></div>
         <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("photos"))}>Choose for Rift</Button>
       </div>
     </section>}
     {(current === "files" || current === "photos") &&
-      <MobileMediaTray key={current} source={current} port={media} regions={regions} copy={copy} />}
+      <MobileMediaTray key={section?.id} source={current} documents={documents} port={media} regions={regions} copy={copy} />}
     {current && current !== "files" && current !== "photos" && (objects
       ? <LocalObjectWorkspace key={current} module={current} objects={objects} save={save} media={media}
         regions={regions} openRift={openRift} clipboardSharing={clipboardSharing}
         markClipboardSelection={markClipboardSelection} operations={operations} copy={copy} />
       : <p role="alert">AeRift couldn't read the saved workspace. Files and Photos are still available.</p>)}
-    </div>}
+    </div>
     {regions.selecting && <p role="status">Opening picker or preparing item…</p>}
   </>;
 }

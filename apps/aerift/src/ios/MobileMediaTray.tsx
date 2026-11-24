@@ -1,3 +1,4 @@
+import { isWorkspaceDocument } from "../workspace-categories";
 import type { MobilePlatformCopy } from "./mobile-platform";
 import { useEffect, useRef, useState } from "react";
 import { getObjectPresentation } from "@aerift/app-contract/digital-objects";
@@ -8,8 +9,9 @@ import type { ObservedMediaPort } from "./mobile-media-observer";
 
 const mediaNames = { file: "File", photo: "Photo", video: "Video" };
 
-export function MobileMediaTray({ source, port, regions, copy }: {
+export function MobileMediaTray({ source, documents = false, port, regions, copy }: {
   source: MediaSource;
+  documents?: boolean;
   copy: MobilePlatformCopy;
   port: ObservedMediaPort;
   regions: TransferWorkspaceRegions;
@@ -86,18 +88,19 @@ export function MobileMediaTray({ source, port, regions, copy }: {
     }, "AeRift couldn’t select this item for Rift.");
   }
 
-  const items = (imports ?? []).filter(item => (item.kind === "file") === (source === "files"));
+  const items = (imports ?? []).filter(item => (item.kind === "file") === (source === "files") && (!documents || isWorkspaceDocument(item.name)));
 
-  return <section className="ios-section ios-imports" aria-label={source === "files" ? "Imported files" : "Imported photos and videos"} aria-busy={busy}>
-    <h3>Imported copies</h3>
+  return <section className="ios-section ios-imports" aria-label={documents ? "Imported documents" : source === "files" ? "Imported files" : "Imported photos and videos"} aria-busy={busy}>
+    <h3>{documents ? "Imported documents" : "Imported copies"}</h3>
     <p>Keep up to 24 copies on {copy.device}. Your originals stay in place.</p>
     {initialFailure ?
-      <Button variant="quiet" onClick={() => setReload(attempts => attempts + 1)}>Retry loading imports</Button> :
+      <Button variant="quiet" onClick={() => setReload(attempts => attempts + 1)}>Retry loading imports</Button> : !documents &&
       <Button disabled={busy || regions.selecting || !imports || imports.length >= 24} onClick={() =>
         void run(importItems, `AeRift couldn’t import these items. Check that they’re available and that there’s space on ${copy.device}.`)}>
         {source === "files" ? "Import files" : "Import photos or videos"}
       </Button>}
     {imports && imports.length >= 24 && <p>The library holds 24 items. Remove an imported copy to make space.</p>}
+    {documents && imports && !items.length && <p>No imported documents. Import files in File Browser to see them here.</p>}
     {items.length > 0 && <ol className="ios-object-list">
       {items.map(item => <li key={item.assetId}>
         <strong>{getObjectPresentation(item).label}</strong>
