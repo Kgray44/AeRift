@@ -138,7 +138,13 @@ async fn exercise_pinned_transfer() {
             let allow = HashSet::from([outer_sender]);
             let mut tasks = tokio::task::JoinSet::new();
             loop {
+                // Reap completed handlers before entering accept. The accept
+                // future can already own the next QUIC connection while it
+                // awaits the bidirectional stream, so a cleanup branch must
+                // never cancel it. Only explicit fixture shutdown may do so.
+                while tasks.try_join_next().is_some() {}
                 tokio::select! {
+                    biased;
                     _ = stop.cancelled() => break,
                     result = receiver_wan.accept(&allow) => {
                         let (endpoint, stream) = result.unwrap();
@@ -147,7 +153,6 @@ async fn exercise_pinned_transfer() {
                         let receiver = receiver.clone();
                         tasks.spawn(async move { receiver.serve_routed_stream(stream, sender_id).await });
                     }
-                    _ = tasks.join_next(), if !tasks.is_empty() => {}
                 }
             }
             tasks.shutdown().await;
