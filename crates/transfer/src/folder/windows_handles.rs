@@ -17,8 +17,8 @@ use windows_sys::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
             FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
-            FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
-            NtCreateFile,
+            FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+            FILE_WRITE_THROUGH, FileRenameInformation, NtCreateFile, NtSetInformationFile,
         },
     },
     Win32::{
@@ -30,10 +30,10 @@ use windows_sys::{
             DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
             FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
-            FILE_RENAME_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
-            FileAttributeTagInfo, FileDispositionInfo, FileRenameInfo, GetDriveTypeW,
-            GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
-            QueryDosDeviceW, SYNCHRONIZE, SetFileInformationByHandle, VOLUME_NAME_NT,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FileAttributeTagInfo,
+            FileDispositionInfo, GetDriveTypeW, GetFileInformationByHandleEx,
+            GetFinalPathNameByHandleW, GetVolumeInformationByHandleW, QueryDosDeviceW, SYNCHRONIZE,
+            SetFileInformationByHandle, VOLUME_NAME_NT,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -371,17 +371,18 @@ fn rename_no_replace(
     let wide = checked_leaf(leaf)?;
     inspect_plain_directory(&source.0)?;
     inspect_plain_directory(&target.0)?;
-    let file_name_offset = offset_of!(FILE_RENAME_INFO, FileName);
+    let file_name_offset = offset_of!(FILE_RENAME_INFORMATION, FileName);
     let name_bytes = wide.len() * size_of::<u16>();
-    let bytes =
-        (file_name_offset + name_bytes + size_of::<u16>()).max(size_of::<FILE_RENAME_INFO>());
-    // usize alignment covers the layout's largest field (HANDLE).
+    let bytes = (file_name_offset + name_bytes).max(size_of::<FILE_RENAME_INFORMATION>());
+    // usize alignment covers the frame's largest field (HANDLE). The
+    // native length is a byte count; no pathname or terminator is needed.
     let mut frame = vec![0_usize; bytes.div_ceil(size_of::<usize>())];
-    let header = frame.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-    // Backing storage is aligned, zero-initialized and large enough for the
-    // complete relative leaf, including its zero terminator. Flags remain zero:
-    // no replacement, POSIX override or copy fallback.
-    let result = unsafe {
+    let header = frame.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+    let mut status_block = IO_STATUS_BLOCK::default();
+    // The source is a synchronous DELETE-capable handle. The selected
+    // destination is its independently pinned root; FileName is exactly
+    // one validated leaf. Zero ReplaceIfExists: no replacement or fallback.
+    let status = unsafe {
         (*header).RootDirectory = target.0.as_raw_handle() as HANDLE;
         (*header).FileNameLength = name_bytes as u32;
         ptr::copy_nonoverlapping(
@@ -393,17 +394,20 @@ fn rename_no_replace(
                 .cast::<u16>(),
             wide.len(),
         );
-        SetFileInformationByHandle(
+        NtSetInformationFile(
             source.0.as_raw_handle() as HANDLE,
-            FileRenameInfo,
+            &mut status_block,
             header.cast(),
             bytes as u32,
+            FileRenameInformation,
         )
     };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
+    if status == 0 {
         Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(
+            unsafe { RtlNtStatusToDosError(status) } as i32,
+        ))
     }
 }
 
