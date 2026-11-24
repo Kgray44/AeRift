@@ -16,7 +16,6 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      CARGO_TARGET_DIR: ${{ runner.temp }}/ambient-windows-probe-target
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -35,6 +34,8 @@ jobs:
           curl.exe --fail --show-error --location --proto '=https' --max-time 120 'https://storage.googleapis.com/mediapipe-assets/thumb_up.jpg' --output "$fixture\thumb_up.jpg"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Run pinned Windows inference without sensor access
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ambient-windows-probe-target
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
