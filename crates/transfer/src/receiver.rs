@@ -463,6 +463,22 @@ impl Receiver {
         })
     }
 
+    pub(crate) fn completed_resumable(
+        &self,
+        key: TransferKey,
+    ) -> Result<(IncomingTransfer, CancellationToken), TransferError> {
+        let mut entries = self.entries();
+        let entry = Self::entry(&mut entries, key)?;
+        if entry.mode != Mode::Resumable
+            || entry.transfer.status.state != State::Completed
+            || entry.trust.is_cancelled()
+            || entry.transfer.saved_path.is_none()
+        {
+            return Err(ErrorCode::Conflict.into());
+        }
+        Ok((entry.transfer.clone(), entry.trust.clone()))
+    }
+
     pub(crate) fn status_legacy(&self, key: TransferKey) -> Result<Status, TransferError> {
         self.status_mode(key, Mode::Legacy, false)
     }

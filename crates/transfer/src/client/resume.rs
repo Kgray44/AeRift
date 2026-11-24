@@ -4,8 +4,37 @@ use super::{
     AsyncReadExt, AsyncSeekExt, BodyExt, Bytes, CancellationToken, ErrorCode, Full, Method, Offer,
     Ordering, Path, Sender, State, Status, TransferError, Uuid, prepare, validate_status,
 };
-use crate::{RESUMABLE_CHUNK_SIZE, RESUMABLE_ROUTE};
+use crate::{RESUMABLE_CHUNK_SIZE, RESUMABLE_ROUTE, folder::PreparedFolder};
 use std::{future::Future, io, sync::atomic::AtomicU64, time::Duration};
+
+enum ResumeSource {
+    File(tokio::fs::File),
+    Folder(PreparedFolder),
+}
+
+impl ResumeSource {
+    async fn block(&mut self, offset: u64, length: usize) -> Result<Vec<u8>, TransferError> {
+        match self {
+            Self::File(file) => {
+                let mut data = vec![0; length];
+                file.read_exact(&mut data).await.map_err(|error| {
+                    if error.kind() == io::ErrorKind::UnexpectedEof {
+                        ErrorCode::IntegrityFailed
+                    } else {
+                        ErrorCode::StorageFailed
+                    }
+                })?;
+                Ok(data)
+            }
+            Self::Folder(folder) => {
+                let folder = folder.clone();
+                tokio::task::spawn_blocking(move || folder.block(offset, length))
+                    .await
+                    .map_err(|_| ErrorCode::InternalError)?
+            }
+        }
+    }
+}
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(20);
 const BACKOFF: [Duration; 3] = [
@@ -50,6 +79,31 @@ impl<C: super::Connector> Sender<C> {
             _ = cancel.cancelled() => return Err(ErrorCode::Cancelled.into()),
             result = prepare(id, path, name) => result?,
         };
+        self.send_resumable_source(offer, ResumeSource::File(file), cancel, progress)
+            .await
+    }
+
+    pub(crate) async fn send_folder_with_id(
+        &self,
+        id: Uuid,
+        source: PreparedFolder,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
+        let offer = source.offer(id)?;
+        self.send_resumable_source(offer, ResumeSource::Folder(source), cancel, progress)
+            .await
+    }
+
+    async fn send_resumable_source(
+        &self,
+        offer: Offer,
+        source: ResumeSource,
+        cancel: CancellationToken,
+        progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
+        let id = offer.id;
+        let revoked = self.connector.trust_revoked().unwrap_or_default();
         let size = offer.size_bytes;
         let committed = AtomicU64::new(0);
         let on_checkpoint = |status: Status| {
@@ -60,7 +114,7 @@ impl<C: super::Connector> Sender<C> {
         // A user cancellation is the only reason to discard the receiver's prefix.
         // Drop the interrupted exchange before sending DELETE so it cannot upload more.
         let result = {
-            let run = self.run_resumable(offer, file, &on_checkpoint);
+            let run = self.run_resumable(offer, source, &on_checkpoint);
             tokio::pin!(run);
             tokio::select! {
                 biased;
@@ -119,7 +173,7 @@ impl<C: super::Connector> Sender<C> {
     async fn run_resumable(
         &self,
         offer: Offer,
-        mut file: tokio::fs::File,
+        mut source: ResumeSource,
         progress: &(impl Fn(Status) + Sync),
     ) -> Result<Status, TransferError> {
         let id = offer.id;
@@ -150,19 +204,14 @@ impl<C: super::Connector> Sender<C> {
         progress(accepted);
         tokio::time::timeout(self.upload_timeout, async {
             let mut before = accepted.bytes_transferred;
-            file.seek(io::SeekFrom::Start(before))
-                .await
-                .map_err(|_| ErrorCode::StorageFailed)?;
+            if let ResumeSource::File(file) = &mut source {
+                file.seek(io::SeekFrom::Start(before))
+                    .await
+                    .map_err(|_| ErrorCode::StorageFailed)?;
+            }
             while before < size {
                 let length = (size - before).min(RESUMABLE_CHUNK_SIZE as u64) as usize;
-                let mut data = vec![0; length];
-                file.read_exact(&mut data).await.map_err(|error| {
-                    if error.kind() == io::ErrorKind::UnexpectedEof {
-                        ErrorCode::IntegrityFailed
-                    } else {
-                        ErrorCode::StorageFailed
-                    }
-                })?;
+                let data = source.block(before, length).await?;
                 let status = self
                     .put_checkpoint(id, size, before, Bytes::from(data))
                     .await?;

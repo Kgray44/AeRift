@@ -21,6 +21,7 @@ struct Harness {
     receiver: Arc<Receiver>,
     peer: PeerId,
     lose_completion: bool,
+    disconnected_puts: Arc<Mutex<Vec<String>>>,
     trusted: bool,
     old_receiver: bool,
 }
@@ -36,6 +37,7 @@ impl Connector for Harness {
             let signal = disconnect.clone();
             let service = service_fn(move |request: Request<_>| {
                 let is_upload = request.method() == Method::PUT;
+                let path = request.uri().path().to_owned();
                 let receiver = test.receiver.clone();
                 let signal = signal.clone();
                 let test = test.clone();
@@ -55,6 +57,7 @@ impl Connector for Harness {
                     let reply =
                         aerift_transfer::serve_request(request, test.peer, receiver, trust).await;
                     if is_upload && test.lose_completion && reply.status() == StatusCode::OK {
+                        test.disconnected_puts.lock().unwrap().push(path);
                         signal.cancel();
                         std::future::pending::<()>().await;
                     }
@@ -99,6 +102,7 @@ fn setup() -> (tempfile::TempDir, Harness) {
             receiver,
             peer,
             lose_completion: false,
+            disconnected_puts: Arc::default(),
             trusted: true,
             old_receiver: false,
         },
@@ -579,4 +583,152 @@ async fn inbox_acceptance_is_one_shot_and_corrupted_upload_leaves_no_candidate()
     assert!(inbox.recovery_candidates("").unwrap().entries.is_empty());
     assert_eq!(std::fs::read_dir(&inbox_root).unwrap().count(), 0);
     assert!(inbox.verified_receipt(key).is_err());
+}
+
+#[tokio::test]
+async fn explicit_ambient_folder_uses_existing_v2_resume_then_safe_local_stage() {
+    use aerift_transfer::{
+        TransferKey,
+        ambient::{Candidate, CaptureContext, CaptureLimits, ReceiverCapabilities, freeze},
+        folder::prepare_folder,
+    };
+
+    let (directory, mut harness) = setup();
+    let source = directory.path().join("source-tree");
+    let sink = directory.path().join("private");
+    let payload = vec![0x52; 2 * 1024 * 1024 + 173];
+    std::fs::create_dir_all(source.join("empty")).unwrap();
+    std::fs::write(source.join("synthetic.bin"), &payload).unwrap();
+    std::fs::write(
+        source.join("a-first.bin"),
+        b"prefix across a block boundary",
+    )
+    .unwrap();
+    let capture = freeze(
+        CaptureContext {
+            explicit_selection: vec![Candidate::path(source.clone())],
+            ..Default::default()
+        },
+        CaptureLimits::default(),
+    )
+    .unwrap();
+    std::fs::write(source.join("late-entry.bin"), b"must not be included").unwrap();
+
+    let folder = prepare_folder(Arc::new(capture), &CancellationToken::new()).unwrap();
+    assert_eq!(std::fs::read_dir(&sink).unwrap().count(), 0);
+    harness.receiver = Arc::new(
+        Receiver::new_resumable(
+            &directory.path().join("received"),
+            ReceiveLimits {
+                active_bytes: 8 * 1024 * 1024,
+                session_offers: 8,
+            },
+        )
+        .unwrap(),
+    );
+    harness.lose_completion = true; // Lost PUT acknowledgments, actual HTTP and receiver.
+    let rx = harness.receiver.clone();
+    let mut updates = rx.subscribe();
+    let capability = ReceiverCapabilities {
+        object_manifest_v1: true,
+    };
+    let sender = Sender::new(
+        harness.clone(),
+        Duration::from_secs(8),
+        Duration::from_secs(15),
+    );
+    let id = Uuid::new_v4();
+    let key = TransferKey {
+        peer: harness.peer,
+        id,
+    };
+
+    assert_eq!(
+        folder
+            .send_over(
+                &sender,
+                id,
+                ReceiverCapabilities::V1,
+                CancellationToken::new(),
+                |_, _| {}
+            )
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::UnsupportedVersion
+    );
+    assert!(rx.snapshot().is_empty());
+
+    let tx = tokio::spawn(async move {
+        folder
+            .send_over(&sender, id, capability, CancellationToken::new(), |_, _| {})
+            .await
+            .unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !rx
+            .snapshot()
+            .iter()
+            .any(|offer| offer.key == key && offer.status.state == State::Pending)
+        {
+            updates.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        rx.stage_resumable_folder(key, capability, &sink, &CancellationToken::new())
+            .is_err()
+    );
+    rx.respond(key, true).unwrap();
+    let status = tx.await.unwrap();
+    assert_eq!(status.state, State::Completed);
+    assert!(status.bytes_transferred > 2 * 1024 * 1024);
+    let cuts = harness.disconnected_puts.lock().unwrap();
+    assert_eq!(cuts.len(), 3);
+    assert!(cuts[0].ends_with("/chunks/0"));
+    assert!(cuts[1].ends_with("/chunks/1048576"));
+    assert!(cuts[2].ends_with("/chunks/2097152"));
+    drop(cuts);
+    let materialized = rx
+        .stage_resumable_folder(key, capability, &sink, &CancellationToken::new())
+        .unwrap();
+    assert_eq!(
+        std::fs::read(materialized.path().join("synthetic.bin")).unwrap(),
+        payload
+    );
+    assert!(materialized.path().join("empty").is_dir());
+    assert_eq!(
+        std::fs::read(materialized.path().join("a-first.bin")).unwrap(),
+        b"prefix across a block boundary"
+    );
+    assert!(!materialized.path().join("late-entry.bin").exists());
+    assert!(!directory.path().join("received/source-tree").exists()); // No auto extraction to final files.
+    let saved = rx
+        .snapshot()
+        .iter()
+        .find(|offer| offer.key == key)
+        .unwrap()
+        .saved_path
+        .clone()
+        .unwrap();
+    let bytes = std::fs::read(&saved).unwrap();
+    let offers = rx.snapshot();
+    let receipt = offers.iter().find(|offer| offer.key == key).unwrap();
+    assert_eq!(status, receipt.status);
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        receipt.offer.sha256
+    );
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&saved)
+        .unwrap()
+        .set_len(3)
+        .unwrap();
+    assert!(
+        rx.stage_resumable_folder(key, capability, &sink, &CancellationToken::new())
+            .is_err()
+    );
 }

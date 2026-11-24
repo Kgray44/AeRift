@@ -261,6 +261,19 @@ impl RemotePeerNode {
         self.receiver.respond(key, accept)
     }
 
+    /// Enter private staging only for a completed Remote v2 receipt. The
+    /// host must independently negotiate the admitted folder representation.
+    pub fn stage_resumable_folder(
+        &self,
+        key: TransferKey,
+        capability: aerift_transfer::ambient::ReceiverCapabilities,
+        scratch: &std::path::Path,
+        cancel: &CancellationToken,
+    ) -> Result<aerift_transfer::folder::StagedFolder, TransferError> {
+        self.receiver
+            .stage_resumable_folder(key, capability, scratch, cancel)
+    }
+
     pub fn cancel(&self, key: TransferKey) -> Result<Status, TransferError> {
         self.receiver.cancel(key)
     }

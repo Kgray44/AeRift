@@ -6,6 +6,7 @@ pub mod ambient_camera;
 pub mod ambient_inbox;
 mod checkpoint;
 mod client;
+pub mod folder;
 #[cfg(unix)]
 mod journal;
 mod model;
