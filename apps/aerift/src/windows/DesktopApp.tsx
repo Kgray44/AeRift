@@ -7,6 +7,8 @@ import {
 } from "@aerift/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FriendsWorkspace } from "../FriendsWorkspace";
+import { WindowsFriendsSetup, setupPort, type SetupView } from "./WindowsFriendsSetup";
+import type { FriendsSnapshot } from "@aerift/app-contract/friends";
 import { DeviceTrust } from "../DeviceTrust";
 import { command, nativeAppPort } from "../nativeAppPort";
 import { DesktopHome } from "./DesktopHome";
@@ -26,7 +28,17 @@ export type AmbientCaptureView =
 export function DesktopApp() {
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
   const [watchAttempt, setWatchAttempt] = useState(0);
-  const snapshot = connection.state === "ready" ? connection.snapshot : undefined;
+  const [friendsView, setFriendsView] = useState<SetupView>();
+  const friends: FriendsSnapshot | undefined = friendsView ? {
+    version: 1, contacts: friendsView.contacts, offers: [], invitations: [], supportedObjects: [],
+  } : undefined;
+  const snapshot = connection.state === "ready" ? { ...connection.snapshot, friends } : undefined;
+  const refreshFriends = useCallback(() => {
+    void command<SetupView>("friends_setup_view").then(answer => setFriendsView(answer.ok ? answer.value : undefined));
+  }, []);
+  useEffect(() => {
+    if (connection.state === "ready") refreshFriends();
+  }, [connection.state, refreshFriends]);
   const [settings, setSettings] = useState(readDesktopPreferences);
   const [keepWorkspaceMounted, setKeepWorkspaceMounted] = useState(settings.experience.windowMode === "full");
   const [dropError, setDropError] = useState<string>();
@@ -48,10 +60,15 @@ export function DesktopApp() {
   const surfaceRef = useRef<HTMLElement>(null);
   const navigation = getNavigation("desktop", settings.experience, {
     ambient: ambientAvailable ? "available" : "unsupported", camera: "unknown",
-    friends: snapshot?.friends?.version === 1 && nativeAppPort.friends ? "available" : "unsupported",
+    friends: friendsView !== undefined ? "available" : "unsupported",
   });
   const route = navigation.primary.some(item => item.id === settings.route) ? settings.route : "home";
   useDesktopContentEnter(route, surfaceRef, "orbit");
+  useEffect(() => {
+    if (route !== "friends") return;
+    const timer = window.setInterval(refreshFriends, 1500);
+    return () => window.clearInterval(timer);
+  }, [route, refreshFriends]);
 
   useEffect(() => {
     try {
@@ -241,8 +258,8 @@ export function DesktopApp() {
             {connection.state === "disconnected" && <Button onClick={retryConnection}>Retry connection</Button>}
           </div>
         </>}
-        {route === "friends" && snapshot?.friends?.version === 1 && nativeAppPort.friends &&
-          <FriendsWorkspace snapshot={snapshot.friends} port={nativeAppPort.friends} />}
+        {route === "friends" && friendsView && friends &&
+          <FriendsWorkspace snapshot={friends} port={setupPort} setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />} />}
         {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
           if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);
           setSettings(next);

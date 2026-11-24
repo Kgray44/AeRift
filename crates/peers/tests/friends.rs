@@ -246,6 +246,18 @@ fn private_contact_card_bootstraps_only_a_bound_targeted_invite() {
     let cp = PeerId::from_tls_leaf(b"not-the-target-device");
     let card = b.contact_card(bp, 10).unwrap();
     let invite = a.invite_contact(ap, &card, 11).unwrap();
+    let route = "127.0.0.1:43999".parse().unwrap();
+    let signature = a.sign_route(&invite, route).unwrap();
+    assert_eq!(invite.review(b.id(), bp, 12).unwrap(), a.id());
+    assert!(invite.review(b.id(), cp, 12).is_err());
+    assert!(invite.review(b.id(), bp, invite.expires_at()).is_err());
+    assert!(invite.verify_route(route, &signature).is_ok());
+    assert!(
+        invite
+            .verify_route("127.0.0.1:44000".parse().unwrap(), &signature)
+            .is_err()
+    );
+    assert!(c.sign_route(&invite, route).is_err());
     assert!(c.accept(&invite, ap, cp, 12).is_err());
     assert!(b.accept(&invite, ap, bp, 12).is_ok());
     assert!(a.invite_contact(ap, &card, 86_410).is_err());

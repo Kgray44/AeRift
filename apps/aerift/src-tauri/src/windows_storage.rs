@@ -118,8 +118,7 @@ pub(crate) fn storage_failed(_: impl Sized) -> TransferError {
     ErrorCode::StorageFailed.into()
 }
 
-/// Opt-in native Friends persistence; no UI or background listener is started.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Open the protected Friends book without starting listeners.
 pub(crate) fn open_friends(
     directory: &Path,
 ) -> Result<(FriendAuthority, Arc<FriendBook>), TransferError> {

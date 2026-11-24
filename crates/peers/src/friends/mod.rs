@@ -11,8 +11,8 @@ pub use authority::{
     FriendRecord, PersonId,
 };
 pub use book::{
-    FriendBook, FriendClaim, FriendControlObject, FriendDecision, FriendIncomingOffer,
-    FriendInviteEndpoint, FriendInviteState, FriendObjectKind, FriendStore,
+    FriendBook, FriendClaim, FriendContactView, FriendControlObject, FriendDecision,
+    FriendIncomingOffer, FriendInviteEndpoint, FriendInviteState, FriendObjectKind, FriendStore,
 };
 
 pub use payload::FriendPayloadEndpoint;

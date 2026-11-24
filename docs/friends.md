@@ -89,3 +89,45 @@ A v1 reservation is intentionally one-shot even when capacity, process restart, 
 The native Windows unit-test target now runs the full bounded single-file Friends route using independent real DPAPI-backed device keys, person authorities and ledgers in fresh temporary profiles. It deliberately binds only fresh loopback sockets and never mounts the desktop Friends workspace or a real user profile. The fixture verifies wrong-device invitation rejection and zero content before acceptance; the approved transfer checks sender and receiver receipt, exact content and SHA-256; then the sender stops its control listeners and reopens its actual protected stores while the recipient stays online, requiring the replay to fail with the consumed-authorization conflict.
 
 To run on Windows: `cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --lib friends_native_profiles_qualify_private_invitation_offer_and_verified_payload`. The existing Windows app CI includes this test. This is host qualification, not live UI, other OS qualification, WAN testing, or feature enablement.
+
+### Normal Windows product setup
+
+On Windows, the ordinary installed app exposes Friends only after the main
+window has opened the OS-protected person identity and contact book. No special
+launch argument or build option is required. iOS/Android and unsupported
+desktop hosts do not advertise this capability. The Windows setup page uses
+the same Friends materials and desktop list/detail workspace as the gated
+full product.
+
+Two Windows users can build a verified contact if both are running AeRift and
+can reach each other over an existing private IPv4 LAN/VPN route:
+
+1. The recipient shares their signed contact card over a private channel.
+2. The inviter copies that card into Friends and enters their own LAN/VPN IPv4
+   address that the recipient can reach. This explicit action starts a
+   five-minute listener on that address and an OS-assigned port.
+3. The inviter shares the generated private invitation. The recipient reviews
+   it against their exact identity, compares the inviter's full fingerprint
+   out of band, and explicitly sends approval. Import and review do not dial.
+4. The inviter verifies the recipient fingerprint and explicitly approves.
+   The recipient selects **Check inviter approval and finish** before expiry.
+   Each profile persists its own verified roster. If the listener exits early
+   or is blocked by a firewall, create a fresh invitation after expiry. The app
+   does not add firewall rules, configure VPNs, or contact anyone.
+5. Remove the friendship, change inbound offer permissions, or revoke a
+   previously enrolled device from its contact. These are local policy changes.
+
+The envelope signs the route along with the exact invitation fields using
+the issuer's person key. The actual connection still pins the issuer device
+certificate, requires recipient possession of the exact device key, and uses
+the separate invitation mTLS protocol. Public, wildcard, hostname and IPv6
+routes are not accepted on this setup path. No route is discovered or shared
+globally. A single active local invitation is allowed; creating another
+doesn't interrupt a recipient who's finishing an approved one. A setup
+invite is not a Nearby, My Device, or general Remote grant.
+
+This enables **friendship setup and local roster management only**. It does
+not expose sending, offer/history, additional-device enrollment or remote
+online status in the installed app. Existing authenticated data-plane tests
+remain separate evidence; they are not proof of an installed-app delivery
+route or WAN reliability.
