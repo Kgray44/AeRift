@@ -126,8 +126,31 @@ globally. A single active local invitation is allowed; creating another
 doesn't interrupt a recipient who's finishing an approved one. A setup
 invite is not a Nearby, My Device, or general Remote grant.
 
-This enables **friendship setup and local roster management only**. It does
+This setup flow enables **friendship setup and local roster management**. It does
 not expose sending, offer/history, additional-device enrollment or remote
 online status in the installed app. Existing authenticated data-plane tests
 remain separate evidence; they are not proof of an installed-app delivery
 route or WAN reliability.
+
+### Windows private-file transfer window
+
+Two verified Windows Friends can explicitly open five-minute file windows on
+their own reachable LAN/VPN IPv4 addresses, then privately exchange the
+shown offer/payload addresses. The sender names the exact authorized device,
+provides both of its routes, and chooses one file (maximum 64 MiB) in the
+native picker. Only signed and authenticated consent metadata is delivered.
+The recipient reviews the sender device and filename, provides the sender's
+offer address, and accepts locally. Payload is still not sent until the sender
+selects **Send accepted file**. A declined, wrong-device, changed, withdrawn,
+expired or duplicate transfer cannot publish a file. The default output is
+`FriendsReceived` within the profile; no app command takes a raw source path.
+
+These routes are not a grant: transport independently pins the device
+certificates. No public or wildcard addresses, rendezvous, directory, Nearby
+authorization, general Remote authorization, hidden route discovery, background
+retry, or auto-accept policy are introduced. Closing the explicit window
+cancels both listeners and active sends; a new attempt requires a fresh offer.
+This iteration addresses **one chosen authorized device** rather than
+discovering or fanning out to an unavailable roster. Person-targeted payload
+selection, folders/objects, mobile and hands-free flow require further product
+integration. Native hosted proof and physical/network coverage are separate.

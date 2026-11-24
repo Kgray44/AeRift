@@ -24,10 +24,12 @@ use uuid::Uuid;
 
 #[derive(Default)]
 pub(crate) struct WindowsFriends(OnceCell<Arc<Host>>);
-struct Host {
-    identity: Arc<Identity>,
+pub(crate) struct Host {
+    pub(crate) identity: Arc<Identity>,
     authority: FriendAuthority,
-    book: Arc<FriendBook>,
+    pub(crate) book: Arc<FriendBook>,
+    pub(crate) files: Mutex<Option<Arc<aerift_peers::FriendFileWindow>>>,
+    pub(crate) received: std::path::PathBuf,
     active: Mutex<Option<(FriendInvitation, CancellationToken)>>,
 }
 impl Drop for Host {
@@ -50,7 +52,7 @@ fn private_ip(ip: Ipv4Addr) -> bool {
     ip.is_private() || ip.is_loopback() || (a == 100 && (64..=127).contains(&b))
 }
 
-async fn host(window: &tauri::WebviewWindow) -> Result<Arc<Host>, TransferError> {
+pub(crate) async fn host(window: &tauri::WebviewWindow) -> Result<Arc<Host>, TransferError> {
     if window.label() != "main" {
         return Err(ErrorCode::InvalidRequest.into());
     }
@@ -69,6 +71,8 @@ async fn host(window: &tauri::WebviewWindow) -> Result<Arc<Host>, TransferError>
                     authority,
                     book,
                     active: Mutex::new(None),
+                    files: Mutex::new(None),
+                    received: root.join("FriendsReceived"),
                 }))
             })
             .await

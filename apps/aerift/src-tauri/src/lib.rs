@@ -37,6 +37,8 @@ mod windows;
 #[cfg(windows)]
 mod windows_friends;
 #[cfg(windows)]
+mod windows_friends_files;
+#[cfg(windows)]
 mod windows_storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -141,6 +143,8 @@ pub fn run() {
             windows_friends::friends_setup_finish,
             windows_friends::friends_setup_answer,
             windows_friends::friends_setup_contact,
+            windows_friends_files::friends_files_view,
+            windows_friends_files::friends_files_action,
             ambient_runtime::watch_ambient_capture,
             ambient_runtime::set_ambient_capture,
             ambient_runtime::send_ambient_file,

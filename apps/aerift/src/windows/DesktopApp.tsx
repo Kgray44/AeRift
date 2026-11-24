@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FriendsWorkspace } from "../FriendsWorkspace";
 import { WindowsFriendsSetup, setupPort, type SetupView } from "./WindowsFriendsSetup";
 import type { FriendsSnapshot } from "@aerift/app-contract/friends";
+import { WindowsFriendsFiles } from "./WindowsFriendsFiles";
 import { DeviceTrust } from "../DeviceTrust";
 import { command, nativeAppPort } from "../nativeAppPort";
 import { DesktopHome } from "./DesktopHome";
@@ -259,7 +260,10 @@ export function DesktopApp() {
           </div>
         </>}
         {route === "friends" && friendsView && friends &&
-          <FriendsWorkspace snapshot={friends} port={setupPort} setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />} />}
+          <>
+            <FriendsWorkspace snapshot={friends} port={setupPort} setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />} />
+            <WindowsFriendsFiles contacts={friends.contacts} />
+          </>}
         {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
           if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);
           setSettings(next);

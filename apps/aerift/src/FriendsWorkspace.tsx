@@ -127,7 +127,7 @@ function FriendDetail({ contact, snapshot, port, busy, run, apply, setupOnly }: 
     ? devices.some(device => device.id === choice.target.deviceId) : devices.length > 0);
   return <>
     <p>Verified identity: <code>{contact.verification}</code></p>
-    {setupOnly ? <p>Sending objects to friends is not available yet.</p> : <section aria-label="Send to friend">
+    {!setupOnly && <section aria-label="Send to friend">
       <h4>Send an object</h4>
       {devices.length === 0 ? <p>No authorized devices.</p> : <>
         <label>Send to<select disabled={busy} value={destination} onChange={event => { setDestination(event.target.value); setChoice(undefined); }}>
