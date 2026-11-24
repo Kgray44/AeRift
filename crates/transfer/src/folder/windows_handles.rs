@@ -23,13 +23,14 @@ use windows_sys::{
     },
     Win32::{
         Foundation::{
-            HANDLE, OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE, RtlNtStatusToDosError, UNICODE_STRING,
+            GENERIC_WRITE, HANDLE, OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE, RtlNtStatusToDosError,
+            UNICODE_STRING,
         },
         Storage::FileSystem::{
             DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
             FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
-            FILE_RENAME_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA,
+            FILE_RENAME_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
             FileAttributeTagInfo, FileDispositionInfo, FileRenameInfo, GetDriveTypeW,
             GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
             QueryDosDeviceW, SYNCHRONIZE, SetFileInformationByHandle, VOLUME_NAME_NT,
@@ -187,12 +188,15 @@ impl PinnedDirectory {
         )?)
     }
 
+    // Windows FlushFileBuffers (Rust File::sync_all) requires GENERIC_WRITE.
+    // These write rights are limited to files we create exclusively; no
+    // directory or existing destination handle receives additional access.
     fn make_file(&self, leaf: &str) -> io::Result<File> {
         inspect_plain_directory(&self.0)?;
         relative_open(
             &self.0,
             leaf,
-            FILE_WRITE_DATA | DELETE,
+            GENERIC_WRITE | DELETE,
             FILE_CREATE,
             FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH,
         )
@@ -229,7 +233,7 @@ impl PinnedDirectory {
         let mut file = relative_open(
             &self.0,
             unique_receipt_leaf,
-            FILE_WRITE_DATA,
+            GENERIC_WRITE,
             FILE_CREATE,
             FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH,
         )?;
@@ -518,7 +522,9 @@ pub fn commit_verified_folder(
             let mut output = parent.make_file(&entry.title).map_err(storage)?;
             stage.created.push((entry.capture_path.clone(), false));
             verify_copy(&mut reader, &mut output, &entry, &mut block, &allowed)?;
-            output.sync_all().map_err(storage)?;
+            output
+                .sync_all()
+                .map_err(|error| export_io("flush staged file", error))?;
         }
     }
     finish_envelope(reader, receipt)?;
@@ -530,9 +536,10 @@ pub fn commit_verified_folder(
     let marker = receipt_name(receipt.key);
     private_ledger
         .reserve(&marker)
-        .map_err(conflict_or_storage)?;
+        .map_err(|error| export_conflict_io("reserve and flush receipt", error))?;
     guard(&allowed)?;
-    rename_no_replace(&source, &selected_destination, &leaf).map_err(conflict_or_storage)?;
+    rename_no_replace(&source, &selected_destination, &leaf)
+        .map_err(|error| export_conflict_io("atomic directory publish", error))?;
     stage.moved = true;
     Ok(leaf)
 }
@@ -541,11 +548,22 @@ fn receipt_name(key: TransferKey) -> String {
     format!("folder-v1-{}-{}", key.peer, key.id)
 }
 
-fn conflict_or_storage(error: io::Error) -> TransferError {
+fn export_io(operation: &str, error: io::Error) -> TransferError {
+    #[cfg(test)]
+    eprintln!(
+        "Windows folder qualification: {operation}, raw error {:?}",
+        error.raw_os_error()
+    );
+    #[cfg(not(test))]
+    let _ = operation;
+    storage(error)
+}
+
+fn export_conflict_io(operation: &str, error: io::Error) -> TransferError {
     if error.kind() == io::ErrorKind::AlreadyExists {
         ErrorCode::Conflict.into()
     } else {
-        storage(error)
+        export_io(operation, error)
     }
 }
 
@@ -595,7 +613,12 @@ impl Drop for StagedHandles {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::windows::fs::OpenOptionsExt, path::Path, process::Command};
+    use std::{
+        fs,
+        os::windows::{fs::OpenOptionsExt, process::CommandExt},
+        path::Path,
+        process::Command,
+    };
 
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
@@ -834,16 +857,24 @@ mod tests {
             fs::create_dir(root.join(leaf)).unwrap();
         }
         let junction = root.join("destination/Jump");
+        fs::write(root.join("outside/junction-proof"), b"actual junction").unwrap();
+        // cmd.exe does not use CommandLineToArgvW quoting. Keep this
+        // command a fixed literal and set cwd as a separate API parameter.
         let status = Command::new("cmd.exe")
-            .args(["/D", "/C", "mklink", "/J"])
-            .arg(&junction)
-            .arg(root.join("outside"))
+            .args(["/D", "/C"])
+            .raw_arg(r"mklink /J destination\Jump outside")
+            .current_dir(root)
             .status()
             .unwrap();
         assert!(
             status.success(),
             "Windows hosted runner must support a real junction"
         );
+        assert_eq!(
+            fs::read(junction.join("junction-proof")).unwrap(),
+            b"actual junction"
+        );
+        fs::remove_file(root.join("outside/junction-proof")).unwrap();
         let trusted = synthetic_root(root);
         assert!(trusted.open_child("stage/Tree", false).is_err());
         let stage = trusted.open_child("stage", false).unwrap();
