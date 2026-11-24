@@ -20,7 +20,7 @@ import "./desktop.css";
 export type AmbientCaptureView =
   | { state: "idle" | "working" | "paused" }
   | { state: "unavailable"; reason: string }
-  | { state: "frozen"; entries: { kind: string; title: string; size: number }[] };
+  | { state: "frozen"; id: string; canSendFile: boolean; entries: { kind: string; title: string; size: number }[] };
 
 export function DesktopApp() {
   const [connection, setConnection] = useState<WorkspaceConnection>({ state: "connecting" });
@@ -37,6 +37,8 @@ export function DesktopApp() {
   const [ambientError, setAmbientError] = useState(false);
   const [ambientCaptureError, setAmbientCaptureError] = useState(false);
   const [ambientCapture, setAmbientCapture] = useState<AmbientCaptureView>();
+  const [ambientSendError, setAmbientSendError] = useState(false);
+  const [ambientSending, setAmbientSending] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<GestureCameraStatus>();
   const [cameraRetry, setCameraRetry] = useState(0);
   const [pairRequest, setPairRequest] = useState(0);
@@ -122,6 +124,20 @@ export function DesktopApp() {
     });
     return () => { disposed = true; };
   }, [ambientAvailable, captureEnabled, settings.ambientExclusions]);
+
+  const nearbyCaptureTargets = snapshot?.devices.filter(device => device.paired && device.online) ?? [];
+  async function offerAmbientCapture(captureId: string, deviceId: string) {
+    if (ambientSending || !captureEnabled || !nearbyCaptureTargets.some(device => device.id === deviceId)) return;
+    setAmbientSendError(false);
+    setAmbientSending(true);
+    try {
+      const result = await command("send_ambient_file", { captureId, deviceId });
+      if (result.ok) navigate("activity");
+      else setAmbientSendError(true);
+    } finally {
+      setAmbientSending(false);
+    }
+  }
 
   const connected = snapshot?.devices.filter(device => device.online && device.paired).length;
   const pendingOffers = snapshot?.transfers.filter(transfer => transfer.direction === "incoming" && transfer.state === "pending").length ?? 0;
@@ -230,7 +246,8 @@ export function DesktopApp() {
           folder={folder} folderError={folderError} openingFolderPicker={openingFolderPicker}
           chooseFolder={() => void selectDestination()} ambientAvailable={ambientAvailable} ambientError={ambientError}
           shortcutError={shortcutError} ambientCapture={captureEnabled ? ambientCapture : undefined}
-          ambientCaptureError={ambientCaptureError} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
+          ambientCaptureError={ambientCaptureError} ambientSendError={ambientSendError}
+          ambientSending={ambientSending} ambientTargets={nearbyCaptureTargets} offerAmbientCapture={offerAmbientCapture} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
         {keepWorkspaceMounted &&
           <div hidden={route !== "workspace"}>
             <DesktopWorkspace preferences={settings.experience} clipboardAllowed={settings.clipboard} />

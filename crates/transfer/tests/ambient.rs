@@ -19,8 +19,9 @@ fn explicit_selection_precedes_target_document_and_page() {
 }
 #[test]
 fn unsupported_selection_never_falls_back_to_unrelated_objects() {
+    let directory = tempfile::tempdir().unwrap();
     let context = CaptureContext {
-        explicit_selection: vec![Candidate::path("/not/a/real/path".into())],
+        explicit_selection: vec![Candidate::path(directory.path().join("missing.txt"))],
         active_page: Some(candidate(RiftObjectKind::WebPage, "do-not-capture")),
         ..Default::default()
     };

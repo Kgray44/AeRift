@@ -69,6 +69,7 @@ pub fn run() {
             windows::watch_app,
             ambient_runtime::watch_ambient_capture,
             ambient_runtime::set_ambient_capture,
+            ambient_runtime::send_ambient_file,
             windows::unwatch_app,
             windows::watch_file_selection,
             windows::select_app_file,

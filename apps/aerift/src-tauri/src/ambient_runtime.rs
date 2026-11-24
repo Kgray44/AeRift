@@ -12,10 +12,10 @@ use std::{
 use aerift_transfer::{
     ambient::{
         freeze_guarded, AmbientPolicy, CameraMode, Candidate, CaptureContext, CaptureError,
-        CaptureLimits, FrozenCapture, ObjectManifest, RiftObjectKind, SessionActivity,
-        SourceApplication,
+        CaptureLimits, FrozenCapture, ObjectManifest, ReceiverCapabilities, Representation,
+        RiftObjectKind, SessionActivity, SourceApplication,
     },
-    ErrorCode, TransferError,
+    ErrorCode, PeerId, TransferError,
 };
 use serde::Serialize;
 use tauri::{ipc::Channel, AppHandle, Manager, WebviewWindow};
@@ -25,7 +25,11 @@ use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATU
 use crate::ambient_context::{self, ContextError, ExplorerContext};
 
 #[derive(Clone, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum CaptureView {
     Idle,
     Working,
@@ -37,6 +41,7 @@ pub(crate) enum CaptureView {
         id: uuid::Uuid,
         kind: RiftObjectKind,
         entries: Vec<ObjectManifest>,
+        can_send_file: bool,
     },
 }
 
@@ -331,10 +336,33 @@ impl AmbientRuntime {
         });
     }
 
+    fn take_for_manual_send(
+        &self,
+        capture_id: uuid::Uuid,
+    ) -> Result<Arc<FrozenCapture>, TransferError> {
+        let mut cfg = self.0.config.lock().map_err(|_| ErrorCode::InternalError)?;
+        if !cfg.enabled || cfg.paused || !ambient_context::interactive_session() {
+            return Err(ErrorCode::Conflict.into());
+        }
+        if !cfg.slot.as_ref().is_some_and(|slot| {
+            slot.id == capture_id
+                && slot.captured_at.elapsed() < Duration::from_secs(120)
+                && slot.object.negotiate(ReceiverCapabilities::V1)
+                    == Ok(Representation::SingleRawFile)
+        }) {
+            return Err(ErrorCode::InvalidRequest.into());
+        }
+        let object = cfg.slot.take().ok_or(ErrorCode::InvalidRequest)?.object;
+        emit(&cfg, CaptureView::Idle);
+        Ok(Arc::new(object))
+    }
+
     fn view(slot: &Slot) -> CaptureView {
         CaptureView::Frozen {
             id: slot.id,
             kind: slot.object.kind,
+            can_send_file: slot.object.negotiate(ReceiverCapabilities::V1)
+                == Ok(Representation::SingleRawFile),
             entries: slot
                 .object
                 .entries()
@@ -423,4 +451,27 @@ pub(crate) fn watch_ambient_capture(
     };
     emit(&cfg, view);
     Ok(())
+}
+
+/// Called only from explicit manual Send in the main window. The capture
+/// never chooses a destination or yields a grant on a non-Nearby lane.
+#[tauri::command]
+pub(crate) async fn send_ambient_file(
+    window: WebviewWindow,
+    capture_id: uuid::Uuid,
+    device_id: PeerId,
+) -> Result<crate::runtime::TransferView, TransferError> {
+    require_main(&window)?;
+    let root = window
+        .path()
+        .app_local_data_dir()
+        .map_err(crate::windows_storage::storage_failed)?;
+    let session = window
+        .state::<crate::runtime::AppRuntime>()
+        .session(root)
+        .await?;
+    let capture = window
+        .state::<AmbientRuntime>()
+        .take_for_manual_send(capture_id)?;
+    session.offer_ambient_file(device_id, capture)
 }

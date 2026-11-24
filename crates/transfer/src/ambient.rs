@@ -1,11 +1,15 @@
 //! Local-only capture contracts. A captured manifest conveys no transport authority.
 
 use serde::{Deserialize, Serialize};
+
+pub(super) const CONTENT_BLOCK: usize = 1024 * 1024;
+const MAX_FROZEN_BYTES: u64 = 1 << 40;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, Metadata, OpenOptions},
     io::{self, Cursor, Read},
     path::{Path, PathBuf},
+    sync::Arc,
     time::SystemTime,
 };
 
@@ -148,7 +152,7 @@ impl Default for CaptureLimits {
             entries: 1024,
             depth: 24,
             inline_bytes: 128 * 1024,
-            total_bytes: 1 << 40,
+            total_bytes: MAX_FROZEN_BYTES,
         }
     }
 }
@@ -202,7 +206,7 @@ pub struct FrozenEntry {
 enum FrozenSource {
     File {
         path: PathBuf,
-        digest: [u8; 32],
+        chunks: Arc<[[u8; 32]]>,
         stamp: Stamp,
         identity: FileIdentity,
     },
@@ -268,7 +272,7 @@ pub fn freeze_guarded(
         bytes: 0,
         inline: 0,
         allow: &allow,
-        block: vec![0; 64 * 1024],
+        block: vec![0; CONTENT_BLOCK],
     };
     for candidate in candidates {
         if !allow() {
@@ -345,7 +349,7 @@ impl Builder<'_> {
         self.bytes = self
             .bytes
             .checked_add(bytes)
-            .filter(|&n| n <= self.limits.total_bytes)
+            .filter(|&n| n <= self.limits.total_bytes.min(MAX_FROZEN_BYTES))
             .ok_or(CaptureError::LimitExceeded)?;
         Ok(())
     }
@@ -415,19 +419,22 @@ impl Builder<'_> {
             let identity = file_identity(&file)?;
             let mut hash = Sha256::new();
             let mut remaining = stamp.size;
+            let mut chunks = Vec::new();
             while remaining != 0 {
                 if !(self.allow)() {
                     return Err(CaptureError::Cancelled);
                 }
                 let limit = remaining.min(self.block.len() as u64) as usize;
-                let n = file
-                    .read(&mut self.block[..limit])
-                    .map_err(|_| CaptureError::SourceUnavailable)?;
-                if n == 0 {
-                    return Err(CaptureError::SourceChanged);
-                }
-                remaining -= n as u64;
-                hash.update(&self.block[..n]);
+                file.read_exact(&mut self.block[..limit]).map_err(|e| {
+                    if e.kind() == io::ErrorKind::UnexpectedEof {
+                        CaptureError::SourceChanged
+                    } else {
+                        CaptureError::SourceUnavailable
+                    }
+                })?;
+                remaining -= limit as u64;
+                hash.update(&self.block[..limit]);
+                chunks.push(Sha256::digest(&self.block[..limit]).into());
             }
             if file
                 .read(&mut [0])
@@ -454,7 +461,7 @@ impl Builder<'_> {
                 },
                 source: FrozenSource::File {
                     path: path.to_owned(),
-                    digest,
+                    chunks: chunks.into(),
                     stamp,
                     identity,
                 },
@@ -570,25 +577,36 @@ impl FrozenEntry {
         &self.manifest
     }
 
-    /// The consumer must read to EOF before publishing or report a failed transfer.
+    pub(super) fn open_frozen_file(&self) -> Result<(File, Arc<[[u8; 32]]>), CaptureError> {
+        let FrozenSource::File {
+            path,
+            chunks,
+            stamp,
+            identity,
+        } = &self.source
+        else {
+            return Err(CaptureError::UnsupportedRepresentation);
+        };
+        let file = open_file(path, *stamp)?;
+        if file_identity(&file)? != *identity {
+            return Err(CaptureError::SourceChanged);
+        }
+        Ok((file, Arc::clone(chunks)))
+    }
+
+    /// Authenticates each complete block before exposing any of its bytes.
     pub fn open_verified(&self) -> Result<Box<dyn Read + Send + '_>, CaptureError> {
         match &self.source {
-            FrozenSource::File {
-                path,
-                digest,
-                stamp,
-                identity,
-            } => {
-                let file = open_file(path, *stamp)?;
-                if file_identity(&file)? != *identity {
-                    return Err(CaptureError::SourceChanged);
-                }
+            FrozenSource::File { .. } => {
+                let (file, expected) = self.open_frozen_file()?;
                 Ok(Box::new(Verified {
                     file,
-                    remaining: stamp.size,
-                    hash: Sha256::new(),
-                    expected: *digest,
-                    done: false,
+                    remaining: self.manifest.size,
+                    expected,
+                    block: vec![0; CONTENT_BLOCK],
+                    chunk: 0,
+                    offset: 0,
+                    available: 0,
                 }))
             }
             FrozenSource::Inline(bytes) => Ok(Box::new(Cursor::new(bytes.as_slice()))),
@@ -599,43 +617,42 @@ impl FrozenEntry {
 struct Verified {
     file: File,
     remaining: u64,
-    hash: Sha256,
-    expected: [u8; 32],
-    done: bool,
+    expected: Arc<[[u8; 32]]>,
+    block: Vec<u8>,
+    chunk: usize,
+    offset: usize,
+    available: usize,
 }
 impl Read for Verified {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if self.done || out.is_empty() {
+        if out.is_empty() {
             return Ok(0);
         }
         let changed = || io::Error::new(io::ErrorKind::InvalidData, "captured source changed");
-        if self.remaining == 0 {
-            if self.file.read(&mut [0])? != 0
-                || <[u8; 32]>::from(self.hash.clone().finalize()) != self.expected
+        if self.offset == self.available {
+            if self.remaining == 0 {
+                if self.file.read(&mut [0])? != 0 {
+                    return Err(changed());
+                }
+                return Ok(0);
+            }
+            let size = self.remaining.min(CONTENT_BLOCK as u64) as usize;
+            self.file.read_exact(&mut self.block[..size])?;
+            let digest: [u8; 32] = Sha256::digest(&self.block[..size]).into();
+            if self.expected.get(self.chunk) != Some(&digest)
+                || (self.remaining == size as u64 && self.file.read(&mut [0])? != 0)
             {
                 return Err(changed());
             }
-            self.done = true;
-            return Ok(0);
+            self.chunk += 1;
+            self.remaining -= size as u64;
+            self.offset = 0;
+            self.available = size;
         }
-        let limit = (out.len() as u64).min(self.remaining) as usize;
-        let n = self.file.read(&mut out[..limit])?;
-        if n == 0 {
-            return Err(changed());
-        }
-        self.hash.update(&out[..n]);
-        self.remaining -= n as u64;
-        // If an HTTP stream polls exactly the advertised length but never EOF, it still
-        // must not observe a successful final read after a byte changed.
-        if self.remaining == 0 {
-            if self.file.read(&mut [0])? != 0
-                || <[u8; 32]>::from(self.hash.clone().finalize()) != self.expected
-            {
-                return Err(changed());
-            }
-            self.done = true;
-        }
-        Ok(n)
+        let count = out.len().min(self.available - self.offset);
+        out[..count].copy_from_slice(&self.block[self.offset..self.offset + count]);
+        self.offset += count;
+        Ok(count)
     }
 }
 

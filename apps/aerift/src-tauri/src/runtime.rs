@@ -651,6 +651,71 @@ impl Session {
         Ok(view)
     }
 
+    #[cfg(windows)]
+    pub(crate) fn offer_ambient_file(
+        self: &Arc<Self>,
+        device_id: PeerId,
+        capture: Arc<aerift_transfer::ambient::FrozenCapture>,
+    ) -> Result<TransferView, TransferError> {
+        let sender = self.peer.sender(
+            self.endpoint(device_id)?,
+            device_id,
+            DECISION_TIMEOUT,
+            UPLOAD_TIMEOUT,
+        )?;
+        let manifest = capture
+            .entries()
+            .first()
+            .ok_or(ErrorCode::InvalidRequest)?
+            .manifest();
+        let interaction_id = Uuid::new_v4();
+        let id = interaction_id.to_string();
+        let view = TransferView {
+            id: id.clone(),
+            interaction_id,
+            device_id,
+            direction: Direction::Outgoing,
+            file: FileView {
+                name: manifest.title.clone(),
+                size_bytes: manifest.size,
+            },
+            status: Status {
+                state: State::Pending,
+                bytes_transferred: 0,
+                error: None,
+            },
+        };
+        let cancel = self.stop.child_token();
+        {
+            let mut state = lock(&self.state);
+            if state.outgoing.len() == MAX_RECEIPTS {
+                let oldest = state
+                    .outgoing
+                    .iter()
+                    .position(|entry| entry.view.status.state.is_terminal())
+                    .ok_or(ErrorCode::Conflict)?;
+                state.outgoing.remove(oldest);
+            }
+            state.outgoing.push(Outgoing {
+                view: view.clone(),
+                cancel: cancel.clone(),
+            });
+        }
+        self.changed();
+        let active = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            let callback = Arc::clone(&active);
+            let receipt_id = id.clone();
+            let result = sender
+                .send_frozen_file_with_id(interaction_id, capture, cancel, move |_, status| {
+                    callback.outgoing_update(&receipt_id, Ok(status));
+                })
+                .await;
+            active.outgoing_update(&id, result);
+        });
+        Ok(view)
+    }
+
     fn outgoing_update(&self, id: &str, result: Result<Status, TransferError>) {
         let mut state = lock(&self.state);
         if let Some(entry) = state.outgoing.iter_mut().find(|entry| entry.view.id == id) {
