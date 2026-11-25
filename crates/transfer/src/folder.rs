@@ -64,6 +64,11 @@ impl StagedFolder {
 /// Explicitly negotiate the existing Ambient representation; no automatic
 /// downgrade or per-platform transport can send this object.
 impl PreparedFolder {
+    /// UI-safe root title and exact prepared transport size, without a source path.
+    pub fn progress_manifest(&self) -> (&str, u64) {
+        (&self.0.capture.entries()[0].manifest().title, self.0.size)
+    }
+
     /// Explicit host capability; never falls back to a legacy file sender.
     pub async fn send_over<C: Connector>(
         &self,

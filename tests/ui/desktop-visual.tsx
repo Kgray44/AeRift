@@ -6,6 +6,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import type { AppSnapshot, FileSelection, TransferRequest } from "@aerift/app-contract";
 import { installMotionFixture, installTransferIslandFixture, respondToMotionReceipt } from "./motion-fixture";
 import { DesktopApp } from "../../apps/aerift/src/windows/DesktopApp";
+import { WindowsTransferMode } from "../../apps/aerift/src/windows/RemoteModeSettings";
 import "@aerift/ui/styles.css";
 import "../../apps/aerift/public/appearance-bootstrap.css";
 import "../../apps/aerift/src/layout.css";
@@ -48,7 +49,53 @@ if (motionFixture) installMotionFixture(first.id, () => snapshot, broadcast);
 if (islandFixture) installTransferIslandFixture(first.id, () => snapshot, broadcast);
 const friends = query.get("friendsFixture") === "1" ? friendsFixture(() => snapshot, broadcast) : undefined;
 const windowsFriends = friends && windowsFriendsFixture(() => snapshot.friends!, state === "empty");
+// Exercise the actual exclusive Windows product wrapper with synthetic native IPC.
+const privateRemoteFixture = query.get("privateRemoteIsland") === "1";
+type NativeReceiveState = "pending" | "accepted" | "transferring" | "completed";
+let remoteStatus: { state: NativeReceiveState; bytesTransferred: number } = { state: "accepted", bytesTransferred: 0 };
+const fixtureEndpoint = "100.88.1.2:48888";
+const remotePeer = { id: "a".repeat(64), name: "Studio PC", platform: "windows" };
+const remoteIncoming = () => [{ peerId: "other", id: "shared", title: "Field recordings", entries: 3,
+  sizeBytes: 4000, status: remoteStatus, destinationRetained: true, publishedTitle: null }];
+type UploadFixture = { kind: "file" | "folder"; callback: number; index: number; settle: (value: unknown) => void };
+let mockUpload: UploadFixture | undefined;
+function beginFixtureUpload(kind: UploadFixture["kind"], args: unknown) {
+  const callback = (args as { progress: { id: number } }).progress.id;
+  return new Promise(resolve => { mockUpload = { kind, callback, index: 0, settle: resolve }; });
+}
+if (privateRemoteFixture) {
+  (window as Window & { setRemoteIslandFixture?: (state: NativeReceiveState, bytes: number) => void }).setRemoteIslandFixture =
+    (state, bytes) => { remoteStatus = { state, bytesTransferred: bytes }; };
+  const progress = (state: string, bytesTransferred: number) => {
+    if (!mockUpload) return false;
+    const { kind, callback, index } = mockUpload;
+    const name = kind === "file" ? "Outgoing survey.wav" : "Outgoing folder";
+    (window as Window & { __TAURI_INTERNALS__?: { runCallback(id: number, value: unknown): void } }).__TAURI_INTERNALS__?.runCallback(
+      callback, { index, message: { kind, name, sizeBytes: 4000, state, bytesTransferred } });
+    mockUpload.index++;
+    return true;
+  };
+  (window as Window & { remoteUploadFixture?: unknown }).remoteUploadFixture = { progress, finish() {
+    if (!mockUpload) throw new Error("No native upload fixture active");
+    const receipt = { state: "completed", bytesTransferred: 4000 };
+    mockUpload.settle(mockUpload.kind === "file" ? receipt : { incoming: remoteIncoming(), outgoingReceipt: receipt });
+  } };
+}
 mockIPC((cmd, args) => {
+  if (privateRemoteFixture) {
+    if (cmd === "windows_remote_mode") return { current: "remote", nextEndpoint: fixtureEndpoint, restartNeeded: false };
+    if (cmd === "private_remote_snapshot") {
+      return { active: true, endpoint: fixtureEndpoint, identity: null, pairing: null, peers: [remotePeer], foldersActive: true,
+        offers: [{ peerId: "other", id: "shared", name: "Tidal charts.pdf", sizeBytes: 4000, status: remoteStatus }] };
+    }
+    if (cmd === "windows_send_remote_file") return beginFixtureUpload("file", args);
+    if (cmd === "windows_remote_folder_command") {
+      const action = (args as { action: { action: string } }).action.action;
+      if (action === "inspect") return { incoming: remoteIncoming(), outgoingReceipt: null };
+      if (action === "pick_send") return beginFixtureUpload("folder", args);
+    }
+    throw { code: "unsupported_fixture_mutation" };
+  }
   if (windowsFriends && /^(friends_setup_|friends_files_|friends_member$)/.test(cmd)) {
     return windowsFriends(cmd, args as Record<string, unknown> | undefined);
   }
@@ -96,4 +143,5 @@ mockIPC((cmd, args) => {
   return undefined;
 }, { shouldMockEvents: true });
 
-createRoot(document.getElementById("root")!).render(<DesktopApp />);
+createRoot(document.getElementById("root")!).render(privateRemoteFixture ?
+  <WindowsTransferMode><DesktopApp /></WindowsTransferMode> : <DesktopApp />);
