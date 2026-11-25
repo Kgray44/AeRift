@@ -207,8 +207,8 @@ impl FriendBook {
     ) -> Result<Status, TransferError> {
         // The live recipient runtime shares one book. Serialize final publication
         // against its revocation and permission changes.
-        let _guard = self.writes.lock().map_err(|_| ErrorCode::InternalError)?;
-        let data = self.read()?;
+        let restrictions = self.writes.lock().map_err(|_| ErrorCode::InternalError)?;
+        let data = self.read_with(&restrictions)?;
         let index = allowed_payload(&data, local, key, unix_seconds()?)?;
         if !data.incoming[index].payload_reserved {
             return Err(ErrorCode::TransferRejected.into());
@@ -459,5 +459,211 @@ impl FriendBook {
             offer.decision = decision;
             Ok(decision)
         })
+    }
+}
+
+#[cfg(test)]
+mod restriction_tests {
+    use super::*;
+    use crate::{FriendAuthority, FriendRecord, FriendStore, SecretStore};
+    use aerift_transfer::State;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    };
+
+    #[derive(Default)]
+    struct FixtureStore {
+        snapshot: Mutex<Option<Vec<u8>>>,
+        failing: AtomicBool,
+    }
+    impl SecretStore for FixtureStore {
+        fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
+            Ok(self.snapshot.lock().unwrap().clone())
+        }
+        fn initialize(&self, key: &[u8]) -> Result<Vec<u8>, TransferError> {
+            Ok(self
+                .snapshot
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| key.to_vec())
+                .clone())
+        }
+    }
+    impl FriendStore for FixtureStore {
+        fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
+            SecretStore::load(self)
+        }
+        fn replace(&self, expected: Option<&[u8]>, bytes: &[u8]) -> Result<(), TransferError> {
+            let mut saved = self.snapshot.lock().unwrap();
+            if self.failing.load(SeqCst) {
+                return Err(ErrorCode::StorageFailed.into());
+            }
+            if saved.as_deref() != expected {
+                return Err(ErrorCode::Conflict.into());
+            }
+            *saved = Some(bytes.to_vec());
+            Ok(())
+        }
+    }
+
+    fn contact(
+        book: &FriendBook,
+        owner: &FriendAuthority,
+        sender: &FriendAuthority,
+        local: PeerId,
+        remote: PeerId,
+        now: u64,
+    ) -> Uuid {
+        let invite = owner.invite(local, sender.id(), remote, now).unwrap();
+        let acceptance = sender.accept(&invite, local, remote, now).unwrap();
+        let approval = owner.confirm(&invite, &acceptance, remote, now).unwrap();
+        let record = FriendRecord::verify(
+            &invite,
+            &acceptance,
+            &approval,
+            owner.id(),
+            local,
+            remote,
+            now,
+        )
+        .unwrap();
+        let relationship = record.relationship();
+        book.add(record, now).unwrap();
+        relationship
+    }
+
+    #[test]
+    fn failing_friend_restrictions_block_exact_live_payload_and_final_publication() {
+        let owner = FriendAuthority::load_or_create(&FixtureStore::default()).unwrap();
+        let sender = FriendAuthority::load_or_create(&FixtureStore::default()).unwrap();
+        let unrelated = FriendAuthority::load_or_create(&FixtureStore::default()).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let book = FriendBook::open(owner.id(), store.clone()).unwrap();
+        let local = PeerId::from_tls_leaf(b"local verification fixture");
+        let remote = PeerId::from_tls_leaf(b"authorized verification fixture");
+        let other = PeerId::from_tls_leaf(b"other verification fixture");
+        let now = unix_seconds().unwrap();
+        let relation = contact(&book, &owner, &sender, local, remote, now);
+        contact(&book, &owner, &unrelated, local, other, now);
+        let id = Uuid::new_v4();
+        let manifest = Offer {
+            id,
+            name: "fixture.bin".into(),
+            size_bytes: 1,
+            sha256: "0".repeat(64),
+        };
+        let digest = manifest.manifest_digest().unwrap();
+        let key = TransferKey { peer: remote, id };
+        let accepted = Delivery {
+            id,
+            ticket: Uuid::new_v4(),
+            digest,
+            sender: sender.id(),
+            recipient: owner.id(),
+            recipient_device: local,
+            relationship: relation,
+            metadata: FriendControlObject::new(
+                FriendObjectKind::File,
+                manifest.name.clone(),
+                1,
+                now + 200,
+            )
+            .unwrap(),
+        };
+        book.receive_delivery(remote, local, accepted, now).unwrap();
+        book.store_consent_intent(remote, local, id, now).unwrap();
+        book.update_decision(remote, local, id, now, FriendDecision::Granted)
+            .unwrap();
+        book.reserve_incoming_payload(local, key, &manifest)
+            .unwrap();
+        assert!(book.check_incoming_payload(local, key).is_ok());
+        assert_eq!(
+            book.with_incoming_payload(local, key, || Ok(Status {
+                state: State::Completed,
+                bytes_transferred: 1,
+                error: None
+            }))
+            .unwrap()
+            .state,
+            State::Completed
+        );
+        let sender_id = Uuid::new_v4();
+        book.offer(sender_id, sender.id(), Some(remote), digest)
+            .unwrap();
+        book.claim(sender_id, remote, digest).unwrap();
+        book.begin_payload(sender_id, remote, digest).unwrap();
+        let other_id = Uuid::new_v4();
+        book.offer(other_id, unrelated.id(), Some(other), digest)
+            .unwrap();
+        book.claim(other_id, other, digest).unwrap();
+        book.begin_payload(other_id, other, digest).unwrap();
+        let before = FriendStore::load(store.as_ref()).unwrap().unwrap();
+        store.failing.store(true, SeqCst);
+        assert_eq!(
+            book.set_receive_permission(sender.id(), false)
+                .unwrap_err()
+                .code,
+            ErrorCode::StorageFailed
+        );
+        assert!(book.check_incoming_payload(local, key).is_err());
+        assert!(
+            book.with_incoming_payload(local, key, || panic!(
+                "revoked publication closure must not run"
+            ))
+            .is_err()
+        );
+        assert!(
+            book.authorize_payload(sender_id, remote, digest).is_ok(),
+            "receive preference does not revoke outbound"
+        );
+        assert!(book.may_receive_from(unrelated.id(), other).unwrap());
+        assert_eq!(
+            book.revoke_device(sender.id(), remote).unwrap_err().code,
+            ErrorCode::StorageFailed
+        );
+        assert!(book.authorize_payload(sender_id, remote, digest).is_err());
+        assert!(book.begin_payload(sender_id, remote, digest).is_err());
+        assert!(book.claim(sender_id, remote, digest).is_err());
+        assert!(book.may_receive_from(unrelated.id(), other).unwrap());
+        assert_eq!(FriendStore::load(store.as_ref()).unwrap().unwrap(), before);
+        // A fresh in-process book models restart before durability; no fake guarantee.
+        assert!(
+            FriendBook::open(owner.id(), store.clone())
+                .unwrap()
+                .may_receive_from(sender.id(), remote)
+                .unwrap()
+        );
+        assert_eq!(
+            book.withdraw(other_id).unwrap_err().code,
+            ErrorCode::StorageFailed
+        );
+        assert!(book.authorize_payload(other_id, other, digest).is_err());
+        assert!(book.may_receive_from(unrelated.id(), other).unwrap());
+        store.failing.store(false, SeqCst);
+        book.revoke_device(sender.id(), remote).unwrap();
+        let reloaded = FriendBook::open(owner.id(), store.clone()).unwrap();
+        assert!(!reloaded.may_receive_from(sender.id(), remote).unwrap());
+        assert!(
+            reloaded
+                .authorize_payload(sender_id, remote, digest)
+                .is_err()
+        );
+        assert!(reloaded.may_receive_from(unrelated.id(), other).unwrap());
+        assert!(reloaded.authorize_payload(other_id, other, digest).is_err());
+        store.failing.store(true, SeqCst);
+        assert_eq!(
+            reloaded.remove(unrelated.id()).unwrap_err().code,
+            ErrorCode::StorageFailed
+        );
+        assert!(!reloaded.may_receive_from(unrelated.id(), other).unwrap());
+        store.failing.store(false, SeqCst);
+        reloaded.remove(unrelated.id()).unwrap();
+        assert!(
+            !FriendBook::open(owner.id(), store)
+                .unwrap()
+                .may_receive_from(unrelated.id(), other)
+                .unwrap()
+        );
     }
 }

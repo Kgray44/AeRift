@@ -43,7 +43,73 @@ pub struct FriendBook {
     store: Arc<dyn FriendStore>,
     owner: PersonId,
     // Serialize the mutation + durable commit, and reject stale writers via CAS.
-    writes: Mutex<()>,
+    writes: Mutex<Vec<Restriction>>,
+}
+
+// You may remove authorization while storage is unhealthy, but never create
+// it from this overlay. A new process has only the durable ledger.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Restriction {
+    Device(PersonId, PeerId),
+    Person(PersonId),
+    NoReceive(PersonId),
+    Offer(Uuid),
+}
+
+impl Restriction {
+    fn apply(self, state: &mut Data) -> Result<(), TransferError> {
+        match self {
+            Self::Device(person, device) => {
+                let friend = state
+                    .friends
+                    .iter_mut()
+                    .find(|f| f.person == person)
+                    .ok_or(ErrorCode::PeerUntrusted)?;
+                let index = friend
+                    .devices
+                    .iter()
+                    .position(|peer| *peer == device)
+                    .ok_or(ErrorCode::PeerUntrusted)?;
+                friend.devices.remove(index);
+                friend.revoked.push(device);
+                for offer in state.offers.iter_mut().filter(|o| o.person == person) {
+                    offer.eligible.retain(|peer| *peer != device);
+                    offer.withdrawn |= offer.winner == Some(device) || offer.eligible.is_empty();
+                }
+            }
+            Self::Person(person) => {
+                let index = state
+                    .friends
+                    .iter()
+                    .position(|f| f.person == person)
+                    .ok_or(ErrorCode::PeerUntrusted)?;
+                state.friends.remove(index);
+                state.incoming.retain(|o| o.sender() != person);
+                state
+                    .offers
+                    .iter_mut()
+                    .filter(|o| o.person == person)
+                    .for_each(|o| o.withdrawn = true);
+            }
+            Self::NoReceive(person) => {
+                state
+                    .friends
+                    .iter_mut()
+                    .find(|f| f.person == person)
+                    .ok_or(ErrorCode::PeerUntrusted)?
+                    .receive_allowed = false;
+            }
+            Self::Offer(id) => {
+                state
+                    .offers
+                    .iter_mut()
+                    .find(|o| o.id == id)
+                    .ok_or(ErrorCode::TransferRejected)?
+                    .withdrawn = true;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -235,7 +301,7 @@ impl FriendBook {
         Ok(Self {
             store,
             owner,
-            writes: Mutex::new(()),
+            writes: Mutex::new(Vec::new()),
         })
     }
 
@@ -268,23 +334,60 @@ impl FriendBook {
     }
 
     fn read(&self) -> Result<Data, TransferError> {
-        Self::decode(self.owner, self.store.load()?.as_deref())
+        let overlays = self.writes.lock().map_err(|_| ErrorCode::InternalError)?;
+        self.read_with(&overlays)
+    }
+
+    fn read_with(&self, overlays: &[Restriction]) -> Result<Data, TransferError> {
+        let raw = self.store.load()?;
+        let mut data = Self::decode(self.owner, raw.as_deref())?;
+        Self::apply_restrictions(&mut data, overlays);
+        Ok(data)
+    }
+
+    fn apply_restrictions(data: &mut Data, restrictions: &[Restriction]) {
+        for restriction in restrictions {
+            // Already absent/removed is stricter than pending removal.
+            let _ = restriction.apply(data);
+        }
+    }
+
+    fn store_data(&self, original: Option<&[u8]>, data: &Data) -> Result<(), TransferError> {
+        let encoded = serde_json::to_vec(data).map_err(|_| ErrorCode::StorageFailed)?;
+        if encoded.len() > MAX_STORE_BYTES {
+            return Err(ErrorCode::StorageFailed.into());
+        }
+        self.store.replace(original, &encoded)
     }
 
     fn mutate<T>(
         &self,
         f: impl FnOnce(&mut Data) -> Result<T, TransferError>,
     ) -> Result<T, TransferError> {
-        let _guard = self.writes.lock().map_err(|_| ErrorCode::InternalError)?;
+        let mut pending = self.writes.lock().map_err(|_| ErrorCode::InternalError)?;
         let original = self.store.load()?;
         let mut data = Self::decode(self.owner, original.as_deref())?;
+        Self::apply_restrictions(&mut data, &pending);
         let result = f(&mut data)?;
-        let encoded = serde_json::to_vec(&data).map_err(|_| ErrorCode::StorageFailed)?;
-        if encoded.len() > MAX_STORE_BYTES {
-            return Err(ErrorCode::StorageFailed.into());
-        }
-        self.store.replace(original.as_deref(), &encoded)?;
+        self.store_data(original.as_deref(), &data)?;
+        pending.clear();
         Ok(result)
+    }
+
+    fn restrict(&self, restriction: Restriction) -> Result<(), TransferError> {
+        let mut pending = self.writes.lock().map_err(|_| ErrorCode::InternalError)?;
+        let original = self.store.load()?;
+        let mut data = Self::decode(self.owner, original.as_deref())?;
+        Self::apply_restrictions(&mut data, &pending);
+        if !pending.contains(&restriction) {
+            restriction.apply(&mut data)?;
+            pending.push(restriction);
+        }
+        // Keep the live restriction even when durable storage fails. Any
+        // later protected write includes all currently pending restrictions.
+        self.store_data(original.as_deref(), &data)?;
+        pending.clear();
+        Ok(())
     }
 
     pub fn add(&self, friend: FriendRecord, now: u64) -> Result<(), TransferError> {
@@ -360,47 +463,11 @@ impl FriendBook {
     }
 
     pub fn revoke_device(&self, person: PersonId, device: PeerId) -> Result<(), TransferError> {
-        self.mutate(|state| {
-            let friend = state
-                .friends
-                .iter_mut()
-                .find(|friend| friend.person == person)
-                .ok_or(ErrorCode::PeerUntrusted)?;
-            let index = friend
-                .devices
-                .iter()
-                .position(|candidate| *candidate == device)
-                .ok_or(ErrorCode::PeerUntrusted)?;
-            friend.devices.remove(index);
-            friend.revoked.push(device);
-            for offer in state
-                .offers
-                .iter_mut()
-                .filter(|offer| offer.person == person)
-            {
-                offer.eligible.retain(|candidate| *candidate != device);
-                offer.withdrawn |= offer.winner == Some(device) || offer.eligible.is_empty();
-            }
-            Ok(())
-        })
+        self.restrict(Restriction::Device(person, device))
     }
 
     pub fn remove(&self, person: PersonId) -> Result<(), TransferError> {
-        self.mutate(|state| {
-            let index = state
-                .friends
-                .iter()
-                .position(|friend| friend.person == person)
-                .ok_or(ErrorCode::PeerUntrusted)?;
-            state.friends.remove(index);
-            state.incoming.retain(|offer| offer.sender() != person);
-            state
-                .offers
-                .iter_mut()
-                .filter(|offer| offer.person == person)
-                .for_each(|offer| offer.withdrawn = true);
-            Ok(())
-        })
+        self.restrict(Restriction::Person(person))
     }
 
     pub fn set_receive_permission(
@@ -408,6 +475,9 @@ impl FriendBook {
         person: PersonId,
         allowed: bool,
     ) -> Result<(), TransferError> {
+        if !allowed {
+            return self.restrict(Restriction::NoReceive(person));
+        }
         self.mutate(|state| {
             state
                 .friends
@@ -569,15 +639,7 @@ impl FriendBook {
     }
 
     pub fn withdraw(&self, id: Uuid) -> Result<(), TransferError> {
-        self.mutate(|state| {
-            state
-                .offers
-                .iter_mut()
-                .find(|offer| offer.id == id)
-                .ok_or(ErrorCode::TransferRejected)?
-                .withdrawn = true;
-            Ok(())
-        })
+        self.restrict(Restriction::Offer(id))
     }
 
     pub fn authorize_payload(
