@@ -1,5 +1,5 @@
 //! Test-only Windows prototype: metadata from an already pinned directory.
-//! No root selection, path arguments, child opening, content or IPC.
+//! No picker UI, path arguments, child opening, content or IPC.
 
 #[path = "windows_directory_page_codec.rs"]
 mod codec;
@@ -67,6 +67,85 @@ impl DirectoryPages {
             self.held = None;
         }
         result
+    }
+}
+
+const GRANT_LIFETIME: std::time::Duration = std::time::Duration::from_secs(300);
+
+#[derive(Debug)]
+struct FolderReadEntry {
+    name: String,
+    size_bytes: Option<u64>,
+}
+
+#[derive(Debug)]
+struct FolderReadPage {
+    entries: Vec<FolderReadEntry>,
+    next: Option<uuid::Uuid>,
+}
+
+// This candidate receives a trusted, already pinned directory. No path,
+// Win32 handle or file ID can arrive through the request or leave a page.
+struct FolderReadGrant {
+    id: uuid::Uuid,
+    expected: Option<uuid::Uuid>,
+    expires: std::time::Instant,
+    pages: Option<DirectoryPages>,
+}
+
+impl FolderReadGrant {
+    fn new(root: PinnedDirectory) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4(),
+            expected: Some(uuid::Uuid::new_v4()),
+            expires: std::time::Instant::now() + GRANT_LIFETIME,
+            pages: Some(DirectoryPages::new(root)),
+        }
+    }
+
+    fn revoke(&mut self) {
+        self.expected = None;
+        self.pages = None;
+    }
+
+    fn next(&mut self, grant: uuid::Uuid, cursor: uuid::Uuid) -> io::Result<FolderReadPage> {
+        if std::time::Instant::now() >= self.expires {
+            self.revoke();
+        }
+        if grant != self.id || self.expected != Some(cursor) {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        self.expected = None;
+        let pages = self
+            .pages
+            .as_mut()
+            .ok_or(io::ErrorKind::PermissionDenied)?;
+        match pages.next() {
+            Ok(Some(entries)) => {
+                self.expected = Some(uuid::Uuid::new_v4());
+                Ok(FolderReadPage {
+                    entries: entries
+                        .into_iter()
+                        .map(|entry| FolderReadEntry {
+                            name: entry.name,
+                            size_bytes: entry.size_bytes,
+                        })
+                        .collect(),
+                    next: self.expected,
+                })
+            }
+            Ok(None) => {
+                self.revoke();
+                Ok(FolderReadPage {
+                    entries: Vec::new(),
+                    next: None,
+                })
+            }
+            Err(error) => {
+                self.revoke();
+                Err(error)
+            }
+        }
     }
 }
 
@@ -170,4 +249,59 @@ fn pinned_metadata_paging_reads_only_the_chosen_directory_level_and_releases_it(
     assert!(!output.contains("outside.txt"));
     assert!(list.next().unwrap().is_none());
     fs::rename(&chosen, temp.path().join("renamed-after-eof")).unwrap();
+}
+
+#[test]
+fn folder_grants_do_not_accept_foreign_or_replayed_cursors_and_revoke_releases_the_root() {
+    use std::{fs, time::Duration};
+
+    let temp = tempfile::Builder::new()
+        .prefix("aerift-folder-grant-")
+        .tempdir()
+        .unwrap();
+    let chosen = temp.path().join("chosen");
+    let outside = temp.path().join("outside");
+    fs::create_dir(&chosen).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(chosen.join("listed.txt"), b"chosen").unwrap();
+    fs::write(outside.join("ungranted.txt"), b"outside").unwrap();
+
+    let mut a = FolderReadGrant::new(PinnedDirectory::from_native_selection(&chosen).unwrap());
+    let mut b = FolderReadGrant::new(PinnedDirectory::from_native_selection(&outside).unwrap());
+    let first = a.expected.unwrap();
+    let foreign = b.expected.unwrap();
+    let ap = a.id;
+    let bp = b.id;
+
+    assert_eq!(
+        a.next(bp, first).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        a.next(ap, foreign).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+
+    let rows = a.next(ap, first).unwrap();
+    assert_eq!(rows.entries.len(), 1);
+    assert_eq!(rows.entries[0].name, "listed.txt");
+    assert_eq!(rows.entries[0].size_bytes, Some(6));
+    assert_eq!(
+        a.next(ap, first).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    let next = rows.next.unwrap();
+    a.revoke();
+    assert_eq!(
+        a.next(ap, next).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    fs::rename(&chosen, temp.path().join("released")).unwrap();
+
+    b.expires = std::time::Instant::now() - Duration::from_millis(1);
+    assert_eq!(
+        b.next(bp, foreign).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    fs::rename(&outside, temp.path().join("expired")).unwrap();
 }
