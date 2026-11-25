@@ -286,3 +286,92 @@ async fn exercise_pinned_transfer() {
     tokio::join!(sender_wan.close(), receiver_wan.close());
     relay.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_session_moves_accepted_bytes_and_joins_shutdown() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let (relay, _url, a_wan, b_wan) = tests::private_relay_fixture().await;
+        let temp = tempfile::tempdir().unwrap();
+        let a = node("First tester", &temp.path().join("a"));
+        let b = node("Second tester", &temp.path().join("b"));
+        let session_lock = temp.path().join("profile.lock");
+        fs::write(&session_lock, []).unwrap();
+        let lock = fs::File::options().write(true).open(&session_lock).unwrap();
+        lock.try_lock().unwrap();
+        let observed_lock = fs::File::options().write(true).open(&session_lock).unwrap();
+        let a = WanSession::from_bound(a, a_wan, lock);
+        let b = WanSession::from_bound(b, b_wan, tempfile::tempfile().unwrap());
+        assert!(observed_lock.try_lock().is_err());
+
+        let invite = a.invite(b.card()).unwrap();
+        let mut pairing = a.subscribe_pairing();
+        let pair = async {
+            b.redeem(&invite, a.card().identity).await.unwrap();
+        };
+        let confirm = async {
+            let request = pairing
+                .wait_for(Option::is_some)
+                .await
+                .unwrap()
+                .clone()
+                .unwrap();
+            assert_eq!(request.device.id, b.card().identity);
+            a.confirm_pairing(&request, true).unwrap();
+        };
+        tokio::join!(pair, confirm);
+
+        for (sender, receiver, folder, filename) in
+            [(&b, &a, "a", "to-a.txt"), (&a, &b, "b", "to-b.txt")]
+        {
+            let source = temp.path().join("source");
+            let payload = filename.as_bytes();
+            fs::write(&source, payload).unwrap();
+            let mut offers = receiver.subscribe_transfers();
+            let path = temp.path().join(folder).join(filename);
+            let send_file = sender.send_file(
+                receiver.card().identity,
+                &source,
+                filename,
+                CancellationToken::new(),
+                |_| {},
+            );
+            let accept = async {
+                let offer = loop {
+                    if let Some(offer) = receiver
+                        .transfers()
+                        .into_iter()
+                        .find(|entry| entry.status.state == State::Pending)
+                    {
+                        break offer;
+                    }
+                    offers.changed().await.unwrap();
+                };
+                assert!(!path.exists());
+                receiver.respond(offer.key, true).unwrap();
+            };
+            let (status, _) = tokio::join!(send_file, accept);
+            assert_eq!(status.unwrap().state, State::Completed);
+            assert_eq!(fs::read(path).unwrap(), payload);
+        }
+        let a_id = a.card().identity;
+        a.stop().await.unwrap();
+        assert!(observed_lock.try_lock().is_ok());
+        b.revoke(a_id).unwrap();
+        assert!(
+            b.send_file(
+                a_id,
+                &temp.path().join("source"),
+                "after-stop.txt",
+                CancellationToken::new(),
+                |_| {}
+            )
+            .await
+            .is_err()
+        );
+        assert!(!temp.path().join("a/after-stop.txt").exists());
+        b.stop().await.unwrap();
+        relay.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

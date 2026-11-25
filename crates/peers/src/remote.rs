@@ -232,6 +232,12 @@ impl RemotePeerNode {
         self.peer.pairing().wan_route_permit(outer)
     }
 
+    /// Resolve a selected trusted peer only from this session's authenticated
+    /// WAN grants. Saved Nearby or legacy Remote grants cannot supply a route.
+    pub fn wan_active_endpoint(&self, peer: PeerId) -> Result<[u8; 32], TransferError> {
+        self.peer.pairing().wan_active_endpoint(peer)
+    }
+
     /// Open a sender only for the exact current WAN route grant. The caller
     /// must dial this same outer key using the fixed host transport policy.
     pub fn sender_wan<R: RemoteRoute>(
