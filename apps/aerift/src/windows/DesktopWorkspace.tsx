@@ -298,7 +298,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
           <div className="aerift-workspace-import">
             <IconAction variant="secondary" icon="add" label={importLabel} disabled={disabled}
               onClick={() => importInput.current?.click()} />
-            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
+            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : undefined}
               onChange={event => {
                 importFiles(Array.from(event.currentTarget.files ?? []), current.id === "photos");
                 event.currentTarget.value = "";
@@ -330,8 +330,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
             change(() => [{ object: { ...selectedCollection, itemIds: next } }], "Collection updated.")} />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
-          label={section?.id === "documents" ? "Search imported documents" : current.id === "photos" ? "Search imported media" : "Search imported files"}
-          kinds={section?.id === "documents" ? [] : current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
+          label={current.id === "photos" ? "Search imported media" : "Search imported files"}
+          kinds={current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
       </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
         {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}
