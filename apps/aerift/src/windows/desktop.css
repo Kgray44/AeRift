@@ -64,14 +64,14 @@
 .aerift-desktop-surface[data-destination="rift"] > .ae-orbit-content { padding-block-end: 0; }
 .aerift-transfer-preview .ae-rift { margin: 0; }
 @media (min-width: 48.001rem) {
-  .ae-shell .aerift-desktop-header:has(> .ae-orbit-conventional) {
+  .ae-shell .aerift-desktop-header:not(.ae-compact-header):has(> .ae-orbit-conventional) {
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
 }
 @media (max-width: 48rem) {
   .aerift-desktop-header > .ae-orbit-conventional { grid-row: 2; grid-column: 1 / -1; }
-  .aerift-desktop-header:has(> .ae-orbit-conventional) > .ae-nav-brand { grid-column: 1; justify-self: start; }
-  .aerift-desktop-header:has(> .ae-orbit-conventional) > .ae-nav-tools { grid-column: 3; }
+  .aerift-desktop-header:not(.ae-compact-header):has(> .ae-orbit-conventional) > .ae-nav-brand { grid-column: 1; justify-self: start; }
+  .aerift-desktop-header:not(.ae-compact-header):has(> .ae-orbit-conventional) > .ae-nav-tools { grid-column: 3; }
 }
 
 .aerift-workspace-content {

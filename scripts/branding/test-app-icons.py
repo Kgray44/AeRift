@@ -42,9 +42,10 @@ class IconTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = icons.source_pixels()
+        cls.native = icons.source_pixels(native=True)
         cls.output = tempfile.TemporaryDirectory()
         cls.root = Path(cls.output.name)
-        icons.ios(cls.source, cls.root / "apple" / "AppIcon.appiconset")
+        icons.ios(cls.native, cls.root / "apple" / "AppIcon.appiconset")
         icons.android(cls.source, cls.root / "android")
 
     @classmethod
@@ -53,7 +54,7 @@ class IconTests(unittest.TestCase):
 
     def test_windows_staged_files_exact_and_small_variants_are_uncompressed(self):
         root = icons.ROOT / "apps/aerift/src-tauri/icons"
-        icons.windows(self.source, root, True)
+        icons.windows(self.native, root, True)
         data = (root / "icon.ico").read_bytes()
         self.assertEqual(struct.unpack_from("<HHH", data), (0, 1, 5))
         for index, size in enumerate([32, 16, 24, 48, 256]):
@@ -62,6 +63,15 @@ class IconTests(unittest.TestCase):
             self.assertLessEqual(offset + length, len(data))
             if size < 256:
                 self.assertEqual(struct.unpack_from("<Iii", data, offset), (40, size, size * 2))
+                pixels = data[offset + 40:offset + 40 + size * size * 4]
+                alpha = pixels[3::4]
+                self.assertIn(0, alpha)
+                self.assertTrue(any(a > 128 for a in alpha))
+                stride = ((size + 31) // 32) * 4
+                mask = data[offset + 40 + len(pixels):offset + length]
+                for i, a in enumerate(alpha):
+                    y, x = divmod(i, size)
+                    self.assertEqual(bool(mask[y * stride + x // 8] & (0x80 >> (x % 8))), a == 0)
             else:
                 self.assertTrue(data[offset:].startswith(icons.PNG))
 
@@ -71,7 +81,21 @@ class IconTests(unittest.TestCase):
         self.assertEqual((asset["size"], asset["idiom"], asset["platform"]), ("1024x1024", "universal", "ios"))
         w, h, channels, rows = raster(catalog / asset["filename"])
         self.assertEqual((w, h, channels), (1024, 1024, 3))
-        self.assertEqual(rows, icons.resize(self.source, 1024))
+        bg = bytes(icons.DARK)
+        self.assertEqual(rows[:64], [bg * 1024] * 64)
+        self.assertEqual(rows[-64:], [bg * 1024] * 64)
+        mark = icons.composite(icons.resize_alpha(self.native, 896), icons.DARK)
+        self.assertEqual(rows[64:-64], [bg * 64 + row + bg * 64 for row in mark])
+
+    def test_transparent_window_icon_and_alpha_area_math(self):
+        self.assertEqual(icons.resize_alpha([bytes((255, 0, 0, 255, 0, 255, 0, 0))] * 2, 1),
+                         [bytes((255, 0, 0, 128))])
+        w, h, channels, rows = raster(icons.ROOT / "apps/aerift/src-tauri/icons/icon.png")
+        self.assertEqual((w, h, channels), (32, 32, 4))
+        alpha = b"".join(row[3::4] for row in rows)
+        self.assertIn(0, alpha)
+        self.assertTrue(any(0 < a < 255 for a in alpha))
+        self.assertTrue(any(a > 128 for a in alpha))
 
     def test_android_adaptive_inset_and_legacy_art(self):
         root = self.root / "android"

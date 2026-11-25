@@ -13,17 +13,24 @@ foreach ($path in $Executable) {
     try {
         if ($actual.Size -ne $expected.Size) { throw "Unexpected Windows icon size: $path" }
         $delta = 0
+        $alphaDelta = 0
+        $clear = 0
         $lit = 0
         for ($y = 0; $y -lt $actual.Height; $y++) {
             for ($x = 0; $x -lt $actual.Width; $x++) {
                 $a = $actual.GetPixel($x, $y)
                 $b = $expected.GetPixel($x, $y)
-                $delta += [Math]::Abs($a.R - $b.R) + [Math]::Abs($a.G - $b.G) + [Math]::Abs($a.B - $b.B)
-                if ($a.B -gt 140) { $lit++ }
+                $alphaDelta += [Math]::Abs($a.A - $b.A)
+                if ($a.A -eq 0) { $clear++ }
+                $delta += ([Math]::Abs($a.R * $a.A - $b.R * $b.A) +
+                    [Math]::Abs($a.G * $a.A - $b.G * $b.A) +
+                    [Math]::Abs($a.B * $a.A - $b.B * $b.A)) / 255
+                if ($a.B -gt 140 -and $a.A -gt 0) { $lit++ }
             }
         }
         $mean = $delta / (3 * $actual.Width * $actual.Height)
-        if ($mean -gt 5 -or $lit -eq 0) { throw "Windows shell icon does not match the approved source: $path (mean delta $mean)" }
+        $alphaMean = $alphaDelta / ($actual.Width * $actual.Height)
+        if ($mean -gt 5 -or $alphaMean -gt 5 -or $clear -eq 0 -or $lit -eq 0) { throw "Windows shell icon does not match the approved source: $path (mean delta $mean)" }
         Write-Host "Verified AeRift Windows shell icon: $([IO.Path]::GetFileName($path)), $($actual.Width)x$($actual.Height)"
     } finally {
         $expected.Dispose()

@@ -8,7 +8,8 @@ const { chromium } = await import(module ? pathToFileURL(module).href : "playwri
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
 const evidence = process.env.AERIFT_WORKSPACE_EVIDENCE;
 if (evidence) await mkdir(evidence, { recursive: true });
-const browser = await chromium.launch(process.env.AERIFT_CHROMIUM ? { executablePath: process.env.AERIFT_CHROMIUM } : {});
+const executablePath = process.env.AERIFT_CHROMIUM_PATH ?? process.env.AERIFT_CHROMIUM;
+const browser = await chromium.launch(executablePath ? { executablePath } : {});
 const snapped = async (page, name) => {
   if (!evidence) return;
   await page.screenshot({ path: join(evidence, name + ".png"), animations: "disabled" });
@@ -16,6 +17,19 @@ const snapped = async (page, name) => {
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
+const verifyHeader = async page => {
+  const header = page.locator("header.ae-compact-header");
+  const logo = header.getByRole("img", { name: "AeRift", exact: true });
+  const status = header.getByRole("group", { name: "App status" });
+  await logo.evaluate(el => el.decode());
+  const [bar, mark] = await Promise.all([header.boundingBox(), logo.boundingBox()]);
+  assert.ok(bar && mark && Math.abs(bar.x + bar.width / 2 - mark.x - mark.width / 2) <= 1);
+  assert.equal(await logo.getAttribute("src"), "/branding/aerift-mark-transparent.png");
+  assert.equal(await status.getByRole("img").count(), 2);
+  assert.equal(await status.getByRole("button").count(), 0);
+  assert.equal(await header.locator(".ae-nav-brand, .ae-nav-tools").count(), 0);
+};
+
 const assertFloatingNoteTools = async (editor, required) => {
   assert.equal(await editor.getByRole("combobox", { name: /category/i }).count(), 0, "no always-visible category dropdown");
   const canvas = editor.locator(".aw-note-canvas");
@@ -41,6 +55,7 @@ const back = async (page, name) => {
 try {
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
+  await verifyHeader(desktop);
   await snapped(desktop, "desktop-workspace-dark");
   await open(desktop, "File Browser");
   const importButton = button(desktop, "Import files");
@@ -260,6 +275,10 @@ try {
     assert.ok(bounds.every((b, i) => i === 0 || b.left >= bounds[i - 1].right - 1));
     assert.equal(await dock.locator(".af-label-compact").filter({ hasText: /^Space$/ }).isVisible(), true);
     assert.ok(await dock.locator(".af-dock-label").evaluateAll(labels => labels.every(label => label.scrollWidth <= label.clientWidth + 1)));
+    await verifyHeader(page);
+    assert.equal(await page.locator("header.ae-compact-header").getByRole("button").count(), 0);
+    const dockSettings = button(dock, "Settings");
+    assert.equal(await dockSettings.count(), 1);
     await snapped(page, platform + "-workspace");
     await open(page, "File Browser");
     await button(page, "Import files").click();
@@ -304,7 +323,7 @@ try {
     await button(mobileEditor, "Back to notes").click();
     await back(page, "Notes");
     assert.equal(await button(page, "Clipboard").count(), 0, "Clipboard is not enabled by default");
-    await button(page, "Control Center").click();
+    await button(dock, "Settings").click();
     const controls = page.getByRole("dialog", { name: "Control Center" });
     await controls.getByRole("checkbox", { name: "Clipboard", exact: true }).check();
     await button(controls, "Close").click();
