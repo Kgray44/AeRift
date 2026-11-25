@@ -68,11 +68,13 @@ function Test-InstalledWorkspaceFolder {
   const panel = document.querySelector('section[aria-label="Browse a local folder"]');
   const buttons = [...panel?.querySelectorAll('button') ?? []];
   const chooser = buttons.find(b => b.textContent.trim() === 'Choose folder');
+  const error = panel?.querySelector('[role=alert]')?.dataset.folderError;
   return {
     panel: !!panel, busy: chooser?.disabled === true, alert: !!panel?.querySelector('[role=alert]'),
     embedded: location.hostname === 'tauri.localhost' && (location.pathname === '/' || location.pathname === '/index.html'),
     focused: document.hasFocus(), visible: document.visibilityState === 'visible',
-    uuid: typeof globalThis.crypto?.randomUUID === 'function'
+    uuid: typeof globalThis.crypto?.randomUUID === 'function',
+    failure: ['origin','owner','focus','request','revoked','folder','bridge'].includes(error) ? error : null
   };
 })()
 '@
@@ -125,7 +127,7 @@ function Test-InstalledWorkspaceFolder {
             $ownedForeground = $foreground -eq $hwnd
             $popupOwned = $foreground -ne [IntPtr]::Zero -and $foreground -ne $hwnd -and
                 [AeRiftFixture.OwnedWindow]::GetAncestor($foreground, 3) -eq $hwnd
-            Write-Host "Workspace picker stage=${Stage}: probeAvailable=$($null -ne $state) panel=$($state.panel) busy=$($state.busy) alert=$($state.alert) embedded=$($state.embedded) webFocused=$($state.focused) visible=$($state.visible) uuid=$($state.uuid) ownerForeground=$ownedForeground ownedPopupForeground=$popupOwned"
+            Write-Host "Workspace picker stage=${Stage}: probeAvailable=$($null -ne $state) panel=$($state.panel) busy=$($state.busy) alert=$($state.alert) failure=$($state.failure) embedded=$($state.embedded) webFocused=$($state.focused) visible=$($state.visible) uuid=$($state.uuid) ownerForeground=$ownedForeground ownedPopupForeground=$popupOwned"
             if ($state.alert) { throw 'Installed app reported folder access unavailable before any matching native dialog was observed.' }
             throw
         }

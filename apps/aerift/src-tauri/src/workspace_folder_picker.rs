@@ -10,6 +10,10 @@ use std::{
 use tauri::{Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
+use windows_sys::Win32::{
+    Foundation::HWND,
+    UI::WindowsAndMessaging::{GetForegroundWindow, GetGUIThreadInfo, IsChild, GUITHREADINFO},
+};
 
 const UNAVAILABLE: &str = "Folder unavailable";
 const DENIED: &str = "Folder selection is not available to this window";
@@ -137,22 +141,82 @@ pub(crate) struct ChosenFolder {
     cursor: Uuid,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PickFailure {
+    Origin,
+    Owner,
+    Focus,
+    Request,
+    Revoked,
+    Folder,
+    Bridge,
+}
+
+fn native_focus_matches(
+    owner: HWND,
+    foreground: HWND,
+    focus: HWND,
+    is_child: impl FnOnce(HWND, HWND) -> bool,
+) -> bool {
+    !owner.is_null()
+        && owner == foreground
+        && !focus.is_null()
+        && (owner == focus || is_child(owner, focus))
+}
+
+fn check_pending(inner: &Inner, request: Uuid) -> Result<(), PickFailure> {
+    let lifecycle = inner.lifecycle.lock().map_err(|_| PickFailure::Bridge)?;
+    if inner.closed.load(Ordering::Acquire) || lifecycle.pending != Some(request) {
+        return Err(PickFailure::Revoked);
+    }
+    Ok(())
+}
+
+fn require_native_focus(window: &WebviewWindow) -> Result<(), PickFailure> {
+    let owner = window.hwnd().map_err(|_| PickFailure::Focus)?.0;
+    // The embedded WebView has its own child HWND for keyboard focus, so
+    // Tao's cached main-window WM_SETFOCUS bit is not authoritative. Require
+    // both actual native foreground ownership and real descendant focus.
+    let mut gui = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: These APIs only query the current foreground/focus. gui is
+    // writable, initialized and correctly sized; IsChild inspects OS handles.
+    let focused = unsafe {
+        let foreground = GetForegroundWindow();
+        GetGUIThreadInfo(0, &mut gui) != 0
+            && native_focus_matches(owner, foreground, gui.hwndFocus, |parent, child| {
+                IsChild(parent, child) != 0
+            })
+            && GetForegroundWindow() == owner
+    };
+    if !focused {
+        return Err(PickFailure::Focus);
+    }
+    Ok(())
+}
+
 // No frontend path/URI or configurable default directory is accepted.
 #[tauri::command]
 pub(crate) async fn workspace_choose_folder(
     window: WebviewWindow,
     request: Uuid,
-) -> Result<Option<ChosenFolder>, &'static str> {
-    let inner = owner_state(&window)?;
-    if window.is_focused().ok() != Some(true) {
-        return Err(DENIED);
-    }
-    let lease = inner.begin(request)?;
+) -> Result<Option<ChosenFolder>, PickFailure> {
+    require_bundled_main(&window).map_err(|_| PickFailure::Origin)?;
+    let inner = bound_state(&window).map_err(|_| PickFailure::Owner)?;
+    require_native_focus(&window)?;
+    let lease = inner.begin(request).map_err(|_| PickFailure::Request)?;
     // Capture a runtime handle on the async side. The lease remains held by
     // the blocking work even if the invoking page drops its command future.
     let runtime = tokio::runtime::Handle::current();
     tauri::async_runtime::spawn_blocking(move || {
         let _lease = lease;
+        // Scheduling the native dialog may have let focus or the page change.
+        require_bundled_main(&window).map_err(|_| PickFailure::Origin)?;
+        require_native_focus(&window)?;
+        check_pending(&inner, request)?;
         let Some(folder) = window
             .dialog()
             .file()
@@ -161,21 +225,17 @@ pub(crate) async fn workspace_choose_folder(
         else {
             return Ok(None);
         };
-        require_bundled_main(&window)?;
-        {
-            let lifecycle = inner.lifecycle.lock().map_err(|_| UNAVAILABLE)?;
-            if inner.closed.load(Ordering::Acquire) || lifecycle.pending != Some(request) {
-                return Err(DENIED);
-            }
-        }
-        let path = folder.into_path().map_err(|_| UNAVAILABLE)?;
-        let root = WindowsFolderDirectory::from_native_selection(&path).map_err(|_| UNAVAILABLE)?;
+        require_bundled_main(&window).map_err(|_| PickFailure::Origin)?;
+        check_pending(&inner, request)?;
+        let path = folder.into_path().map_err(|_| PickFailure::Folder)?;
+        let root =
+            WindowsFolderDirectory::from_native_selection(&path).map_err(|_| PickFailure::Folder)?;
         let grant = WindowsFolderReadGrant::new(root);
         let (id, cursor) = grant.initial_tokens();
         let deadline = grant.deadline();
-        let mut lifecycle = inner.lifecycle.lock().map_err(|_| UNAVAILABLE)?;
+        let mut lifecycle = inner.lifecycle.lock().map_err(|_| PickFailure::Bridge)?;
         if inner.closed.load(Ordering::Acquire) || lifecycle.pending != Some(request) {
-            return Err(DENIED);
+            return Err(PickFailure::Revoked);
         }
         lifecycle.pending = None;
         let state = Arc::downgrade(&inner);
@@ -205,7 +265,7 @@ pub(crate) async fn workspace_choose_folder(
         Ok(Some(ChosenFolder { grant: id, cursor }))
     })
     .await
-    .map_err(|_| UNAVAILABLE)?
+    .map_err(|_| PickFailure::Bridge)?
 }
 
 #[tauri::command]
@@ -274,6 +334,10 @@ fn require_bundled_main(window: &WebviewWindow) -> Result<(), &'static str> {
 
 fn owner_state(window: &WebviewWindow) -> Result<Arc<Inner>, &'static str> {
     require_bundled_main(window)?;
+    bound_state(window)
+}
+
+fn bound_state(window: &WebviewWindow) -> Result<Arc<Inner>, &'static str> {
     let state = window.try_state::<WorkspaceFolderPicker>().ok_or(DENIED)?;
     if !state.0.bound.load(Ordering::Acquire) || state.0.closed.load(Ordering::Acquire) {
         return Err(DENIED);
@@ -317,6 +381,21 @@ mod tests {
         assert!(state.begin(Uuid::new_v4()).is_err());
         drop(lease);
         assert!(state.begin(Uuid::new_v4()).is_ok());
+    }
+
+    #[test]
+    fn foreground_owner_requires_actual_focus_within_its_window_tree() {
+        // Pure policy fixture: these synthetic identities never reach Win32.
+        let owner = 1_usize as HWND;
+        let child = 2_usize as HWND;
+        let foreign = 3_usize as HWND;
+        let null = std::ptr::null_mut();
+        let is_child = |root, window| root == owner && window == child;
+        assert!(native_focus_matches(owner, owner, owner, is_child));
+        assert!(native_focus_matches(owner, owner, child, is_child));
+        assert!(!native_focus_matches(owner, foreign, child, is_child));
+        assert!(!native_focus_matches(owner, owner, foreign, is_child));
+        assert!(!native_focus_matches(owner, owner, null, is_child));
     }
 
     #[test]

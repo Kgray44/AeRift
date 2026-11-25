@@ -17,7 +17,9 @@ test("ordinary Windows builder binds a single local owner and three narrow comma
   ]);
   assert.match(builder, /get_webview_window\("main"\)[\s\S]*\.bind_owner\(&main\)/);
   assert.match(picker, /window\.label\(\) != "main" \|\| !window\.url\(\)\.is_ok_and/);
-  assert.match(picker, /window\.is_focused\(\)\.ok\(\) != Some\(true\)/);
+  assert.match(picker, /GetGUIThreadInfo\(0, &mut gui\)[\s\S]*IsChild\(parent, child\)[\s\S]*GetForegroundWindow\(\) == owner/);
+  assert.match(picker, /owner == foreground[\s\S]*owner == focus \|\| is_child\(owner, focus\)/);
+  assert.match(picker, /let inner = bound_state\(&window\)[\s\S]*require_native_focus\(&window\)\?[\s\S]*require_native_focus\(&window\)\?[\s\S]*blocking_pick_folder/);
   assert.match(picker, /WindowEvent::Destroyed/);
   assert.match(picker, /WindowEvent::CloseRequested \{ \.\. \} => \{\s*inner\.revoke_all\(\)/);
 });
@@ -39,4 +41,10 @@ test("the native Files route opens only on click and does not persist or import 
   assert.match(view, /if \(pending\.current\) close\(pending\.current\);\s*if \(active\.current\) close\(active\.current\)/);
   assert.match(view, /<bdi>\{entry\.name\}<\/bdi>/);
   assert.doesNotMatch(view, /localStorage|indexedDB|dangerouslySetInnerHTML|importFiles|send_file/);
+});
+
+test("the chooser retains bounded failure categories without rendering raw platform errors", () => {
+  assert.match(view, /invoke<Grant \| null>\("workspace_choose_folder", \{ request \}\)/);
+  assert.match(view, /default:\s*return "bridge"/);
+  assert.match(view, /data-folder-error=\{error\}\>\{failureMessage\[error\]\}/);
 });

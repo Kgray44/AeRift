@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button } from "@aerift/ui";
 import { useEffect, useRef, useState } from "react";
@@ -13,6 +14,28 @@ function sizeLabel(value: number | null) {
   return Number.isSafeInteger(value) ? `${value.toLocaleString()} bytes` : "Size unavailable";
 }
 
+type PickerFailure = "origin" | "owner" | "focus" | "request" | "revoked" | "folder" | "bridge";
+
+const failureMessage: Record<PickerFailure, string> = {
+  origin: "Folder browsing is available only in the installed AeRift window.",
+  owner: "Close and reopen AeRift to restore folder browsing.",
+  focus: "Bring AeRift to the front, then choose a folder again.",
+  request: "Finish the open selection or try choosing again.",
+  revoked: "Folder access was closed. Choose the folder again.",
+  folder: "Choose an accessible folder on a fixed NTFS drive.",
+  bridge: "AeRift couldn’t open folder browsing. Try reopening the app.",
+};
+
+function pickerFailure(error: unknown): PickerFailure {
+  // Never display raw IPC errors, arguments, or native file paths.
+  switch (error) {
+    case "origin": case "owner": case "focus": case "request": case "revoked": case "folder":
+      return error;
+    default:
+      return "bridge";
+  }
+}
+
 function close(request: string) {
   void command<void>("workspace_close_chosen_folder", { request });
 }
@@ -23,7 +46,7 @@ export function WorkspaceChosenFolder() {
   const active = useRef<string | undefined>(undefined);
   const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<PickerFailure>();
   const [folder, setFolder] = useState<OpenFolder>();
 
   function clear() {
@@ -31,7 +54,7 @@ export function WorkspaceChosenFolder() {
     if (active.current) close(active.current);
     pending.current = undefined;
     active.current = undefined;
-    setError(false);
+    setError(undefined);
     setFolder(undefined);
   }
 
@@ -63,21 +86,17 @@ export function WorkspaceChosenFolder() {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
-    setError(false);
+    setError(undefined);
     const request = crypto.randomUUID();
     pending.current = request;
     try {
-      const chosen = await command<Grant | null>("workspace_choose_folder", { request });
+      const chosen = await invoke<Grant | null>("workspace_choose_folder", { request });
       if (!mounted.current || pending.current !== request) {
         close(request);
         return;
       }
-      if (!chosen.ok) {
-        setError(true);
-        return;
-      }
-      if (!chosen.value) return;
-      const { grant, cursor } = chosen.value;
+      if (!chosen) return;
+      const { grant, cursor } = chosen;
       active.current = request;
       setFolder(undefined);
       const page = await command<Page>("workspace_list_chosen_folder", { grant, cursor });
@@ -85,10 +104,12 @@ export function WorkspaceChosenFolder() {
       if (!page.ok) {
         active.current = undefined;
         close(request);
-        setError(true);
+        setError("revoked");
         return;
       }
       setFolder({ request, grant, page: page.value, number: 1 });
+    } catch (error) {
+      if (mounted.current && pending.current === request) setError(pickerFailure(error));
     } finally {
       if (pending.current === request) pending.current = undefined;
       inFlight.current = false;
@@ -100,7 +121,7 @@ export function WorkspaceChosenFolder() {
     if (inFlight.current || !folder?.page.next || active.current !== folder.request) return;
     inFlight.current = true;
     setBusy(true);
-    setError(false);
+    setError(undefined);
     try {
       const result = await command<Page>("workspace_list_chosen_folder", { grant: folder.grant, cursor: folder.page.next });
       if (!mounted.current || active.current !== folder.request) return;
@@ -108,7 +129,7 @@ export function WorkspaceChosenFolder() {
         active.current = undefined;
         close(folder.request);
         setFolder(undefined);
-        setError(true);
+        setError("revoked");
         return;
       }
       setFolder({ ...folder, page: result.value, number: folder.number + 1 });
@@ -128,7 +149,7 @@ export function WorkspaceChosenFolder() {
       {folder?.page.next && <Button variant="quiet" disabled={busy} onClick={() => void next()}>Next folder page</Button>}
     </div>
     {busy && <p role="status">Waiting for folder access…</p>}
-    {error && <p role="alert">Folder unavailable. Choose a folder on a fixed NTFS drive, or choose it again if access expired.</p>}
+    {error && <p role="alert" data-folder-error={error}>{failureMessage[error]}</p>}
     {folder && <>
       <p role="status">Folder page {folder.number}{!folder.page.next && " · End of list"}</p>
       {folder.page.entries.length > 0
