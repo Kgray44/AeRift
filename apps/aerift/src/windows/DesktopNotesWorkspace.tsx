@@ -1,6 +1,6 @@
 import type { DigitalObject } from "@aerift/app-contract/digital-objects";
 import { GlassSurface, IconAction, SpatialIcon } from "@aerift/ui";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { NoteIconButton, WorkspaceNoteEditor } from "../WorkspaceNoteTools";
 import { workspaceNoteLimit } from "../workspace-note-tools";
 import {
@@ -8,6 +8,8 @@ import {
   renameDesktopNoteCategory, saveDesktopNoteLibrary, setDesktopNoteCategory, sortDesktopNotes, touchDesktopNote,
   type DesktopNoteLibrary,
 } from "../desktop-note-library";
+import { CategoryGlyph, CategoryStyleFields } from "../CategoryStyleFields";
+import { defaultCategoryStyle, type CategoryStyle } from "../category-style";
 import { DesktopNotesSidebar, type DesktopNotesScope } from "./DesktopNotesSidebar";
 import "./desktop-notes-workspace.css";
 
@@ -32,6 +34,58 @@ function noteTitle(draft: Draft, titleLimit: number) {
   return (draft.name.trim() || draft.text.split(/\r?\n/u).find(line => line.trim())?.trim() || "").slice(0, titleLimit);
 }
 
+function NoteCategoryPicker({ value, categories, disabled, onChange }: {
+  value: string | null;
+  categories: DesktopNoteLibrary["categories"];
+  disabled: boolean;
+  onChange: (value: string | null) => void;
+}) {
+  const id = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const focusChoice = useRef(false);
+
+  function close(restore: boolean) {
+    setOpen(false);
+    if (restore) root.current?.querySelector<HTMLButtonElement>(".aw-note-category-trigger")?.focus();
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    if (focusChoice.current) {
+      focusChoice.current = false;
+      root.current?.querySelector<HTMLButtonElement>('.aw-note-category-choice[aria-pressed="true"]')?.focus();
+    }
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+
+  return <div className="aw-note-category-anchor" ref={root}
+    onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) close(false); }}
+    onKeyDown={event => {
+      if (!open || event.key !== "Escape") return;
+      event.preventDefault(); event.stopPropagation(); close(true);
+    }}>
+    <NoteIconButton type="button" className="aw-note-category-trigger" label="Move note to category" icon="category"
+      disabled={disabled} aria-expanded={open} aria-controls={open ? id : undefined} onClick={event => {
+        focusChoice.current = event.detail === 0;
+        setOpen(current => !current);
+      }} />
+    {open && <GlassSurface className="aw-note-category-popover" material="overlay" role="group" id={id} aria-label="Move note to category">
+      <p>Move to category</p>
+      {[{ id: null, name: "Uncategorized", appearance: undefined }, ...categories].map(category => (
+        <button key={category.id ?? "uncategorized"} type="button" className="aw-note-category-choice"
+          aria-pressed={category.id === value} disabled={disabled} onClick={() => { onChange(category.id); close(true); }}>
+          <span className="aw-category-choice-name"><CategoryGlyph appearance={category.appearance} />{category.name}</span>{category.id === value && <span aria-hidden="true">✓</span>}
+        </button>
+      ))}
+    </GlassSurface>}
+  </div>;
+}
+
 export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBack, heading, collectionSelection = [], onCollectionSelect,
   variant = "desktop", titleLimit = defaultTitleLimit, noteActions, attachments }: {
   notes: readonly Note[]; disabled: boolean;
@@ -54,7 +108,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
   const processing = useRef(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
-  const [categoryForm, setCategoryForm] = useState<{ id?: string; name: string }>();
+  const [categoryForm, setCategoryForm] = useState<{ id?: string; name: string; appearance: CategoryStyle }>();
   const [removeCategory, setRemoveCategory] = useState(false);
   const [removeNote, setRemoveNote] = useState(false);
   const [leave, setLeave] = useState<(() => void)>();
@@ -174,7 +228,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
       return;
     }
     const next = categoryForm.id
-      ? renameDesktopNoteCategory(prior, id, name) : createDesktopNoteCategory(prior, id, name);
+      ? renameDesktopNoteCategory(prior, id, name, categoryForm.appearance) : createDesktopNoteCategory(prior, id, name, categoryForm.appearance);
     if (!next.categories.some(item => item.id === id)) {
       setError("Could not add another category.");
       return;
@@ -206,19 +260,21 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
       <div className="aw-desktop-notes-index" hidden={mobileEditor}>
         <DesktopNotesSidebar notes={rows} categories={library.categories} scope={scope} selectedNoteId={draft?.id ?? null}
           onScopeChange={next => { setScope(next); setCategoryForm(undefined); setRemoveCategory(false); }}
-          onSelectNote={chooseNote} onNewNote={newNote} onNewCategory={() => { setRemoveCategory(false); setCategoryForm({ name: "" }); }} />
-        {category && !categoryForm && <div className="aw-note-category-actions" aria-label="Category tools" role="group">
-          <NoteIconButton label="Rename category" icon="edit" disabled={locked}
-            onClick={() => setCategoryForm({ id: category.id, name: category.name })} />
+          onSelectNote={chooseNote} onNewNote={newNote} onNewCategory={() => { setRemoveCategory(false); setCategoryForm({ name: "", appearance: defaultCategoryStyle }); }} />
+        {category && !categoryForm && <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="raised" aria-label="Category tools" role="group">
+          <NoteIconButton label="Edit category" icon="edit" disabled={locked}
+            onClick={() => setCategoryForm({ id: category.id, name: category.name, appearance: category.appearance ?? defaultCategoryStyle })} />
           <NoteIconButton label="Remove category" icon="trash" disabled={locked} onClick={() => setRemoveCategory(true)} />
-        </div>}
+        </GlassSurface>}
         {categoryForm && <form className="aw-note-category-form" onSubmit={commitCategory}>
           <label>Category name<input autoFocus value={categoryForm.name} required maxLength={48}
             onChange={event => setCategoryForm({ ...categoryForm, name: event.currentTarget.value })} /></label>
-          <div className="aw-note-category-actions">
+          <CategoryStyleFields appearance={categoryForm.appearance} disabled={locked}
+            onChange={appearance => setCategoryForm(current => current ? { ...current, appearance } : current)} />
+          <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="raised" role="group" aria-label="Save category changes">
             <NoteIconButton type="submit" label="Save category" icon="save" disabled={locked || !categoryForm.name.trim()} />
             <NoteIconButton label="Cancel category edit" icon="close" onClick={() => setCategoryForm(undefined)} />
-          </div>
+          </GlassSurface>
         </form>}
         {removeCategory && <div className="aw-note-confirm" role="group" aria-label="Remove category confirmation">
           <p>Remove this category? Its notes will stay in All Notes.</p>
@@ -251,26 +307,21 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
             }
           }}>
           <div className="aw-desktop-note-top">
-            <label className="aw-note-title-field">Title<input ref={title} value={draft.name} maxLength={titleLimit}
+            <label className="aw-note-title-field"><span className="ae-note-sidebar-visually-hidden">Title</span><input ref={title} value={draft.name} maxLength={titleLimit}
               placeholder="Untitled note" disabled={locked} onChange={event => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
-            <div className="ae-actions" role="group" aria-label="Note actions">
+          </div>
+          <WorkspaceNoteEditor value={draft.text} format={draft.format} disabled={locked}
+            onChange={text => setDraft(current => current ? { ...current, text } : current)}
+            onFormat={format => setDraft(current => current ? { ...current, format } : current)} actions={<>
+              <NoteCategoryPicker value={draft.category} categories={library.categories} disabled={locked}
+                onChange={category => setDraft(current => current ? { ...current, category } : current)} />
               <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !draft.text.trim()} />
               {saved && onCollectionSelect && <NoteIconButton label="Select note for collection" icon="folder" disabled={locked}
                 aria-pressed={collectionSelection.includes(saved.id)}
                 onClick={() => onCollectionSelect(saved.id, !collectionSelection.includes(saved.id))} />}
               {saved && !dirty && noteActions?.(saved)}
               {saved && <NoteIconButton label="Delete note" icon="trash" disabled={locked} onClick={() => setRemoveNote(true)} />}
-            </div>
-          </div>
-          <label className="aw-note-category-select"><SpatialIcon name="folder" size={17} />Category
-            <select value={draft.category ?? ""} disabled={locked} onChange={event => setDraft({ ...draft, category: event.currentTarget.value || null })}>
-              <option value="">Uncategorized</option>
-              {library.categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>
-          <WorkspaceNoteEditor value={draft.text} format={draft.format} disabled={locked}
-            onChange={text => setDraft(current => current ? { ...current, text } : current)}
-            onFormat={format => setDraft(current => current ? { ...current, format } : current)} />
+            </>} />
           {attachments?.(draft.attachmentIds, attachmentIds =>
             setDraft(current => current ? { ...current, attachmentIds } : current), locked)}
           {removeNote && <div className="aw-note-confirm" role="group" aria-label="Delete note confirmation">
