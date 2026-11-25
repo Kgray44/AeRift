@@ -8,7 +8,7 @@
   padding-block-end: calc(6rem + env(safe-area-inset-bottom));
 }
 
-.aerift-ios .ae-experience-nav[data-mobile-shell="true"] {
+.aerift-ios .ae-experience-nav[data-mobile-shell="true"]:not(.ae-compact-header) {
   grid-template-columns: auto minmax(0, 1fr);
 }
 

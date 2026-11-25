@@ -272,7 +272,7 @@ try {
   await inbox.getByText("Saved sender check.pdf", { exact: true }).waitFor();
   await capture(page, "dark-polished-activity");
 
-  await page.getByRole("button", { name: "Control Center" }).click();
+  await nav("Settings").click();
   await destination("Settings").waitFor();
   await page.getByLabel("Window mode").selectOption("simplified");
   assert.equal(await nav("Workspace").count(), 0);

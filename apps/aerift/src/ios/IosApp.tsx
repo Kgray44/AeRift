@@ -1,9 +1,11 @@
+import { CompactHeaderMark, CompactHeaderStatus } from "../CompactHeader";
 import { destinationIntent } from "../destination-intent";
 import {
-  AppBrand, AppShell, Button, GestureCameraIndicator, GlassSurface, SettingsPanel, Sheet,
+  AppShell, Button, GlassSurface, SettingsPanel, Sheet,
   SpatialIcon, ThemeProvider, TransferProgress, TransferWorkspace,
   type AppearanceSettings, type DiscoveryState, type GestureCameraStatus, type WorkspaceConnection,
 } from "@aerift/ui";
+import { ordinaryDevices } from "@aerift/app-contract/friends";
 import type { AppPort, AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift/app-contract/experience";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -314,14 +316,11 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
               <Button variant="quiet" loading={discovering} loadingLabel="Retrying discovery…"
                 onClick={() => void discover()}>Retry discovery</Button>
             </div>}
-          navigationStart={<AppBrand />}
-          navigationEnd={<>
-            <GestureCameraIndicator status={cameraStatus} />
-            <Button className="ae-control-gear" variant="quiet" aria-label="Control Center"
-              aria-haspopup="dialog" title="Control Center" onClick={() => setSettingsOpen(true)}>
-              <SpatialIcon name="settings" />
-            </Button>
-          </>}
+          shellHeader={<header className="ae-experience-nav ae-compact-header" data-mobile-shell="true">
+            <CompactHeaderMark />
+            <CompactHeaderStatus camera={cameraStatus} enabled={preferences.gestures}
+              connections={snapshot ? ordinaryDevices(snapshot.devices, snapshot.friends).filter(device => device.paired && device.online).length : undefined} service={connection.state} />
+          </header>}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
           activityFooter={<>
             <p>{copy.receivedTip}</p>
@@ -388,6 +387,7 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
           }}
         />
         <MobileNavigation destinations={destinations} destination={destination} navigate={navigate}
+          settingsOpen={settingsOpen} openSettings={() => setSettingsOpen(true)}
           attention={{ devices: summary.pairRequests > 0, activity: summary.active.length > 0 }} />
       </AppShell>
       <Sheet open={settingsOpen} title="Control Center" onClose={closeSettings}>
