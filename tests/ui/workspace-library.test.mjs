@@ -23,10 +23,11 @@ test("documents are an explicit safe filename/media view, not an arbitrary launc
 });
 test("mobile dock has a single non-interactive traveling lens and keeps keyed tab buttons", () => {
   const nav = read("ios/MobileNavigation.tsx");
-  assert.match(nav, /className="af-dock-fluid"/);
-  assert.match(nav, /aria-hidden="true"/);
+  assert.match(nav, /<MobileDockMotion/);
+  const motion = readFileSync(new URL("../../packages/ui/src/MobileDockMotion.tsx", import.meta.url), "utf8");
+  assert.match(motion, /className="af-dock-fluid" aria-hidden="true"/);
   assert.match(nav, /destinations\.map\(item => <Button key=\{item\}/);
   const css = read("ios/ios.css");
-  assert.match(css, /\.af-dock-fluid[^{}]*\{[^}]*transition:\s*translate var\(--ae-motion-route\)/);
-  assert.match(css, /prefers-reduced-motion: reduce[^]*?\.af-dock-fluid[^{}]*\{[^}]*transition: none/);
+  assert.match(css, /\.af-dock-fluid[^{}]*\{[^}]*--af-dock-offset/);
+  assert.doesNotMatch(css, /\.af-dock-fluid[^{}]*\{[^}]*transition:/);
 });
