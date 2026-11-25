@@ -261,12 +261,14 @@ export function DesktopApp() {
             </Button>
             {connection.state === "disconnected" && <Button variant="quiet" aria-label="Retry connection" title="Retry connection" onClick={retryConnection}><SpatialIcon name="retry" /></Button>}
         </>} />}
-        {route === "friends" && friendsView && friends &&
-          <>
-            <FriendsWorkspace snapshot={friends} port={setupPort} setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />} />
-            <WindowsFriendsFiles contacts={friends.contacts} />
-            <WindowsFriendsMember contacts={friends.contacts} />
-          </>}
+        {route === "friends" && (friendsView && friends ?
+          <FriendsWorkspace snapshot={friends} port={setupPort}
+            setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />}
+            desktop={{
+              pendingInvitation: !!friendsView.pendingRecipient,
+              transfer: preferredContact => <WindowsFriendsFiles contacts={friends.contacts} preferredContact={preferredContact} />,
+              enrollment: <WindowsFriendsMember contacts={friends.contacts} />,
+            }} /> : <p role="status">Friends is unavailable. Reopen AeRift and try again.</p>)}
         {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
           if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);
           setSettings(next);

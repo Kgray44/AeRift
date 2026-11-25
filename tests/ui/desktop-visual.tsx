@@ -1,4 +1,5 @@
 import { friendsFixture } from "./friends-fixture";
+import { windowsFriendsFixture } from "./windows-friends-fixture";
 import type { FriendsRequest } from "@aerift/app-contract/friends";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -46,7 +47,11 @@ function broadcast(value: AppSnapshot) {
 if (motionFixture) installMotionFixture(first.id, () => snapshot, broadcast);
 if (islandFixture) installTransferIslandFixture(first.id, () => snapshot, broadcast);
 const friends = query.get("friendsFixture") === "1" ? friendsFixture(() => snapshot, broadcast) : undefined;
+const windowsFriends = friends && windowsFriendsFixture(() => snapshot.friends!, state === "empty");
 mockIPC((cmd, args) => {
+  if (windowsFriends && /^(friends_setup_|friends_files_|friends_member$)/.test(cmd)) {
+    return windowsFriends(cmd, args as Record<string, unknown> | undefined);
+  }
   if (friends && cmd === "friends_create_contact_card") return friends.createContactCard().then(result => {
     if (!result.ok) throw result.error;
     return result.value;
