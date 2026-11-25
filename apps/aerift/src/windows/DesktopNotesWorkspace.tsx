@@ -12,29 +12,39 @@ import { DesktopNotesSidebar, type DesktopNotesScope } from "./DesktopNotesSideb
 import "./desktop-notes-workspace.css";
 
 type Note = Extract<DigitalObject, { kind: "note" }>;
-type Draft = { id: string; name: string; text: string; format: Note["format"]; category: string | null };
-const titleLimit = 180;
+type Draft = { id: string; name: string; text: string; format: Note["format"]; category: string | null; attachmentIds: readonly string[] };
+const defaultTitleLimit = 180;
+
+function localNoteId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, "0")).join("");
+}
 
 function metadataStorage() {
   try { return globalThis.localStorage; } catch { return undefined; }
 }
 
 function fromNote(note: Note, category?: string): Draft {
-  return { id: note.id, name: note.name, text: note.text, format: note.format, category: category ?? null };
+  return { id: note.id, name: note.name, text: note.text, format: note.format, category: category ?? null, attachmentIds: note.attachmentIds ?? [] };
 }
 
-function noteTitle(draft: Draft) {
+function noteTitle(draft: Draft, titleLimit: number) {
   return (draft.name.trim() || draft.text.split(/\r?\n/u).find(line => line.trim())?.trim() || "").slice(0, titleLimit);
 }
 
-export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBack, heading, collectionSelection, onCollectionSelect }: {
+export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBack, heading, collectionSelection = [], onCollectionSelect,
+  variant = "desktop", titleLimit = defaultTitleLimit, noteActions, attachments }: {
   notes: readonly Note[]; disabled: boolean;
   onSave: (note: Note) => Promise<boolean>;
   onRemove: (id: string) => Promise<boolean>;
   onBack: () => void;
   heading: (back: () => void) => ReactNode;
-  collectionSelection: readonly string[];
-  onCollectionSelect: (id: string, active: boolean) => void;
+  collectionSelection?: readonly string[];
+  onCollectionSelect?: (id: string, active: boolean) => void;
+  variant?: "desktop" | "mobile";
+  titleLimit?: number;
+  noteActions?: (note: Note) => ReactNode;
+  attachments?: (ids: readonly string[], onChange: (ids: readonly string[]) => void, disabled: boolean) => ReactNode;
 }) {
   const [library, updateLibrary] = useState(() => loadDesktopNoteLibrary(metadataStorage()));
   const latestLibrary = useRef(library);
@@ -54,7 +64,9 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
   const dirty = !!draft && (!saved
     ? !!(draft.name.trim() || draft.text)
     : [draft.name !== saved.name, draft.text !== saved.text, draft.format !== saved.format,
-      draft.category !== (library.memberships[draft.id] ?? null)].some(Boolean));
+      draft.category !== (library.memberships[draft.id] ?? null),
+      draft.attachmentIds.length !== (saved.attachmentIds?.length ?? 0),
+      draft.attachmentIds.some((id, index) => id !== saved.attachmentIds?.[index])].some(Boolean));
   const category = scope.kind === "category" ? library.categories.find(item => item.id === scope.id) : undefined;
   const rows = sortDesktopNotes(notes, library, note => note.id).map(note => ({
     id: note.id,
@@ -99,7 +111,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
     switchEditor(() => {
       requestFocus.current = true;
       setFeedback(""); setError(""); setRemoveNote(false);
-      setDraft({ id: crypto.randomUUID(), name: "", text: "", format: "plain", category: category?.id ?? null });
+      setDraft({ id: localNoteId(), name: "", text: "", format: "plain", category: category?.id ?? null, attachmentIds: [] });
     });
   }
 
@@ -115,17 +127,17 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
 
   async function saveNote(then?: () => void) {
     if (!draft || processing.current || disabled) return;
-    const name = noteTitle(draft);
+    const name = noteTitle(draft, titleLimit);
     if (!name || draft.text.length > workspaceNoteLimit) {
       setError("Enter a title or some note text before saving.");
       return;
     }
     const pending: Note = { id: draft.id, kind: "note", ownership: "local", schemaVersion: 1, name,
-      text: draft.text, format: draft.format, ...(saved?.attachmentIds ? { attachmentIds: saved.attachmentIds } : {}) };
+      text: draft.text, format: draft.format, ...(draft.attachmentIds.length ? { attachmentIds: draft.attachmentIds } : {}) };
     setError(""); setFeedback("");
     processing.current = true; setBusy(true);
     try {
-      if (!await onSave(pending)) return;
+      if (!await onSave(pending)) { setError("Could not save the note. Your draft is still open."); return; }
       const next = touchDesktopNote(setDesktopNoteCategory(latestLibrary.current, pending.id, draft.category),
         pending.id, new Date().toISOString());
       const metaSaved = persist(next);
@@ -142,7 +154,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
     if (!saved || processing.current || disabled) return;
     processing.current = true; setBusy(true);
     try {
-      if (!await onRemove(saved.id)) return;
+      if (!await onRemove(saved.id)) { setError("Could not remove the note."); return; }
       persist(removeDesktopNoteMetadata(latestLibrary.current, saved.id));
       setDraft(undefined); setRemoveNote(false); setFeedback("Note deleted.");
     } finally {
@@ -153,7 +165,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
   function commitCategory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!categoryForm || processing.current) return;
-    const id = categoryForm.id ?? crypto.randomUUID();
+    const id = categoryForm.id ?? localNoteId();
     const prior = latestLibrary.current;
     const name = categoryForm.name.trim();
     if (!name) return;
@@ -182,10 +194,16 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
   }
 
   const locked = disabled || busy;
+  const mobile = variant === "mobile";
+  const mobileEditor = mobile && !!draft;
+  function returnToList() {
+    switchEditor(() => { setDraft(undefined); setLeave(undefined); setRemoveNote(false); });
+  }
   return <>
     {heading(() => switchEditor(onBack))}
-    <div className="aw-desktop-notes" aria-label="Notes workspace">
-      <div className="aw-desktop-notes-index">
+    <div className={mobile ? "aw-desktop-notes aw-mobile-notes" : "aw-desktop-notes"}
+      data-view={mobileEditor ? "editor" : "list"} aria-label="Notes workspace">
+      <div className="aw-desktop-notes-index" hidden={mobileEditor}>
         <DesktopNotesSidebar notes={rows} categories={library.categories} scope={scope} selectedNoteId={draft?.id ?? null}
           onScopeChange={next => { setScope(next); setCategoryForm(undefined); setRemoveCategory(false); }}
           onSelectNote={chooseNote} onNewNote={newNote} onNewCategory={() => { setRemoveCategory(false); setCategoryForm({ name: "" }); }} />
@@ -207,8 +225,14 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
           <IconAction label="Confirm remove category" icon="check" onClick={deleteCategory} />
           <IconAction label="Keep category" icon="close" onClick={() => setRemoveCategory(false)} />
         </div>}
+        {mobile && !draft && feedback && <p role="status">{feedback}</p>}
+        {mobile && !draft && error && <p role="alert">{error}</p>}
       </div>
-      <GlassSurface className="aw-desktop-note-sheet" material="content" aria-label="Note editor" role="region">
+      <GlassSurface className="aw-desktop-note-sheet" material="content" aria-label="Note editor" role="region" hidden={mobile && !draft}>
+        {mobileEditor && <div className="aw-mobile-note-back">
+          <IconAction label="Back to notes" icon="back" onClick={returnToList} />
+          <span>Notes</span>
+        </div>}
         {feedback && <p role="status" className="aw-desktop-note-feedback">{feedback}</p>}
         {error && <p role="alert" className="aw-desktop-note-feedback">{error}</p>}
         {leave && <div className="aw-note-confirm" role="group" aria-label="Unsaved note">
@@ -230,10 +254,11 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
             <label className="aw-note-title-field">Title<input ref={title} value={draft.name} maxLength={titleLimit}
               placeholder="Untitled note" disabled={locked} onChange={event => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
             <div className="ae-actions" role="group" aria-label="Note actions">
-              <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !noteTitle(draft)} />
-              {saved && <NoteIconButton label="Select note for collection" icon="folder" disabled={locked}
+              <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !noteTitle(draft, titleLimit)} />
+              {saved && onCollectionSelect && <NoteIconButton label="Select note for collection" icon="folder" disabled={locked}
                 aria-pressed={collectionSelection.includes(saved.id)}
                 onClick={() => onCollectionSelect(saved.id, !collectionSelection.includes(saved.id))} />}
+              {saved && !dirty && noteActions?.(saved)}
               {saved && <NoteIconButton label="Delete note" icon="trash" disabled={locked} onClick={() => setRemoveNote(true)} />}
             </div>
           </div>
@@ -246,6 +271,8 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
           <WorkspaceNoteEditor value={draft.text} format={draft.format} disabled={locked}
             onChange={text => setDraft(current => current ? { ...current, text } : current)}
             onFormat={format => setDraft(current => current ? { ...current, format } : current)} />
+          {attachments?.(draft.attachmentIds, attachmentIds =>
+            setDraft(current => current ? { ...current, attachmentIds } : current), locked)}
           {removeNote && <div className="aw-note-confirm" role="group" aria-label="Delete note confirmation">
             <p>Delete this note from your workspace?</p>
             <NoteIconButton label="Confirm delete note" icon="trash" disabled={locked} onClick={() => void deleteNote()} />

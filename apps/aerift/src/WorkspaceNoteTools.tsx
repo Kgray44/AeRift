@@ -21,6 +21,7 @@ const noteIcons = {
   save: <path d="M4 4h13l3 3v13H4V4Zm4 0v6h8V4M8 20v-6h8v6" />,
   trash: <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
+  send: <path d="m3 10 18-7-7 18-3-8Zm8 3L21 3" />,
   folder: <path d="M3 7h6l2 2h10v11H3V7Z" />,
 } as const;
 

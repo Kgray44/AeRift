@@ -45,3 +45,16 @@
 }
 @media(prefers-reduced-motion:reduce){.ae-theme .aw-note-tool{transition:none;transform:none!important}}
 .ae-theme[data-motion="reduce"] .aw-note-tool{transition:none;transform:none!important}
+.aw-mobile-notes{display:block;min-block-size:0}
+.aw-desktop-notes [hidden]{display:none}
+.aw-mobile-notes:not([data-view="editor"]) .aw-desktop-notes-index{max-block-size:none;overflow:visible}
+.aw-mobile-notes .ae-notes-sidebar{min-block-size:min(62vh,32rem)}
+.aw-mobile-notes[data-view="editor"] .aw-desktop-note-sheet{
+  min-block-size:calc(100dvh - 6.5rem);padding:.72rem .85rem 1.1rem
+}
+.ios-module-moment:has(.aw-mobile-notes[data-view="editor"])>.aw-category-heading{display:none}
+.ae-shell:has(.aw-mobile-notes[data-view="editor"]) .ios-dock{display:none}
+.aw-mobile-note-back{display:flex;align-items:center;gap:.4rem;margin-block-end:.45rem;color:var(--ae-muted)}
+.aw-mobile-notes .aw-desktop-note-top{align-items:center;gap:.3rem}
+.aw-mobile-notes .aw-note-title-field{flex:1 1 8rem}
+.aw-mobile-notes .aw-desktop-note-form .aw-note-editor textarea{min-block-size:45dvh;min-inline-size:0}
