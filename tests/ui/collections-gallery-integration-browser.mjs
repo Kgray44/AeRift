@@ -56,7 +56,7 @@ export async function verifyCollectionsGallery(browser, root) {
     assert.equal(await send.isDisabled(), true, "saved clipboard members do not bypass sharing settings");
     assert.equal(await page.getByText("Synthetic private clipboard marker", { exact: true }).count(), 0);
     assert.deepEqual(await page.evaluate(() => window.collectionCalls), []);
-    await button(page, "Control Center").click();
+    await button(dock, "Settings").click();
     const settings = page.getByRole("dialog", { name: "Control Center" });
     await settings.getByRole("checkbox", { name: "Clipboard", exact: true }).check();
     await settings.getByRole("checkbox", { name: "Allow sending clipboard copies through Rift" }).check();

@@ -1,0 +1,39 @@
+.ae-shell .ae-experience-nav.ae-compact-header {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+}
+.ae-compact-header-mark {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+  display: grid;
+  place-items: center;
+}
+.ae-compact-header-mark img { display: block; inline-size: clamp(2.35rem, 5vw, 3rem); block-size: clamp(2.35rem, 5vw, 3rem); object-fit: contain; }
+.ae-compact-header-status {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: clamp(.35rem, 2vw, .65rem);
+  color: var(--ae-muted);
+}
+.ae-compact-header-status > span { display: grid; place-items: center; min-inline-size: 1.3rem; min-block-size: 1.75rem; }
+.ae-compact-header-status > [data-tone="active"] { color: var(--ae-success); }
+.ae-compact-header-status > [data-tone="waiting"] { color: var(--ae-warning); }
+.ae-shell .aerift-desktop-header.ae-compact-header > .ae-orbit-conventional {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.aerift-ios .ae-compact-header { padding-inline: max(.5rem, env(safe-area-inset-left)) max(.5rem, env(safe-area-inset-right)); }
+@media (max-width: 22rem) {
+  .aerift-ios .af-liquid-dock[data-compact-dock="true"] {
+    --ae-dock-inset-start: max(.12rem, env(safe-area-inset-left));
+    --ae-dock-inset-end: max(.12rem, env(safe-area-inset-right));
+    inset-inline: var(--ae-dock-inset-start) var(--ae-dock-inset-end);
+    inline-size: calc(100% - var(--ae-dock-inset-start) - var(--ae-dock-inset-end));
+    box-sizing: border-box;
+    padding-inline: .07rem;
+  }
+}
