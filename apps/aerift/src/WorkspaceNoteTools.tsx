@@ -1,5 +1,5 @@
-import { Button } from "@aerift/ui";
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { Button, GlassSurface } from "@aerift/ui";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { insertNoteMarkup, noteInlineParts, notePreviewLines, noteWordCount, workspaceNoteLimit,
   type NoteFilter, type NoteFormat, type NoteMarkup } from "./workspace-note-tools";
 
@@ -57,8 +57,8 @@ function InlineNote({ text, markdown }: { text: string; markdown: boolean }) {
     part.kind === "code" ? <code key={index}>{part.text}</code> : part.text) : text}</>;
 }
 
-export function WorkspaceNoteEditor({ value, format, disabled, onChange, onFormat }: {
-  value: string; format: NoteFormat; disabled?: boolean;
+export function WorkspaceNoteEditor({ value, format, disabled, onChange, onFormat, actions }: {
+  value: string; format: NoteFormat; disabled?: boolean; actions?: ReactNode;
   onChange: (value: string) => void; onFormat: (format: NoteFormat) => void;
 }) {
   const field = useId();
@@ -85,26 +85,29 @@ export function WorkspaceNoteEditor({ value, format, disabled, onChange, onForma
   }
 
   return <div className="aw-note-editor">
-    <div className="ae-actions aw-note-toolbar" role="group" aria-label="Note formatting">
-      {tools.map(([id, label]) => <NoteIconButton key={id} type="button" icon={id} label={label} disabled={disabled || preview}
-        onPointerDown={event => event.preventDefault()} onClick={() => apply(id)} />)}
-      <NoteIconButton type="button" icon={preview ? "edit" : "preview"} label={preview ? "Return to editor" : "Preview"}
-        aria-pressed={preview} onClick={() => setPreview(current => !current)} />
+    <div className="aw-note-canvas">
+      <GlassSurface className="ae-actions aw-note-toolbar aw-note-palette" material="control" role="group" aria-label="Note tools">
+        {tools.map(([id, label]) => <NoteIconButton key={id} type="button" icon={id} label={label} disabled={disabled || preview}
+          onPointerDown={event => event.preventDefault()} onClick={() => apply(id)} />)}
+        <NoteIconButton type="button" icon={preview ? "edit" : "preview"} label={preview ? "Return to editor" : "Preview"}
+          aria-pressed={preview} onClick={() => setPreview(current => !current)} />
+        <NoteIconButton type="button" icon="markdown" label="Markdown" disabled={disabled} aria-pressed={format === "markdown"}
+          onClick={() => onFormat(format === "markdown" ? "plain" : "markdown")} />
+        {actions}
+      </GlassSurface>
+      <label htmlFor={field} className="ae-note-sidebar-visually-hidden" hidden={preview}>Note</label>
+      <textarea ref={input} id={field} name="text" value={value} rows={8} required={!preview} aria-label="Note"
+        maxLength={workspaceNoteLimit} hidden={preview} disabled={disabled}
+        onChange={event => onChange(event.currentTarget.value)} />
+      {preview && <section className="ae-surface aw-note-preview" data-material="content" aria-label="Note preview">
+        {value ? notePreviewLines(value, format === "markdown").map(({ kind, text }, index) =>
+          kind === "heading" ? <h4 key={index}>{text}</h4> : kind === "code" ? <code key={index}>{text}</code> :
+          <p key={index} data-note-line={kind}>{kind === "done" ? "✓ " : kind === "task" ? "☐ " : kind === "bullet" ? "• " : ""}<InlineNote text={text || "\u00a0"} markdown={format === "markdown"} /></p>)
+          : <p>Nothing to preview yet.</p>}
+      </section>}
     </div>
-    <label htmlFor={field} hidden={preview}>Note</label>
-    <textarea ref={input} id={field} name="text" value={value} rows={8} required={!preview} aria-label="Note"
-      maxLength={workspaceNoteLimit} hidden={preview} disabled={disabled}
-      onChange={event => onChange(event.currentTarget.value)} />
-    {preview && <section className="ae-surface aw-note-preview" data-material="content" aria-label="Note preview">
-      {value ? notePreviewLines(value, format === "markdown").map(({ kind, text }, index) =>
-        kind === "heading" ? <h4 key={index}>{text}</h4> : kind === "code" ? <code key={index}>{text}</code> :
-        <p key={index} data-note-line={kind}>{kind === "done" ? "✓ " : kind === "task" ? "☐ " : kind === "bullet" ? "• " : ""}<InlineNote text={text || "\u00a0"} markdown={format === "markdown"} /></p>)
-        : <p>Nothing to preview yet.</p>}
-    </section>}
     <div className="aw-note-footer">
       {format === "markdown" && <input type="hidden" name="noteMarkdown" value="yes" />}
-      <NoteIconButton type="button" icon="markdown" label="Markdown" disabled={disabled} aria-pressed={format === "markdown"}
-        onClick={() => onFormat(format === "markdown" ? "plain" : "markdown")} />
       <small>{noteWordCount(value)} words · {value.length.toLocaleString()} / {workspaceNoteLimit.toLocaleString()} characters</small>
     </div>
   </div>;

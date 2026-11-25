@@ -15,6 +15,19 @@ const snapped = async (page, name) => {
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
+const assertFloatingNoteTools = async (editor, required) => {
+  const canvas = editor.locator(".aw-note-canvas");
+  const tools = canvas.getByRole("group", { name: "Note tools", exact: true });
+  for (const name of required) {
+    const icon = button(tools, name);
+    await icon.waitFor();
+    assert.equal(await icon.innerText(), "", name + " is an icon inside the writing surface");
+  }
+  const [bar, body] = await Promise.all([tools.boundingBox(),
+    canvas.getByRole("textbox", { name: "Note", exact: true }).boundingBox()]);
+  assert.ok(bar && body && bar.y + bar.height <= body.y + 1, "floating tools do not cover the first line");
+  assert.ok(await tools.evaluate(el => el.scrollWidth <= el.clientWidth + 1), "all icons fit without horizontal scrolling");
+};
 const open = async (page, name) => {
   await button(page, name).click();
   assert.equal(await focused(heading(page, name)), true, "focus lands in opened workspace");
@@ -93,6 +106,7 @@ try {
     return field && field.getBoundingClientRect().height >= 350;
   }, null, { timeout: 3000 });
   assert.ok((await largeEditor.boundingBox()).height >= 350, "Notes keeps a large desktop editor");
+  await assertFloatingNoteTools(editor, ["Bold", "Markdown", "Preview", "Save note", "Delete note"]);
   await snapped(desktop, "desktop-notes-sidebar-editor");
   await sidebar.getByRole("searchbox", { name: "Search notes" }).fill("unrelated");
   await sidebar.getByText("No notes match this search.").waitFor();
@@ -237,6 +251,7 @@ try {
     await snapped(page, platform + "-notes-list");
     await mobileNotes.getByRole("button", { name: /Weekend plan/ }).click();
     await mobileEditor.getByRole("textbox", { name: "Note", exact: true }).waitFor();
+    await assertFloatingNoteTools(mobileEditor, ["Bold", "Markdown", "Preview", "Save note", "Delete note"]);
     await snapped(page, platform + "-notes-full-editor");
     await button(mobileEditor, "Back to notes").click();
     await back(page, "Notes");

@@ -28,10 +28,30 @@
 .aw-desktop-note-empty{min-block-size:min(58vh,32rem);display:grid;place-content:center;justify-items:center;text-align:center;gap:.3rem}
 .aw-desktop-note-empty h4,.aw-desktop-note-empty p{margin:0}
 .aw-desktop-note-feedback{margin:.15rem 0 .55rem}
-.aw-desktop-note-form .aw-note-editor{flex:1;grid-template-rows:auto auto minmax(18rem,1fr) auto;gap:.44rem}
+.aw-desktop-note-form .aw-note-editor{flex:1;grid-template-rows:minmax(0,1fr) auto;gap:.44rem}
 .ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea,.aw-desktop-note-form .aw-note-preview{min-block-size:clamp(22rem,44vh,42rem)}
 .ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea{padding:1.05rem 1.16rem;line-height:1.62;resize:vertical}
-.aw-desktop-note-form .aw-note-toolbar{gap:.3rem;padding:.35rem .08rem}
+.aw-note-canvas{
+  position:relative;isolation:isolate;display:grid;grid-template-rows:auto minmax(0,1fr);
+  gap:.35rem;min-inline-size:0;padding:clamp(.42rem,1.2vw,.75rem);
+  border:1px solid var(--ae-control-edge);border-radius:1.2rem;
+  background:color-mix(in srgb,var(--ae-field) 28%,transparent);
+}
+.ae-theme .aw-note-canvas .aw-note-palette{
+  display:flex;flex-wrap:wrap;align-items:center;justify-self:start;align-self:start;
+  gap:.2rem;max-inline-size:100%;min-inline-size:0;box-sizing:border-box;
+  position:relative;z-index:1;padding:.24rem;border-radius:1rem;
+  box-shadow:0 .4rem 1rem rgb(5 13 30 / .16);
+}
+.ae-theme .aw-note-canvas .aw-note-tool{
+  flex:none;inline-size:2.75rem;block-size:2.75rem;min-inline-size:2.75rem;
+  min-block-size:2.75rem;padding:0;border-radius:.72rem;
+}
+.ae-theme .aw-note-canvas .aw-note-tool[aria-pressed="true"]{
+  color:var(--ae-accent);border-color:var(--ae-accent);
+}
+.aw-note-canvas .aw-note-preview{overflow-wrap:anywhere;min-inline-size:0}
+.aw-note-footer{justify-content:flex-end}
 .ae-theme .aw-note-tool{transition:transform var(--ae-fast,160ms) ease,background-color var(--ae-fast,160ms) ease,border-color var(--ae-fast,160ms) ease}
 @media(hover:hover){.ae-theme .aw-note-tool:not(:disabled):hover{transform:translateY(-2px);border-color:var(--ae-accent)}}
 .ae-theme .aw-note-tool:not(:disabled):active{transform:scale(var(--ae-press-scale,.96))}

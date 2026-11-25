@@ -253,14 +253,6 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
           <div className="aw-desktop-note-top">
             <label className="aw-note-title-field">Title<input ref={title} value={draft.name} maxLength={titleLimit}
               placeholder="Untitled note" disabled={locked} onChange={event => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
-            <div className="ae-actions" role="group" aria-label="Note actions">
-              <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !draft.text.trim()} />
-              {saved && onCollectionSelect && <NoteIconButton label="Select note for collection" icon="folder" disabled={locked}
-                aria-pressed={collectionSelection.includes(saved.id)}
-                onClick={() => onCollectionSelect(saved.id, !collectionSelection.includes(saved.id))} />}
-              {saved && !dirty && noteActions?.(saved)}
-              {saved && <NoteIconButton label="Delete note" icon="trash" disabled={locked} onClick={() => setRemoveNote(true)} />}
-            </div>
           </div>
           <label className="aw-note-category-select"><SpatialIcon name="folder" size={17} />Category
             <select value={draft.category ?? ""} disabled={locked} onChange={event => setDraft({ ...draft, category: event.currentTarget.value || null })}>
@@ -270,7 +262,14 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
           </label>
           <WorkspaceNoteEditor value={draft.text} format={draft.format} disabled={locked}
             onChange={text => setDraft(current => current ? { ...current, text } : current)}
-            onFormat={format => setDraft(current => current ? { ...current, format } : current)} />
+            onFormat={format => setDraft(current => current ? { ...current, format } : current)} actions={<>
+              <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !draft.text.trim()} />
+              {saved && onCollectionSelect && <NoteIconButton label="Select note for collection" icon="folder" disabled={locked}
+                aria-pressed={collectionSelection.includes(saved.id)}
+                onClick={() => onCollectionSelect(saved.id, !collectionSelection.includes(saved.id))} />}
+              {saved && !dirty && noteActions?.(saved)}
+              {saved && <NoteIconButton label="Delete note" icon="trash" disabled={locked} onClick={() => setRemoveNote(true)} />}
+            </>} />
           {attachments?.(draft.attachmentIds, attachmentIds =>
             setDraft(current => current ? { ...current, attachmentIds } : current), locked)}
           {removeNote && <div className="aw-note-confirm" role="group" aria-label="Delete note confirmation">

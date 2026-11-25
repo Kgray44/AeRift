@@ -18,3 +18,10 @@ test("formatting and preview are icons with names, not a row of text", () => {
   assert.match(shared, /<svg\b[^>]*aria-hidden=/s);
   assert.doesNotMatch(shared, />\{label\}<\/Button>/);
 });
+
+test("editing and note actions share the same floating Glass bar above the writing field", () => {
+  const shared = read("WorkspaceNoteTools.tsx");
+  const notes = read("windows/DesktopNotesWorkspace.tsx");
+  assert.match(shared, /className="aw-note-canvas"[^]*<GlassSurface[^>]*aw-note-toolbar[^]*label="Markdown"[^]*\{actions\}[^]*<textarea/);
+  assert.match(notes, /<WorkspaceNoteEditor[^]*actions=\{<>[^]*label="Save note"[^]*label="Delete note"/);
+});
