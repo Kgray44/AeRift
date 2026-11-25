@@ -43,6 +43,8 @@ jobs:
           npm ci
           for script in apps/android/*.sh; do bash -n "$script"; done
           python3 apps/android/test-stage-host.py
+          python3 apps/android/test-photo-picker-ui.py
+          node --check apps/android/emulator-photo-observer.mjs
           python3 scripts/branding/test-app-icons.py
           source_root=apps/aerift/src-tauri/src/platform/android/android/src
           work="$(mktemp -d "$RUNNER_TEMP/aerift-camera-clock.XXXXXX")"
@@ -63,7 +65,9 @@ jobs:
           bash apps/android/verify-package.sh "${apks[0]}"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "${apks[0]}"
           printf 'APK_PATH=%s\n' "${apks[0]}" >> "$GITHUB_ENV"
-      - name: Install and test synthetic Files selection in the SDK emulator
+      - name: Install and test synthetic Files and Photos in the SDK emulator
+        env:
+          AERIFT_SMOKE_PHOTOS: "1"
         run: |
           sdkmanager --sdk_root="$ANDROID_HOME" --install emulator "system-images;android-36;google_apis;x86_64"
           if [[ -e /dev/kvm && ! -w /dev/kvm ]]; then
