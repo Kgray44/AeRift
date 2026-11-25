@@ -11,12 +11,14 @@ use crate::{
 };
 
 const STORE_NAME: &str = "remote-trust-v1.dpapi";
+const WAN_STORE_NAME: &str = "remote-wan-trust-v1.dpapi";
 const MAX_REMOTE_PEERS: usize = 64;
 
 pub(crate) struct PrivateRemoteProfile {
     pub(crate) identity: WindowsIdentity,
     pub(crate) trust: ProtectedRemoteTrust,
     wan_seed: ProtectedWanSeed,
+    wan_trust: ProtectedRemoteTrust,
     _exclusive_profile: File,
 }
 
@@ -36,6 +38,15 @@ impl PrivateRemoteProfile {
         aerift_peers::load_wan_endpoint_seed(&self.wan_seed, owner.id())
     }
 
+    /// No transport, receiver or trust-store read. Profile lock remains held
+    /// by self for the protected initialization and public derivation.
+    #[cfg(feature = "private-remote-wan-host")]
+    pub(crate) fn offline_wan_card(&self) -> Result<String, TransferError> {
+        let identity = Identity::load_or_create(&self.identity)?.id();
+        let seed = aerift_peers::load_wan_endpoint_seed(&self.wan_seed, identity)?;
+        Ok(aerift_remote_wan::DeviceCard::derive_offline(identity, seed)?.public_text())
+    }
+
     /// Future optional host integration consumes this exact profile, not an
     /// externally chosen seed or independently opened profile directory.
     #[allow(dead_code)]
@@ -44,7 +55,7 @@ impl PrivateRemoteProfile {
     ) -> Result<(Identity, ProtectedRemoteTrust, [u8; 32], File), TransferError> {
         let identity = Identity::load_or_create(&self.identity)?;
         let seed = aerift_peers::load_wan_endpoint_seed(&self.wan_seed, identity.id())?;
-        Ok((identity, self.trust, seed, self._exclusive_profile))
+        Ok((identity, self.wan_trust, seed, self._exclusive_profile))
     }
 
     pub(crate) fn open(root: &Path) -> Result<Self, TransferError> {
@@ -59,6 +70,12 @@ impl PrivateRemoteProfile {
             identity: WindowsIdentity::new(&root),
             trust: ProtectedRemoteTrust {
                 file: ProtectedFile::new(&root, STORE_NAME),
+                scope: Scope::Remote,
+                mutation: Mutex::new(()),
+            },
+            wan_trust: ProtectedRemoteTrust {
+                file: ProtectedFile::new(&root, WAN_STORE_NAME),
+                scope: Scope::WanQualification,
                 mutation: Mutex::new(()),
             },
             wan_seed: ProtectedWanSeed(ProtectedFile::new(&root, "remote-wan-endpoint-v1.dpapi")),
@@ -85,6 +102,7 @@ impl aerift_peers::SecretStore for ProtectedWanSeed {
 
 pub(crate) struct ProtectedRemoteTrust {
     file: ProtectedFile,
+    scope: Scope,
     mutation: Mutex<()>,
 }
 
@@ -96,10 +114,11 @@ struct Envelope {
     devices: Vec<Device>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Scope {
     Remote,
+    WanQualification,
 }
 
 impl ProtectedRemoteTrust {
@@ -108,7 +127,10 @@ impl ProtectedRemoteTrust {
             return Ok(Vec::new());
         };
         let envelope: Envelope = serde_json::from_slice(&bytes).map_err(storage_failed)?;
-        if envelope.version != 1 || !valid_snapshot(&envelope.devices) {
+        if envelope.version != 1
+            || envelope.scope != self.scope
+            || !valid_snapshot(&envelope.devices)
+        {
             return Err(ErrorCode::StorageFailed.into());
         }
         Ok(envelope.devices)
@@ -124,7 +146,7 @@ impl ProtectedRemoteTrust {
         devices.sort_by_key(|device| device.id.to_string());
         let data = serde_json::to_vec(&Envelope {
             version: 1,
-            scope: Scope::Remote,
+            scope: self.scope,
             devices,
         })
         .map_err(storage_failed)?;
@@ -238,6 +260,26 @@ mod tests {
         profile.trust.remove_remote(device.id).unwrap();
         assert!(profile.trust.load_remote().unwrap().is_empty());
         assert_eq!(nearby.load().unwrap(), [device]);
+    }
+
+    #[test]
+    fn wan_qualification_grants_cannot_cross_into_the_vpn_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = PrivateRemoteProfile::open(root.path()).unwrap();
+        let device = Device {
+            id: PeerId::from_tls_leaf(b"isolated synthetic witness"),
+            name: "Trusted tester".into(),
+            platform: Platform::Windows,
+        };
+        profile.wan_trust.put_remote(&device).unwrap();
+        assert!(profile.trust.load_remote().unwrap().is_empty());
+        assert_eq!(profile.wan_trust.load_remote().unwrap(), [device]);
+        std::fs::copy(
+            root.path().join(WAN_STORE_NAME),
+            root.path().join(STORE_NAME),
+        )
+        .unwrap();
+        assert!(profile.trust.load_remote().is_err());
     }
 
     #[test]

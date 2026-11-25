@@ -1,10 +1,10 @@
 //! Native app-host seam. No default service, Wry bridge, discovery, or VPN.
-use std::{fs::File, io, path::Path, sync::Arc, time::Duration};
+use std::{fs::File, io, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
 use aerift_peers::{Device, PendingPairing, RemotePeerNode, RemoteRoute};
 use aerift_transfer::{ErrorCode, IncomingTransfer, PeerId, Status, TransferError, TransferKey};
 use tokio::{
-    sync::watch,
+    sync::{Mutex, watch},
     task::{JoinHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
@@ -26,6 +26,38 @@ impl OperatorRelay {
             return Err(io::ErrorKind::InvalidInput.into());
         }
         Ok(Self(relay))
+    }
+}
+
+/// One direct route supplied by the operator out of band for a private pilot.
+/// Neither the invitation nor the renderer can supply or change socket addresses.
+#[derive(Clone, Copy)]
+pub struct OperatorDirect {
+    bind: SocketAddr,
+    peer: EndpointId,
+    address: SocketAddr,
+}
+
+impl OperatorDirect {
+    pub fn from_operator_config(bind: &str, peer: &str, address: &str) -> io::Result<Self> {
+        let invalid = || io::Error::from(io::ErrorKind::InvalidInput);
+        let bind: SocketAddr = bind.parse().map_err(|_| invalid())?;
+        let peer: EndpointId = peer.parse().map_err(|_| invalid())?;
+        let address: SocketAddr = address.parse().map_err(|_| invalid())?;
+        if bind.port() == 0
+            || bind.ip().is_multicast()
+            || bind.is_ipv4() != address.is_ipv4()
+            || address.ip().is_loopback() != bind.ip().is_loopback()
+        {
+            return Err(invalid());
+        }
+        // Reuse the transport's address validation, with no relay.
+        WanRoute::new(peer, &[address], None)?;
+        Ok(Self {
+            bind,
+            peer,
+            address,
+        })
     }
 }
 
@@ -55,6 +87,7 @@ struct Session {
     node: Arc<RemotePeerNode>,
     endpoint: Arc<WanEndpoint>,
     stop: CancellationToken,
+    direct: Option<OperatorDirect>,
 }
 impl Session {
     fn check_running(&self) -> Result<(), TransferError> {
@@ -70,12 +103,21 @@ impl Session {
         self.node.stop_receiving();
     }
 
+    fn check_target(&self, id: EndpointId) -> Result<(), TransferError> {
+        if self.direct.is_some_and(|direct| direct.peer != id) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Ok(())
+    }
+
     fn route(&self, bytes: [u8; 32]) -> Result<Route, TransferError> {
         let id = EndpointId::from_bytes(&bytes).map_err(|_| ErrorCode::InvalidRequest)?;
-        let peer = self
-            .endpoint
-            .configured_route(id, &[])
-            .map_err(|_| ErrorCode::PeerUnavailable)?;
+        self.check_target(id)?;
+        let peer = match self.direct {
+            Some(direct) => self.endpoint.configured_route(id, &[direct.address]),
+            None => self.endpoint.configured_route(id, &[]),
+        }
+        .map_err(|_| ErrorCode::PeerUnavailable)?;
         Ok(Route {
             endpoint: self.endpoint.clone(),
             peer,
@@ -88,7 +130,7 @@ impl Session {
 /// Neither resource may concurrently be shared with the Nearby or VPN host.
 pub struct WanSession {
     session: Arc<Session>,
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WanSession {
@@ -111,16 +153,60 @@ impl WanSession {
         endpoint: WanEndpoint,
         profile_lock: File,
     ) -> Self {
+        Self::spawn_bound(node, endpoint, profile_lock, None)
+    }
+
+    pub async fn start_direct(
+        node: RemotePeerNode,
+        protected_seed: [u8; 32],
+        direct: OperatorDirect,
+        profile_lock: File,
+    ) -> io::Result<Self> {
+        if protected_seed == [0; 32] {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let key = SecretKey::from_bytes(&protected_seed);
+        if key.public() == direct.peer {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let endpoint = WanEndpoint::bind(key, Some(direct.bind), None).await?;
+        Ok(Self::spawn_bound(
+            Arc::new(node),
+            endpoint,
+            profile_lock,
+            Some(direct),
+        ))
+    }
+
+    fn spawn_bound(
+        node: Arc<RemotePeerNode>,
+        endpoint: WanEndpoint,
+        profile_lock: File,
+        direct: Option<OperatorDirect>,
+    ) -> Self {
         let session = Arc::new(Session {
             node,
             endpoint: Arc::new(endpoint),
             stop: CancellationToken::new(),
+            direct,
         });
         let worker = tokio::spawn(serve(session.clone(), profile_lock));
         Self {
             session,
-            worker: Some(worker),
+            worker: Mutex::new(Some(worker)),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_bound_direct(
+        node: Arc<RemotePeerNode>,
+        endpoint: WanEndpoint,
+        profile_lock: File,
+        direct: OperatorDirect,
+    ) -> Self {
+        assert!(endpoint.relay.is_none());
+        assert!(endpoint.bound_addresses().contains(&direct.bind));
+        Self::spawn_bound(node, endpoint, profile_lock, Some(direct))
     }
 
     pub fn card(&self) -> DeviceCard {
@@ -132,6 +218,7 @@ impl WanSession {
 
     pub fn invite(&self, target: DeviceCard) -> Result<String, TransferError> {
         self.session.check_running()?;
+        self.session.check_target(target.endpoint)?;
         self.session.node.create_wan_invitation(
             target.identity,
             *self.card().endpoint.as_bytes(),
@@ -154,6 +241,85 @@ impl WanSession {
     ) -> Result<(), TransferError> {
         self.session.check_running()?;
         self.session.node.confirm_pairing(request.id, approve)
+    }
+
+    pub fn connected_devices(&self) -> Vec<Device> {
+        self.session
+            .node
+            .trusted_devices()
+            .into_iter()
+            .filter(|device| self.session.node.wan_active_endpoint(device.id).is_ok())
+            .collect()
+    }
+
+    pub async fn redeem_verified_card(
+        &self,
+        code: &str,
+        verified: DeviceCard,
+    ) -> Result<Device, TransferError> {
+        self.session.check_running()?;
+        self.session.check_target(verified.endpoint)?;
+        let issuer = *verified.endpoint.as_bytes();
+        self.session
+            .node
+            .redeem_wan_invitation(
+                code,
+                verified.identity,
+                *self.card().endpoint.as_bytes(),
+                |binding| {
+                    if binding.issuer_endpoint_key() != issuer {
+                        return Err(ErrorCode::PeerUntrusted.into());
+                    }
+                    self.session.route(issuer)
+                },
+            )
+            .await
+    }
+
+    pub async fn send_selected_file(
+        &self,
+        peer: PeerId,
+        selected: std::path::PathBuf,
+    ) -> Result<Status, TransferError> {
+        use aerift_transfer::ambient::{Candidate, CaptureContext, CaptureLimits, freeze_guarded};
+        self.session.check_running()?;
+        let key = self.session.node.wan_active_endpoint(peer)?;
+        let route = self.session.route(key)?;
+        let sender =
+            self.session
+                .node
+                .sender_wan(route, peer, key, DECISION_TIMEOUT, UPLOAD_TIMEOUT)?;
+        let stop = self.session.stop.clone();
+        let capture = tokio::task::spawn_blocking(move || {
+            if !ordinary_file(&selected) {
+                return Err(ErrorCode::InvalidRequest.into());
+            }
+            freeze_guarded(
+                CaptureContext {
+                    explicit_selection: vec![Candidate::path(selected)],
+                    ..Default::default()
+                },
+                CaptureLimits {
+                    entries: 1,
+                    depth: 1,
+                    inline_bytes: 0,
+                    total_bytes: 64 * 1024 * 1024,
+                },
+                || !stop.is_cancelled(),
+            )
+            .map(Arc::new)
+            .map_err(|_| TransferError::from(ErrorCode::InvalidRequest))
+        })
+        .await
+        .map_err(|_| ErrorCode::InternalError)??;
+        sender
+            .send_frozen_file_with_id(
+                uuid::Uuid::new_v4(),
+                capture,
+                self.session.stop.clone(),
+                |_, _| {},
+            )
+            .await
     }
 
     pub async fn redeem(
@@ -215,10 +381,13 @@ impl WanSession {
     }
 
     /// An explicit awaited stop is required before starting another host.
-    pub async fn stop(mut self) -> io::Result<()> {
+    pub async fn stop(&self) -> io::Result<()> {
         self.session.close_authority();
-        if let Some(worker) = self.worker.take() {
-            worker.await.map_err(io::Error::other)?;
+        let mut lock = self.worker.lock().await;
+        if let Some(worker) = lock.as_mut() {
+            let result = worker.await.map_err(io::Error::other);
+            *lock = None;
+            result?;
         }
         Ok(())
     }
@@ -228,6 +397,30 @@ impl Drop for WanSession {
     fn drop(&mut self) {
         self.session.close_authority();
     }
+}
+
+fn ordinary_file(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if !path.is_absolute()
+            || !matches!(path.components().next(), Some(Component::Prefix(prefix))
+                if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+        {
+            return false;
+        }
+    }
+    std::fs::symlink_metadata(path).is_ok_and(|meta| {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const REPARSE_POINT: u32 = 0x400;
+            if meta.file_attributes() & REPARSE_POINT != 0 {
+                return false;
+            }
+        }
+        meta.is_file() && !meta.file_type().is_symlink()
+    })
 }
 
 async fn serve(session: Arc<Session>, _profile_lock: File) {
@@ -250,7 +443,8 @@ async fn serve(session: Arc<Session>, _profile_lock: File) {
             biased;
             _ = session.stop.cancelled() => break,
             result = session.endpoint.accept_with(|peer| {
-                session.node.permits_wan_endpoint(*peer.as_bytes())
+                session.check_target(peer).is_ok()
+                    && session.node.permits_wan_endpoint(*peer.as_bytes())
             }) => result,
         };
         match arrival {

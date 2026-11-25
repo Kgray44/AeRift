@@ -45,10 +45,13 @@ dependencies = [
  "iroh-relay",
  "rcgen",
  "ring",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]

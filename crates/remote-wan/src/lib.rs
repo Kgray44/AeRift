@@ -15,11 +15,13 @@ use std::{
 
 use iroh::{
     Endpoint, EndpointAddr, RelayMode,
-    endpoint::{Connection, RecvStream, SendStream, presets},
+    endpoint::{Connection, PortmapperConfig, RecvStream, SendStream, presets},
 };
 pub use iroh::{EndpointId, RelayUrl, SecretKey};
 mod native_host;
-pub use native_host::{DeviceCard, OperatorRelay, WanSession};
+mod qualification;
+pub use native_host::{DeviceCard, OperatorDirect, OperatorRelay, WanSession};
+pub use qualification::{QualificationAction, QualificationController, QualificationReply};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const ALPN: &[u8] = b"aerift/remote/opaque-tls/1";
@@ -199,6 +201,8 @@ fn make_builder(
     let mode = relay.map_or(RelayMode::Disabled, |url| RelayMode::custom([url.clone()]));
     let mut builder = Endpoint::builder(presets::Minimal)
         .clear_address_lookup()
+        // Keep QUIC hole punching and HTTPS fallback without modifying a router.
+        .portmapper_config(PortmapperConfig::Disabled)
         .relay_mode(mode)
         .secret_key(secret)
         .alpns(vec![ALPN.to_vec()]);

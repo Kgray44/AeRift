@@ -5,6 +5,30 @@ privately, choose a file, and wait for their explicit acceptance. The UI does no
 ask for a VPN, address, port, or router change. The private-VPN route remains an
 optional separate fallback and is not evidence of this outcome.
 
+## Current pilot: direct only
+
+The opt-in Windows preview accepts no relay configuration. Its trusted build
+inputs select one local UDP bind address and one peer endpoint key and UDP
+address. Those values must be exchanged privately and supplied to separate
+test builds by the operator; never attach the artifacts publicly or put
+addresses in an invitation, public directory, CLI, or webview. Missing or
+invalid inputs fail before opening the preview profile. Existing offline
+device-card mode still works with those inputs absent. The preview uses a
+separate protected profile; no VPN, automatic port mapping, or router
+reconfiguration is part of the pilot.
+
+The transport authenticates the one configured endpoint key and separately
+requires the existing signed invitation, pinned inner TLS, explicit approvals,
+and integrity checks. An independently reachable UDP route in each direction
+is required by this bidirectional test build; it does not yet negotiate
+addresses, cross arbitrary NATs, or fall back to another transport. Never
+change a user or work network's firewall to turn a blocked test into a pass.
+An automated direct UDP loopback test covers the transfer contract only;
+separate-uplink evidence still requires actual permitted reachable endpoints.
+
+The historical relay design and tests below describe earlier candidates.
+They do not authorize relay provisioning or apply to current live preview startup.
+
 ## What this slice supplies
 
 The existing standalone Iroh transport already carries opaque pinned Remote TLS
@@ -137,3 +161,192 @@ Tauri, qualify an exact reviewed lock and Windows build, implement trust
 preserving native invoke and UI flow with the immutable approved relay,
 and verify deployment, and the direct and relay tests above. No default,
 relay deployment or feature toggle is registered by this seam.
+
+### Initial Windows Tauri qualification entry (startup-only evidence)
+
+The separate Windows `private_remote_wan_host` example requires Cargo feature
+`private-remote-wan-host`, exactly one qualified-start flag, and an immutable
+relay URL supplied by the trusted build. Missing or invalid build configuration
+fails before opening the existing app-local profile. The feature is not a
+default, the normal app has no call site, and the example creates no WebView,
+Tauri commands, pairing entry point or product UI. It only starts and joins
+the transport under an authorized qualification configuration. It cannot
+transfer a file by itself because it does not expose pairing controls; the
+standalone session fixture remains the consent and transfer entry proof.
+Do not run this source candidate with a real profile or a reachable relay
+without separate authorization.
+
+The example uses the same AeRift app-local exclusive lock as Nearby and VPN
+Remote, consumes current-user DPAPI protected host parts, and checks that the
+profile and new private receive directory are directories and not reparse
+points. Any console input or EOF is a local stop request, never configuration
+or pairing data. A single shutdown owner awaits `WanSession::stop` before
+exiting; it does not print relay addresses, codes, paths, or raw errors. This is
+a normal-exit design, not a guarantee for an OS kill or crash. The approved
+environment, Windows runtime, and exact route endpoints must be qualified
+before use. Do not compile an invitation, token or credential as a build input.
+
+The isolated lock was generated using `cargo update --workspace --offline`,
+not a broad dependency refresh. Review against a saved baseline lock with
+`python scripts/check-windows-wan-qualification-lock.py before.lock after.lock`.
+The script verifies and inventories exact package name/version/source/checksum
+identities and canonical dependency edges. The observed transition is 543 to
+677 lock entries; all 543 old package identities and semantic edges remain.
+The new entries are the local WAN package plus 133 checksum-pinned crates.io
+entries. Application lock SHA-256:
+`31a37f7697513a6b0c1da9a5d883e9bb53159f5862e07b7412808bf004c95aa3`.
+Feature unification adds edges to some existing packages; preserving versions
+does not exempt those edges from dependency review.
+
+Checks run locally:
+
+- Standalone Rust tests for the explicit flag and concurrent exit-owner
+  state machine passed. Standalone host relay and peers suites above still
+  cover transfers, not the native Windows event loop.
+- Locked, offline, Windows-target manifest metadata with `--no-deps` parsed
+  successfully. A full locked, offline Windows-target `cargo check` of the
+  feature/example stopped before compiling at uncached `ipconfig v0.3.4`.
+  The Windows example is therefore not yet natively compile-qualified.
+
+For the first approved native build, obtain the required cached Windows
+dependency closure by the ordinary approved CI route, review the locked
+feature tree with and without the optional feature, and run the existing
+advisory/license/source checks on the delta and new edges. Confirm the usual
+Windows build has no startup, invoke, capability or relay changes. Compile and
+test the feature and example on the same commit, with no configured service
+first and an isolated, reviewed qualification configuration only later.
+Verify wrong flag and active existing profile fail before networking, no WebView
+exists, native DPAPI and exclusive lock gates pass, and an explicit normal
+exit joins and permits the profile to reopen. Separate the eventual installed
+transfer, independent uplink and operator deployment acceptance.
+
+### Windows private preview transfer flow (next exact candidate)
+
+The previous #103 gate proved compilation of the startup-only optional
+example without starting it. This successor gives that same opt-in example
+a separate local document and one typed, exact-origin, window-scoped
+command. It does not change normal React startup or package assets. Qualification
+assets replace the context's ordinary assets only inside the example; the
+document loads only its embedded CSS and script. There is no external browser
+navigation, relay override, global discovery, account signup or exported UI state.
+
+Both participants share a device card privately and verify it using a trusted
+channel. One creates an invitation targeted to the recipient's two identities.
+The recipient pastes the original sender’s verified card and invitation text;
+the endpoint key as well as the device fingerprint must match the signed
+invitation. The sender separately approves the pending device, then either
+side may use **Choose & send file**. The receiving side must explicitly
+accept or decline. No token file is required. Code is transient, cleared
+from fields after submission, cancellation, expiry or document close; users
+who choose Copy are responsible for any Windows clipboard history.
+
+The command receives only typed card/control metadata: no pathname, address,
+or relay config fields. The attached native picker supplies one local regular
+file, frozen under the shared transport's source-integrity path, with a 64 MiB
+qualification cap. Publication remains receiver-verified. Incoming file
+paths stay native. Use the
+`%LOCALAPPDATA%\com.kgamazing44.aerift.wanpreview\RemoteWanQualificationReceived`
+folder in File Explorer after verified delivery. Peer grants use a separate
+current-user DPAPI file and discriminant from VPN Remote. Reopening the
+preview requires fresh pairing to re-establish the in-memory routes.
+
+The automated wire journey runs real pinned Iroh/HTTPS relay connections on
+loopback, with synthetic native pickup and explicit recipient decisions. It
+moves a file in each direction, rejects a mismatching card before pairing,
+tests a decline that leaves no published file, and checks no invitations or
+native paths leak into snapshots. The JS component contract test drives
+the same command shapes with a DOM/IPC fixture. The new WebView,
+Windows picker and DPAPI scope test still require fresh exact-revision
+Windows qualification; #103 does not certify these changes. No operator
+service has been configured or qualified, and this is not real WAN evidence.
+
+### Dedicated pilot profile
+
+The opt-in preview and the offline card command now use the same dedicated
+Windows LocalAppData namespace, `com.kgamazing44.aerift.wanpreview`, not
+ordinary AeRift's profile. The preview has a separate app identifier and
+protected identity, endpoint seed, lock and grants. It never migrates or reuses
+production credentials. Treat any pre-isolation pilot cards as stale; regenerate
+both in the dedicated profiles before setting up a pilot allowlist. This is
+profile separation, not authorization to run on an owner machine or use an
+unapproved relay. It does not move LocalAppData off the OS drive.
+
+### Offline device cards for a restricted two-device pilot
+
+An operator can collect the two public endpoint identities for a private relay
+allowlist **before either device connects to the relay**. In an approved,
+disposable Windows test profile, build the existing gated example without a
+configured relay, and run it with exactly:
+
+```powershell
+private_remote_wan_host.exe --show-wan-device-card-offline
+```
+
+The only successful output is the canonical public device card. The other
+participant and the relay operator do not need a seed, TLS private key,
+invitation, path, or address. Share the card only through the approved private
+channel; the app never sends the card itself. Normal AeRift, Nearby, VPN Remote
+and the ordinary installer have no invocation for this mode.
+
+The mode uses the Windows LocalAppData known folder and the dedicated pilot
+identifier, failing on an unexpected drive or reparse ancestor rather than
+accepting a supplied path. It holds the pilot profile's exclusive native lock
+through public derivation and printing. A
+fresh profile may create only its directory, session lock, and the existing
+current-user DPAPI identity and endpoint seed files. It does not construct
+a Tauri app, start a transport, read relay policy, create the receive
+directory, use a trust grant, or write a new trust record. Running another
+WAN preview against that pilot profile must prevent the offline command.
+
+Native qualification without owning a publicly reachable server: run
+`cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-host --lib offline_wan_card_uses_only_protected_identity_and_lock`
+on isolated Windows CI with the relay variable unset. That test uses a
+synthetic disposable directory and checks stable public output, lock
+contention, scope and the exact created-file inventory. A separately approved
+isolated no-network launch test can also capture stdout and confirm one
+public card and no relay/WebView startup. This gate is separate from approved
+relay configuration and independent-uplink transfer.
+
+### Disposable native Windows WebView bootstrap smoke (manual gate)
+
+The ignored Windows unit-test target
+`windows_wan_preview_smoke_without_transport` runs the actual Wry document,
+embedded stylesheet/script, exact window and navigation scope, and
+`private_wan_action` bridge in a disposable Windows profile. The synthetic
+controller and observer command compile only with both Rust's `cfg(test)` and
+the separate opt-in `private-remote-wan-webview-smoke` feature. The ordinary
+`private-remote-wan-host` test executable omits the mock, renderer probe, and
+smoke runtime linkage. Merely marking a test ignored does not remove its imports
+from the Windows loader. There is no CLI fixture flag or production path. The test-only
+controller exposes a real offline DPAPI-derived **public** card for the
+synthetic profile and denies every operation except Snapshot. It creates no
+WAN endpoint, relay, receive folder, staging, trust record, or external URL
+and starts no Iroh networking. The harmless `data:` script can be
+permitted or blocked without either case sending a network request.
+
+Only after separate approval, give a disposable hosted Windows runner its
+normal WebView2 installation and a fresh synthetic user context. Build
+the normal bundled frontend and compile the test while
+`AERIFT_TRUSTED_QUALIFICATION_RELAY` is absent. To type-check the separately
+compiled target without linking or launching it, use
+`cargo check --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-webview-smoke --tests`.
+Leave existing mandatory DPAPI/origin tests on `private-remote-wan-host` only. Stage dependencies first and
+disconnect test execution from external networks; browser startup flags are
+not an egress policy. From that isolated native test lane (GitHub Actions
+provides `GITHUB_ACTIONS=true`):
+
+```powershell
+Remove-Item Env:AERIFT_TRUSTED_QUALIFICATION_RELAY -ErrorAction SilentlyContinue
+$env:AERIFT_DISPOSABLE_WINDOWS_WAN_SMOKE = '1'
+cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-webview-smoke --lib windows_wan_preview_smoke_without_transport -- --ignored --nocapture
+```
+
+Use a bounded job timeout and retain only pass/fail, not the synthetic card,
+WebView data or profile files. The witness checks native Snapshot appears on
+the displayed page, local CSS loaded, CSP denies the `data:` probe,
+unregistered navigation did not replace the document, and the fixture did
+not accept an invitation mutation. The observer requests the normal window
+close, and the test verifies the real exit gate releases its synthetic lock.
+A watchdog exits as failure if the WebView does not report. The test is not
+part of default CI and does not prove a native picker, actual WAN transfers,
+or relay/operator availability. Those remain separately authorized tests.
