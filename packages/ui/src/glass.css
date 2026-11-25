@@ -495,15 +495,16 @@
   position: relative;
   isolation: isolate;
 }
-.ae-theme[data-ae-theme="glass"] .ae-glass-optics {
-  position: absolute;
+.ae-theme[data-ae-theme="glass"] .ae-glass-optics,
+.ae-theme[data-ae-theme="glass"] .ae-glass-atmosphere {
+  position: fixed;
   inset: 0 auto auto 0;
   z-index: -1;
   pointer-events: none;
   display: none;
 }
 .ae-theme[data-ae-theme="glass"] .ae-glass-fallback {
-  position: absolute;
+  position: fixed;
   z-index: -1;
   inset: max(0px, calc((100vh - 102vw) * .44)) 0 auto;
   inline-size: 100%;
@@ -513,7 +514,7 @@
 .ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ae-glass-fallback,
 .ae-theme[data-ae-theme="glass"][data-contrast="increase"] .ae-glass-fallback { display: none; }
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
-  .ae-shell[data-ae-optics="ready"] .ae-glass-optics {
+  .ae-shell[data-ae-optics="ready"] :is(.ae-glass-optics, .ae-glass-atmosphere) {
   display: block;
 }
 
@@ -550,7 +551,7 @@
 }
 /* Restore opaque glass during the frame before JS receives live media changes. */
 @media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
-  .ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ae-glass-optics {
+  .ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] :is(.ae-glass-optics, .ae-glass-atmosphere) {
     display: none;
   }
   .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
@@ -706,4 +707,18 @@
   .ae-button[data-ae-lens="local"][data-variant="primary"] {
   color: var(--ae-text);
   border-color: var(--ae-accent);
+}
+
+/* Keep the same stationary scene under scrolling content. The sampled overlay
+   resumes atomically with new viewport-relative lens geometry after scrolling. */
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"]:not([data-ae-scrolling]) .ae-glass-atmosphere,
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"][data-ae-scrolling] .ae-glass-optics {
+  display: none;
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"][data-ae-scrolling]
+  :is(.ae-panel, .ae-surface, .ae-button, .ae-file-slot, .ae-activity-empty)[data-ae-lens="sampled"] {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--ae-optical-rim) 17%, transparent), transparent 55%),
+    color-mix(in srgb, var(--ae-field) 34%, transparent);
+  border-color: color-mix(in srgb, var(--ae-optical-rim) 44%, transparent);
 }
