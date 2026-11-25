@@ -195,6 +195,11 @@ try {
     await page.getByRole("searchbox", { name: "Search notes" }).fill("lumber");
     await page.getByText("Weekend plan", { exact: true }).waitFor();
     await back(page, "Notes");
+    assert.equal(await button(page, "Clipboard").count(), 0, "Clipboard is not enabled by default");
+    await button(page, "Control Center").click();
+    const controls = page.getByRole("dialog", { name: "Control Center" });
+    await controls.getByRole("checkbox", { name: "Clipboard", exact: true }).check();
+    await button(controls, "Close").click();
     await open(page, "Clipboard");
     await page.getByText("New text pin", { exact: true }).click();
     await page.getByRole("textbox", { name: "Name", exact: true }).fill("Shop address");
