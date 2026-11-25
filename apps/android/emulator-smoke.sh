@@ -137,6 +137,13 @@ printf 'Android API %s: production workspace launched; system Files picker stage
   "$(adb -s "$serial" shell getprop ro.build.version.sdk)"
 
 if [[ "$photos" == 1 ]]; then
+  stage=starting
+  photo_stage() {
+    stage="$1"
+    printf 'Android Photos smoke: %s.\n' "$stage"
+  }
+  trap 'printf "Android Photos smoke failed in %s (line %s).\n" "$stage" "$LINENO" >&2' ERR
+  photo_stage 'verify disposable API 36 and disable radios'
   # A second synthetic-only journey on the same owned emulator. Seed the
   # system MediaStore as shell; no generic URI/path is passed to AeRift.
   [[ "$(adb -s "$serial" shell getprop ro.build.version.sdk)" == 36 ]]
@@ -155,23 +162,59 @@ with open(sys.argv[1], "wb") as image:
                 + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 PY_PNG
   lookup_photos() {
-    adb -s "$serial" shell content query --uri "$collection" --projection '_id:_display_name' \
-      --extra 'android:query-arg-match-pending:i:1' | tr -d '\r'
+    local output error="$tmp/media-query.err" status=0
+    output="$(adb -s "$serial" shell content query --uri "$collection" --projection '_id:_display_name' \
+      "$@" 2>"$error" | tr -d '\r')" || status=$?
+    # AOSP content can report parser/provider failures without a nonzero exit
+    # status. Classify only: never print raw media rows or provider output.
+    local kind=unrecognized
+    if grep -Eq 'SecurityException|Permission Denial' "$error" - <<<"$output"; then
+      kind=permission-denied
+    elif grep -Eq 'Unsupported argument|Unsupported operation|^usage:' "$error" - <<<"$output"; then
+      kind=unsupported-cli
+    elif grep -Eq 'IllegalArgumentException|Exception|Error while accessing provider' "$error" - <<<"$output"; then
+      kind=provider-error
+    elif (( status != 0 )) || [[ -s "$error" ]]; then
+      kind=adb-or-provider-error
+    elif [[ "$output" == 'No result found.' ]]; then
+      printf '%s\n' "$output"; return 0
+    elif [[ "$output" =~ ^Row:[[:space:]] ]]; then
+      printf '%s\n' "$output"; return 0
+    elif [[ -z "$output" ]]; then
+      kind=no-output
+    fi
+    printf 'Android Photos smoke: MediaStore query failed (%s).\n' "$kind" >&2
+    return 1
   }
-  [[ "$(lookup_photos)" == 'No result found.' ]] || {
-    echo 'Refusing Photos smoke: the fresh media collection was not empty.' >&2; exit 1;
-  }
+  photo_stage 'confirm visible MediaStore image inventory is empty'
+  if ! row="$(lookup_photos)"; then exit 1; fi
+  if [[ "$row" != 'No result found.' ]]; then
+    echo 'Refusing Photos smoke: the fresh MediaStore already has visible images.' >&2
+    exit 1
+  fi
+  photo_stage 'confirm MediaStore image inventory including pending is empty'
+  if ! row="$(lookup_photos --extra 'android:query-arg-match-pending:i:1')"; then exit 1; fi
+  if [[ "$row" != 'No result found.' ]]; then
+    echo 'Refusing Photos smoke: the fresh MediaStore already has pending images.' >&2
+    exit 1
+  fi
+  photo_stage 'insert exactly one synthetic pending image'
   adb -s "$serial" shell content insert --uri "$collection" \
     --bind "_display_name:s:$photo_name" --bind mime_type:s:image/png \
-    --bind relative_path:s:Pictures/AeRift-CI/ --bind is_pending:i:1
-  row="$(lookup_photos)"
-  [[ "$row" =~ ^Row:[[:space:]]0[[:space:]]_id=([0-9]+),[[:space:]]_display_name=AeRift-Android-photo-smoke\.png$ ]]
+    --bind relative_path:s:Pictures/AeRift-CI/ --bind is_pending:i:1 >"$tmp/media-insert.out" 2>"$tmp/media-insert.err"
+  if ! row="$(lookup_photos --extra 'android:query-arg-match-pending:i:1')"; then exit 1; fi
+  if ! [[ "$row" =~ ^Row:[[:space:]]0[[:space:]]_id=([0-9]+),[[:space:]]_display_name=AeRift-Android-photo-smoke\.png$ ]]; then
+    echo 'Refusing Photos smoke: insert did not yield exactly the owned synthetic fixture.' >&2
+    exit 1
+  fi
   photo_uri="$collection/${BASH_REMATCH[1]}"
+  photo_stage 'publish and verify fixture bytes'
   adb -s "$serial" shell -T content write --uri "$photo_uri" < "$tmp/$photo_name"
   adb -s "$serial" shell content update --uri "$photo_uri" --bind is_pending:i:0
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-before.png"
   cmp "$tmp/$photo_name" "$tmp/source-before.png"
 
+  photo_stage 'open Photos through AeRift Workspace'
   tap_label 'Workspace'
   tap_label 'Images & Videos'
   tap_label 'Import photos and videos'
@@ -187,28 +230,34 @@ PY_PNG
     done
     echo "System Photos picker did not expose a unique $action action." >&2; return 1
   }
+  photo_stage 'select fixture and explicitly commit through system picker'
   tap_photo_picker photo
   tap_photo_picker commit
+  photo_stage 'verify exact imported fixture and close its preview'
   tap_label "Open $photo_name"
   await_ui 'Close photo' >/dev/null
   tap_label 'Close photo'
 
   # WebView debugging on the existing debug build is observation only. An
   # app-process-owned local socket is forwarded briefly; no remote network.
+  photo_stage 'verify bounded native thumbnail in app WebView'
   process="$(adb -s "$serial" shell pidof "$identity" | tr -d '\r')"
   [[ "$process" =~ ^[0-9]+$ ]]
-  adb -s "$serial" shell dumpsys package "$identity" | grep 'pkgFlags=\[' | grep -q 'DEBUGGABLE'
+  package_dump="$(adb -s "$serial" shell dumpsys package "$identity")"
+  grep -Eq 'pkgFlags=\[[^]]*[[:space:]]DEBUGGABLE([[:space:]]|])' <<<"$package_dump"
   photo_forward="$(adb -s "$serial" forward tcp:0 "localabstract:webview_devtools_remote_$process" | tr -d '\r')"
   [[ "$photo_forward" =~ ^[0-9]+$ ]]
   node apps/android/emulator-photo-observer.mjs "$photo_forward" imported
 
   tap_label "Open $photo_name"
+  photo_stage 'confirm removal then verify original MediaStore bytes'
   tap_label 'Remove imported copy'
   await_ui 'Confirm remove imported copy' >/dev/null
   tap_label 'Confirm remove imported copy'
   node apps/android/emulator-photo-observer.mjs "$photo_forward" removed
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-after.png"
   cmp "$tmp/$photo_name" "$tmp/source-after.png"
+  trap 'printf "Android emulator smoke failed at line %s.\n" "$LINENO" >&2' ERR
   printf 'Android API 36: native Photo Picker imported synthetic PNG; bounded 256x160 thumbnail decoded; user-confirmed copy removal preserved original bytes.\n'
 fi
 
