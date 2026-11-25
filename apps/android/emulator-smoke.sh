@@ -240,14 +240,51 @@ PY_PNG
   await_ui 'Everything in its place.' >/dev/null
   photo_stage 'open Photos through AeRift Workspace'
   tap_label 'Images & Videos'
+  # Bind every AX capture and coordinate action to the actual app Activity
+  # being resumed AND its window being focused. Require exact component
+  # identity (normalize the short and full names Android can report).
+  gallery_focused() {
+    local activity window
+    activity="$(timeout 5s adb -s "$serial" shell dumpsys activity activities)" || return 1
+    window="$(timeout 5s adb -s "$serial" shell dumpsys window displays)" || return 1
+    awk -v expected="$component" '
+      function full(value, parts) {
+        if (split(value, parts, "/") != 2) return ""
+        return parts[1] "/" (substr(parts[2], 1, 1) == "." ? parts[1] : "") parts[2]
+      }
+      /^[[:space:]]*ResumedActivity:[[:space:]]+ActivityRecord/ {
+        for (i = 1; i <= NF; i++) if ($i == "u0") {
+          live++; if (full($(i+1)) == full(expected)) app++
+        }
+      }
+      /^[[:space:]]*mCurrentFocus=Window/ {
+        for (i = 1; i <= NF; i++) if ($i == "u0") {
+          value = $(i+1); sub(/}$/, "", value)
+          focused++; if (full(value) == full(expected)) owned++
+        }
+      }
+      END { exit !(live == 1 && app == 1 && focused == 1 && owned == 1) }
+    ' <<<"$activity"$'\n'"$window"
+  }
   gallery_ax() { python3 apps/android/photo_gallery_ui.py "$tmp/ui.xml" "$identity" "$1"; }
+  gallery_capture() {
+    rm -f "$tmp/ui.xml"
+    gallery_focused && dump_ui && gallery_focused || { rm -f "$tmp/ui.xml"; return 1; }
+  }
+  gallery_report() {
+    if ! gallery_focused; then
+      echo 'Owned Photos Activity and focused window identity not jointly confirmed.' >&2
+    else
+      gallery_capture && gallery_ax report || true
+    fi
+  }
   confirmed=0
   for ((attempt = 0; attempt < 6; attempt++)); do
-    if dump_ui && gallery_ax confirm; then confirmed=1; break; fi
+    if gallery_capture && gallery_ax confirm; then confirmed=1; break; fi
     sleep 1
   done
   if [[ "$confirmed" != 1 ]]; then
-    gallery_ax report || true
+    gallery_report
     echo 'Android Photos smoke did not confirm the owned Photos category.' >&2; exit 1
   fi
   # The selected Rift object and system picker card precede the imported
@@ -255,14 +292,14 @@ PY_PNG
   photo_stage 'seek the imported gallery action on the owned Photos category'
   found=0
   for ((attempt = 0; attempt < 7; attempt++)); do
-    if dump_ui; then
-      if hit="$(gallery_ax target)"; then
+    if gallery_capture; then
+      if hit="$(gallery_ax target)" && gallery_focused; then
         read -r x y <<<"$hit"
         adb -s "$serial" shell input tap "$x" "$y"
         found=1
         break
       fi
-      if (( attempt >= 1 && attempt < 6 )) && hit="$(gallery_ax scroll)"; then
+      if (( attempt >= 1 && attempt < 6 )) && hit="$(gallery_ax scroll)" && gallery_focused; then
         read -r x1 y1 x2 y2 <<<"$hit"
         adb -s "$serial" shell input swipe "$x1" "$y1" "$x2" "$y2" 350
       fi
@@ -270,7 +307,7 @@ PY_PNG
     sleep 1
   done
   if [[ "$found" != 1 ]]; then
-    gallery_ax report || true
+    gallery_report
     echo 'Android Photos smoke did not find an enabled, unique, owned gallery import action.' >&2; exit 1
   fi
   tap_photo_picker() {

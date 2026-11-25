@@ -30,24 +30,33 @@ def bounds(node):
 
 
 def find(root, owner, action):
-    views = [
-        node for node in root.iter("node")
-        if node.get("class") == "android.webkit.WebView" and node.get("package") == owner and bounds(node)
-    ]
-    if len(views) != 1:
-        if action == "report":
-            print("Owned Photos WebView unavailable or ambiguous.")
-        return False
-    view = views[0]
-    nodes = [node for node in view.iter("node") if node.get("package") == owner]
-    left, top, right, bottom = bounds(view)
+    # UiAutomator may flatten WebView ancestry or provide multiple provider
+    # nodes. Ownership is instead checked by the caller immediately before
+    # this dump and input, and independently by each node's package.
+    nodes = [node for node in root.iter("node") if node.get("package") == owner]
     if action == "report":
+        print("Owned Photos AX node count:", len(nodes))
+        for cls in ("android.webkit.WebView", "android.widget.FrameLayout",
+                    "android.view.View", "android.widget.Button", "android.widget.TextView"):
+            print("Owned Photos AX class:", cls,
+                  sum(node.get("class") == cls for node in nodes))
         for label in EXPECTED:
             matches = [node for node in nodes if label in labels(node)]
             if matches:
                 print("Owned Photos AX:", label, "count", len(matches),
-                      "enabled", sum(node.get("enabled") == "true" for node in matches))
+                      "enabled", sum(node.get("enabled") == "true" for node in matches),
+                      "clickable", sum(node.get("clickable") == "true" for node in matches))
         return True
+    # The largest owned rectangle can be reported more than once (e.g. a
+    # decor wrapper and a WebView). Refuse conflicting full-size rectangles.
+    rectangles = {area for node in nodes if (area := bounds(node))}
+    def area_size(rect):
+        return (rect[2] - rect[0]) * (rect[3] - rect[1])
+    largest = max((area_size(rect) for rect in rectangles), default=0)
+    frames = [rect for rect in rectangles if area_size(rect) == largest]
+    if len(frames) != 1:
+        return False
+    left, top, right, bottom = frames[0]
     if action == "confirm":
         return any(EXPECTED[0] in labels(node) and bounds(node) for node in nodes)
     if action == "target":
