@@ -3,7 +3,7 @@
 use std::{
     sync::{atomic::{AtomicBool, Ordering}, Arc},
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use aerift_transfer::ambient_camera::{
@@ -14,13 +14,16 @@ use super::{ambient_context, camera_policy, AmbientRuntime, CaptureAnchor, Camer
 use super::explorer_gesture::{ExplorerCameraContext, ExplorerGesture};
 use crate::ambient_media_foundation::{NativeCameraGrant, NativeIndicator, WindowsCameraProvider};
 
-const POLL: Duration = Duration::from_millis(20);
+mod notifications;
+
+const POLL_MILLISECONDS: u32 = 20;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExplorerCameraEnd {
     Stopped,
     ContextLost,
     AlreadyOwned,
+    NotificationUnavailable,
     Unavailable(CameraIssue),
 }
 
@@ -83,6 +86,11 @@ impl AmbientRuntime {
         let stop_worker = stop.clone();
         let worker = thread::Builder::new().name("aerift-explorer-camera-owner".into()).spawn(move || {
             let _exclusive = exclusive;
+            let events = match notifications::Notifications::subscribe() {
+                Ok(events) => events,
+                Err(()) => return ExplorerCameraEnd::NotificationUnavailable,
+            };
+            let invalidated = events.latch();
             let grant = Arc::new(grant);
             let provider = WindowsCameraProvider::with_shared_grant(model, indicator, grant.clone());
             let camera = match CameraSupervisor::spawn(provider) {
@@ -96,12 +104,18 @@ impl AmbientRuntime {
             if let Err(issue) = grant.allowed() {
                 return ExplorerCameraEnd::Unavailable(issue);
             }
+            if events.drain().is_err() {
+                return ExplorerCameraEnd::ContextLost;
+            }
             camera.configure(policy, !stop_worker.load(Ordering::Acquire));
             let mut gesture = ExplorerGesture::default();
             let mut context = None;
             let end = loop {
                 if stop_worker.load(Ordering::Acquire) {
                     break ExplorerCameraEnd::Stopped;
+                }
+                if events.drain().is_err() {
+                    break ExplorerCameraEnd::ContextLost;
                 }
                 if let Err(issue) = grant.allowed() {
                     break ExplorerCameraEnd::Unavailable(issue);
@@ -118,7 +132,11 @@ impl AmbientRuntime {
                         if let Some(pickup) = gesture.observe(Some(authority), camera.take_latest(), now) {
                             // This callback may run while Ambient config is locked or
                             // on a hashing worker. No config lock and no owned camera.
+                            if events.drain().is_err() {
+                                break ExplorerCameraEnd::ContextLost;
+                            }
                             let stop = stop_worker.clone();
+                            let invalidated = invalidated.clone();
                             let runtime_weak = Arc::downgrade(&runtime.0);
                             let camera = Arc::downgrade(&camera);
                             let grant = grant.clone();
@@ -126,7 +144,7 @@ impl AmbientRuntime {
                                     let runtime = runtime_weak.upgrade()?;
                                     let camera = camera.upgrade()?;
                                     (live_authority(
-                                        stop.load(Ordering::Acquire),
+                                        stop.load(Ordering::Acquire) || invalidated.load(Ordering::Acquire),
                                         runtime.generation.load(Ordering::Acquire) == origin_epoch,
                                         ambient_context::interactive_session(),
                                         grant.allowed().is_ok(),
@@ -140,7 +158,9 @@ impl AmbientRuntime {
                     _ if context.is_some() => break ExplorerCameraEnd::ContextLost,
                     _ => {}
                 }
-                thread::park_timeout(POLL);
+                if events.wait(POLL_MILLISECONDS).is_err() {
+                    break ExplorerCameraEnd::ContextLost;
+                }
             };
             // Revoke pending capture before the worker waits for sensor teardown.
             stop_worker.store(true, Ordering::Release);
