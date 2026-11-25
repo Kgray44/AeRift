@@ -1,3 +1,7 @@
+#[cfg(all(windows, feature = "workspace-folder-picker-qualification"))]
+#[allow(dead_code)] // Compile qualification only; never registered in the normal shell.
+mod workspace_folder_picker;
+
 #[cfg(any(windows, target_os = "ios", target_os = "android"))]
 mod workspace_link;
 #[cfg(windows)]

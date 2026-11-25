@@ -41,10 +41,15 @@ use windows_sys::{
 
 use crate::model::safe_name;
 
-// Prototype discovery only. Not a production capability or IPC surface.
-#[cfg(test)]
+// The normal app does not export or register these lab-only capabilities.
+#[cfg(any(test, feature = "windows-folder-picker-qualification"))]
 #[path = "windows_directory_page.rs"]
 mod directory_page;
+#[cfg(feature = "windows-folder-picker-qualification")]
+pub use directory_page::{
+    FolderReadEntry as WindowsFolderReadEntry, FolderReadGrant as WindowsFolderReadGrant,
+    FolderReadPage as WindowsFolderReadPage,
+};
 
 const DIRECTORY_ACCESS: u32 = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES;
 

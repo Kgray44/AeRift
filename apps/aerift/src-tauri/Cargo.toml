@@ -16,6 +16,7 @@ name = "aerift"
 path = "src/main.rs"
 
 [features]
+workspace-folder-picker-qualification = ["aerift-transfer/windows-folder-picker-qualification"]
 ambient-native-model-qualification = ["dep:sha2", "windows-sys/Win32_System_LibraryLoader"]
 ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "dep:windows-core"]
 private-remote-host = []

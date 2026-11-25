@@ -1,5 +1,5 @@
-//! Test-only Windows prototype: metadata from an already pinned directory.
-//! No picker UI, path arguments, child opening, content or IPC.
+//! Qualification-only Windows metadata from an already pinned directory.
+//! No path arguments, child opening, content or file authority in a page.
 
 #[path = "windows_directory_page_codec.rs"]
 mod codec;
@@ -72,21 +72,23 @@ impl DirectoryPages {
 
 const GRANT_LIFETIME: std::time::Duration = std::time::Duration::from_secs(300);
 
-#[derive(Debug)]
-struct FolderReadEntry {
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderReadEntry {
     name: String,
     size_bytes: Option<u64>,
 }
 
-#[derive(Debug)]
-struct FolderReadPage {
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderReadPage {
     entries: Vec<FolderReadEntry>,
     next: Option<uuid::Uuid>,
 }
 
 // This candidate receives a trusted, already pinned directory. No path,
 // Win32 handle or file ID can arrive through the request or leave a page.
-struct FolderReadGrant {
+pub struct FolderReadGrant {
     id: uuid::Uuid,
     expected: Option<uuid::Uuid>,
     expires: std::time::Instant,
@@ -94,7 +96,7 @@ struct FolderReadGrant {
 }
 
 impl FolderReadGrant {
-    fn new(root: PinnedDirectory) -> Self {
+    pub fn new(root: PinnedDirectory) -> Self {
         Self {
             id: uuid::Uuid::new_v4(),
             expected: Some(uuid::Uuid::new_v4()),
@@ -103,12 +105,32 @@ impl FolderReadGrant {
         }
     }
 
+    #[cfg(feature = "windows-folder-picker-qualification")]
+    pub fn id(&self) -> uuid::Uuid {
+        self.id
+    }
+
+    #[cfg(feature = "windows-folder-picker-qualification")]
+    pub fn initial_tokens(&self) -> (uuid::Uuid, uuid::Uuid) {
+        (self.id, self.expected.expect("call immediately after new"))
+    }
+
+    #[cfg(feature = "windows-folder-picker-qualification")]
+    pub fn deadline(&self) -> std::time::Instant {
+        self.expires
+    }
+
+    #[cfg(feature = "windows-folder-picker-qualification")]
+    pub fn finished(&self) -> bool {
+        self.pages.is_none()
+    }
+
     fn revoke(&mut self) {
         self.expected = None;
         self.pages = None;
     }
 
-    fn next(&mut self, grant: uuid::Uuid, cursor: uuid::Uuid) -> io::Result<FolderReadPage> {
+    pub fn next(&mut self, grant: uuid::Uuid, cursor: uuid::Uuid) -> io::Result<FolderReadPage> {
         if std::time::Instant::now() >= self.expires {
             self.revoke();
         }
