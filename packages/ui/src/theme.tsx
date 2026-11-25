@@ -92,6 +92,12 @@ function systemAppearance() {
   return window.matchMedia(systemLightQuery).matches ? "light" : "dark";
 }
 
+const AppearanceMotionContext = createContext<Reduction>("system");
+
+export function useAppearanceMotion() {
+  return useContext(AppearanceMotionContext);
+}
+
 export interface ThemeProviderProps {
   children: ReactNode;
   registry?: ReadonlyMap<string, Theme>;
@@ -119,11 +125,13 @@ export function ThemeProvider({
   const style: CSSProperties & ThemeOverrides = { ...selected.overrides, ...overrides };
   return (
     <ThemeContext.Provider value={selected}>
+      <AppearanceMotionContext.Provider value={motion}>
       <div className="ae-theme" data-ae-theme={selected.id} data-scheme={scheme}
         data-appearance={appearance}
         data-contrast={contrast} data-transparency={transparency} data-motion={motion} style={style}>
         {children}
       </div>
+      </AppearanceMotionContext.Provider>
     </ThemeContext.Provider>
   );
 }

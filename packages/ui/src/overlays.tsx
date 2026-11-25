@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { Button } from "./components";
+import { OverlayAccents } from "./OverlayAccents";
 import { SpatialIcon } from "./SpatialScene";
 import { transitionAppearance, type ColorScheme, type Preference, type Reduction } from "./theme";
 
@@ -43,6 +44,7 @@ export function Sheet({ open, title, onClose, children, id, className, closeIcon
       data-material="overlay" aria-labelledby={titleId}
       onClose={event => { if (!event.currentTarget.open) onAfterClose?.(); }}
       onCancel={(event) => { event.preventDefault(); onClose(); }}>
+      <OverlayAccents active={open} kind="sheet" />
       <div className="ae-sheet-grip" aria-hidden="true"
         onPointerDown={event => {
           if (!event.isPrimary || event.button !== 0) return;
@@ -119,6 +121,7 @@ export function Popover({ label, actions }: {
 }) {
   const id = useId();
   const panel = useRef<HTMLDivElement>(null);
+  const [shown, setShown] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   return <div className="ae-menu">
     <Button ref={trigger} popoverTarget={id} onClick={() => {
@@ -137,7 +140,9 @@ export function Popover({ label, actions }: {
       }
     }}>{label}</Button>
     <div id={id} ref={panel} popover="auto" className="ae-popover ae-surface" data-material="overlay"
-      role="group" aria-label={label}>
+      role="group" aria-label={label}
+      onToggle={event => setShown(event.currentTarget.matches(":popover-open"))}>
+      <OverlayAccents active={shown} kind="popover" />
       {actions.map(action => <Button key={action.id} variant="quiet" disabled={action.disabled}
         onClick={() => { panel.current?.hidePopover(); trigger.current?.focus(); action.onSelect(); }}>{action.label}</Button>)}
     </div>

@@ -11,3 +11,7 @@ export { RiftExperience, TransferObject } from "./RiftExperience";
 export { IconAction } from "./IconAction";
 export { TransferIsland } from "./TransferIsland";
 export type { TransferIslandReceipt } from "./transfer-island-metrics";
+export { MotionFeedbackProvider, MotionCardButton, MotionCardAccent, useQuietMotion } from "./MotionAffordance";
+export { MobileRoutePresence } from "./MobileRoutePresence";
+export { MobileDockMotion } from "./MobileDockMotion";
+export { WorkspacePanelMotion, workspacePanelBox, type PanelHandoff } from "./WorkspacePanelMotion";

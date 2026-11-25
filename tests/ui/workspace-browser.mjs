@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReceivedActivity } from "./received-activity-browser.mjs";
+import { verifyWorkspaceReactMotion } from "./workspace-motion-browser.mjs";
 const module = process.env.AERIFT_PLAYWRIGHT_MODULE;
 const { chromium } = await import(module ? pathToFileURL(module).href : "playwright");
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
@@ -54,6 +55,7 @@ const back = async (page, name) => {
   assert.equal(await focused(button(page, name)), true, "focus returns to originating card");
 };
 try {
+  await verifyWorkspaceReactMotion(browser, root, evidence);
   await verifyCollectionsGallery(browser, root);
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
@@ -352,11 +354,75 @@ try {
     await contents.getByText("This collection is empty.").waitFor();
     await back(page, "Collections");
     const settle = async () => {
-      await page.waitForFunction(() => !document.querySelector(".af-dock-bead")?.getAnimations().some(anim => anim.playState === "running"));
+      await page.waitForFunction(() => {
+        const track = document.querySelector(".af-dock-fluid");
+        const active = track?.parentElement?.querySelector('button[aria-current="page"]');
+        if (!track || !active) return false;
+        const { x, width } = track.getBoundingClientRect();
+        const selected = active.getBoundingClientRect();
+        const shape = new DOMMatrixReadOnly(getComputedStyle(track.firstElementChild).transform);
+        return Math.abs(x + width / 2 - selected.x - selected.width / 2) < 0.6 &&
+          Math.abs(shape.a - 1) < 0.002 && Math.abs(shape.d - 1) < 0.002;
+      });
     };
     await settle();
+    // A touch scrub previews the Glass location, but neither its synthetic
+    // trailing click nor a cancellation delivers route activation.
+    const scrub = await dock.evaluate(async nav => {
+      const current = nav.querySelector('button[aria-current="page"]');
+      const lens = nav.querySelector(".af-dock-fluid");
+      const { left, width } = nav.getBoundingClientRect();
+      const start = current.getBoundingClientRect();
+      const x = start.x + start.width / 2;
+      const y = start.y + start.height / 2;
+      const end = x >= left + width / 2 ? left + 8 : left + width - 8;
+      const pointer = (kind, x) => current.dispatchEvent(new PointerEvent(kind, {
+        bubbles: true, pointerId: 21, pointerType: "touch", isPrimary: true, clientX: x, clientY: y,
+      }));
+      const initial = lens.getBoundingClientRect().x;
+      pointer("pointerdown", x);
+      pointer("pointermove", end);
+      const deadline = performance.now() + 370;
+      let visibleMovement = false;
+      while (performance.now() < deadline) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        if (Math.abs(lens.getBoundingClientRect().x - initial) > 6) { visibleMovement = true; break; }
+      }
+      pointer("pointercancel", end);
+      const inactive = [...nav.querySelectorAll("button")].find(button => button !== current);
+      const cancelled = !inactive.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      return { visibleMovement, cancelled, retainedRoute: current.getAttribute("aria-current") === "page" };
+    });
+    assert.deepEqual(scrub, { visibleMovement: true, cancelled: true, retainedRoute: true });
+    await settle();
     const before = await dock.locator(".af-dock-fluid").boundingBox();
-    await dock.getByRole("button", { name: "Rift", exact: true }).click();
+    // Capture actual frames on the same synchronous fixture interaction so CI
+    // scheduling can't skip the in-flight lens. Transport state remains unchanged.
+    const transit = await dock.evaluate(async nav => {
+      const lens = nav.querySelector(".af-dock-fluid");
+      const buttons = [...nav.querySelectorAll("button")];
+      const destination = buttons.find(node => node.textContent.trim().startsWith("Rift"));
+      const samples = [];
+      const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+      const initial = lens.getBoundingClientRect().x;
+      const last = destination.getBoundingClientRect().x;
+      const start = performance.now();
+      destination.click();
+      while (performance.now() - start < 700) {
+        await frame();
+        const x = lens.getBoundingClientRect().x;
+        const shape = new DOMMatrixReadOnly(getComputedStyle(lens.firstElementChild).transform);
+        samples.push({ x, sx: shape.a, sy: shape.d });
+        if (samples.length > 2 && Math.abs(x - last) < 0.6 &&
+          Math.abs(shape.a - 1) < 0.002 && Math.abs(shape.d - 1) < 0.002) break;
+      }
+      return { initial, last, samples, elapsed: performance.now() - start };
+    });
+    assert.ok(transit.samples.some(({ x }) => x > Math.min(transit.initial, transit.last) + 2 &&
+      x < Math.max(transit.initial, transit.last) - 2), "spring visibly travels between tabs");
+    assert.ok(transit.samples.some(({ sx, sy }) => sx > 1.015 && sx <= 1.141 && sy < 0.99 && sy >= 0.898),
+      "moving Glass stretches and compresses within the recipe bounds");
+    assert.ok(transit.elapsed < 650, "dock settles within the animation watchdog and one slow frame");
     await settle();
     const after = await dock.locator(".af-dock-fluid").boundingBox();
     assert.notEqual(before.x, after.x);
@@ -396,10 +462,11 @@ try {
     assert.equal(await prompt.count(), 0);
     assert.ok(await nearby.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
     await snapped(page, platform + "-devices");
-    await page.emulateMedia({ reducedMotion: "reduce" });
     await dock.getByRole("button", { name: "Home", exact: true }).click();
-    assert.equal(await dock.locator(".af-dock-fluid").evaluate(node => getComputedStyle(node).transitionDuration), "0s");
-    assert.equal(await dock.locator(".af-dock-bead").evaluate(node => node.getAnimations().length), 0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await settle();
+    assert.equal(await dock.locator(".af-dock-fluid").getAttribute("data-dock-quiet"), "true");
+    assert.equal(await dock.locator(".af-dock-bead").evaluate(node => getComputedStyle(node).transform), "none");
     await page.close();
   }
   for (const platform of ["windows", "ios", "android"]) {
