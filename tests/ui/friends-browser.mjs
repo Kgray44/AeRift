@@ -70,7 +70,11 @@ try {
   assert.equal(await phone.getByRole("button", { name: "Friends" }).count(), 0);
   await phone.goto(base + "/mobile.html?friendsFixture=1");
   await phone.getByRole("button", { name: "Devices", exact: true }).click();
-  assert.equal(await phone.getByText("Test phone", { exact: true }).count(), 0);
+  const phoneName = phone.getByText("Test phone", { exact: true });
+  assert.equal(await phone.getByRole("region", { name: "Nearby Devices" }).getByText("Test phone", { exact: true }).count(), 0);
+  assert.equal(await phoneName.count(), 0, "friend device is not mounted in a hidden ordinary picker");
+  await phone.getByRole("button", { name: "Rift", exact: true }).click();
+  assert.equal(await phoneName.count(), 0, "Rift never offers a Friends device via Nearby");
   await phone.getByRole("button", { name: "Friends", exact: true }).click();
   await phone.locator("summary").getByText("Add a friend").click();
   await phone.getByRole("button", { name: "Show my private contact card" }).click();

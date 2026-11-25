@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import type {
   AppPort, AppSnapshot, ErrorCode, FileSelection, PairingInvitation, Platform, Result, Transfer, TransferRequest,
 } from "@aerift/app-contract";
+import { ordinaryDevices } from "@aerift/app-contract/friends";
 import { automaticGestureTarget } from "@aerift/gestures";
 import { Button, GlassSurface, TransferProgress } from "./components";
 import { IconAction } from "./IconAction";
@@ -195,7 +196,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           const transfers = reconcileTransfers(previous?.transfers ?? [], next.transfers);
           const terminal = terminalTransition(previous?.transfers, transfers);
           if (terminal) setAftermath({ id: terminal.id, expiresAt: Date.now() + 2800 });
-          const current = { ...next, transfers };
+          // Keep the ordinary device picker and current transfer intent in the same lane.
+          // Native grants and existing incoming decisions remain independent.
+          const current = { ...next, devices: ordinaryDevices(next.devices, next.friends), transfers };
           session.snapshot = current;
           const pairedNearby = previous?.nearbyPairingIncoming;
           if (pairedNearby && !current.nearbyPairingIncoming
