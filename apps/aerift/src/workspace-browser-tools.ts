@@ -111,3 +111,13 @@ export function recordWorkspaceBrowserLaunch(key: string, address: string, stora
   const next = appendWorkspaceBrowserHistory(history, address);
   return next === history || publish(key, next, storage);
 }
+
+/** Search visible bookmark labels and hostnames, never URL tokens or fragments. */
+export function matchesSavedWorkspaceLink(link: { name: string; url: string }, query: string): boolean {
+  const terms = query.slice(0, 120).trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
+  if (!terms.length) return true;
+  const address = workspaceBrowserDestination(link.url);
+  const title = link.name.toLocaleLowerCase();
+  const host = address ? new URL(address).hostname.toLocaleLowerCase() : "";
+  return terms.every(term => title.includes(term) || host.includes(term));
+}

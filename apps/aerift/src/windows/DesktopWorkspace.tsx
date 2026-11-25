@@ -8,7 +8,7 @@ import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
 import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
-import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
+import { matchesSavedWorkspaceLink, readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
 import { useDesktopContentEnter } from "./desktopContentMotion";
 import { WorkspaceCategoryHeading, WorkspaceLibrary, WorkspaceScene, useWorkspaceLibrary } from "../WorkspaceLibrary";
 import { isWorkspaceDocument, workspaceSections, type WorkspaceSectionId } from "../workspace-categories";
@@ -72,6 +72,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const importInput = useRef<HTMLInputElement>(null);
   useDesktopContentEnter(section?.id, itemsRef);
   const [entries, setEntries] = useState<WorkspaceMetadata[]>();
+  const [savedLinkQuery, setSavedLinkQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>();
@@ -96,7 +97,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     })) : section?.id === "clipboard" ? clipboardTools.browse(categoryItems, ({ object }) => {
       const saved = object.kind === "clipboard" ? byId.get(object.objectId) : undefined;
       return saved?.kind === "text" ? { name: object.name, text: saved.text, format: saved.format } : undefined;
-    }) : categoryItems;
+    }) : current?.id === "browser" ? categoryItems.filter(({ object }) =>
+      object.kind === "url" && matchesSavedWorkspaceLink(object, savedLinkQuery)) : categoryItems;
   const counts = entries && Object.fromEntries(workspaceSections.map(({ id, module }) =>
     [id, entries.filter(({ object }) => inCategory(object, id, module)).length]));
   function openSection(id: WorkspaceSectionId) {
@@ -104,7 +106,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     setPageIndex(0); clipboardTools.reset(); workspace.open(id);
   }
 
-  useEffect(() => { setPageIndex(0); }, [fileTools.query, fileTools.kind, fileTools.sort, clipboardTools.options]);
+  useEffect(() => { setPageIndex(0); }, [fileTools.query, fileTools.kind, fileTools.sort, clipboardTools.options, savedLinkQuery]);
 
   useEffect(() => {
     let disposed = false;
@@ -175,6 +177,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       form.reset();
       if (kind === "collection") { setSelected([]); setEditingCollection(object.id); }
     }
+  }
+
+  async function saveWorkspaceAddress(url: string) {
+    if (entries?.some(({ object }) => object.kind === "url" && object.url === url)) return "existing" as const;
+    return await change(() => [{ object: { ...newObject(new URL(url).hostname), kind: "url", url } }],
+      "Saved to Workspace.") ? "saved" as const : "failed" as const;
   }
 
   async function openWorkspaceLink(url: string, saved = false): Promise<boolean> {
@@ -263,7 +271,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       collectionSelection={selected} onCollectionSelect={select} />}
     {current && section?.id !== "notes" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
-        onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
+        onOpen={openWorkspaceLink} onSave={saveWorkspaceAddress} disabled={disabled}
+        savedSearch={{ value: savedLinkQuery, change: setSavedLinkQuery }} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
         {(current?.id === "files" || current?.id === "photos") &&
           <div className="aerift-workspace-import">
@@ -305,6 +314,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
           kinds={section?.id === "documents" ? [] : current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
       </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
+        {current?.id === "browser" && categoryItems.length > 0 && !visible.length && <p>No saved links match.</p>}
         {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}
         {entries && current && categoryItems.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved {current.id === "photos" ? "media" : "items"} yet</h4>{(current.id === "files" || current.id === "photos") && <p>Use the add button above to import.</p>}</div>}
         {selectedVisible.length > 0 && <div>

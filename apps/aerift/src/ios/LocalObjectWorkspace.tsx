@@ -7,7 +7,7 @@ import { MobileNoteAttachments } from "./MobileNoteAttachments";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
 import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
-import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
+import { matchesSavedWorkspaceLink, readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
 import type { MobileOperations, MobilePlatformCopy } from "./mobile-platform";
 import type { ObservedMediaPort } from "./mobile-media-observer";
 import {
@@ -45,6 +45,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   }, []);
   const [imagePasteSupported, setImagePasteSupported] = useState<boolean>();
   const [title, setTitle] = useState("");
+  const [savedLinkQuery, setSavedLinkQuery] = useState("");
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string>();
   const clipboardTools = useWorkspaceClipboardTools({ copyAllowed: clipboardSharing });
@@ -59,7 +60,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const collections = module === "collections";
   const kind = notes ? "note" : browser ? "url" : clips ? "text" : "collection";
   const entries = objects.filter(item => item.kind === kind);
-  const visibleEntries = clips ? clipboardTools.browse(entries, item => item.kind === "text" ? item : undefined) : entries;
+  const visibleEntries = clips ? clipboardTools.browse(entries, item => item.kind === "text" ? item : undefined) : browser ? entries.filter(item => item.kind === "url" && matchesSavedWorkspaceLink(item, savedLinkQuery)) : entries;
   const selected = entries.find(item => item.id === editing);
   const candidates = objects.filter(item => item.kind !== "collection");
 
@@ -134,6 +135,11 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     }
   }
 
+  async function saveWorkspaceAddress(url: string) {
+    if (objects.some(object => object.kind === "url" && object.url === url)) return "existing" as const;
+    return upsert({ ...newObject(new URL(url).hostname), kind: "url", url }) ? "saved" as const : "failed" as const;
+  }
+
   async function browse(value: string, saved = false): Promise<boolean> {
     if (browsing) return false;
     const url = normalWebUrl(value);
@@ -189,7 +195,8 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       media={media} regions={regions} openRift={openRift} copy={copy} disabled={disabled} />}
   />{feedback && <p role="status">{feedback}</p>}</>;
   return <section className="ae-surface ios-section ios-object-editor aw-focused-surface" data-material="content" aria-label={module}>
-    {browser && <WorkspaceBrowserTools storageKey={browserHistoryKey} onOpen={browse} disabled={browsing}
+    {browser && <WorkspaceBrowserTools storageKey={browserHistoryKey} onOpen={browse} disabled={browsing} onSave={saveWorkspaceAddress}
+      savedSearch={{ value: savedLinkQuery, change: setSavedLinkQuery }}
       labels={{ description: copy.browserTip }} />}
     {clips && <>
       <p>Use the system Paste menu for text. AeRift keeps text only when you pin it.</p>
@@ -223,6 +230,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       onChange={(next, previous) => selected.itemIds.length === previous.length &&
         previous.every((id, index) => id === selected.itemIds[index]) && upsert({ ...selected, itemIds: next })} />}
     {feedback && <p role="status">{feedback}</p>}
+    {browser && entries.length > 0 && !visibleEntries.length && <p>No saved links match.</p>}
     {visibleEntries.length > 0 && <ul className="ios-object-list">
       {visibleEntries.map(object => <li key={object.id} data-ae-route-enter={justAdded === object.id ? "neutral" : undefined}>
         <strong>{object.name}</strong>
