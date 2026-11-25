@@ -118,3 +118,35 @@ mod tests {
         }
     }
 }
+
+// The only admission adapter in this target: the closed, fixed fixture page.
+impl crate::workspace_browser_request_owner::Controller for TrustedViewport {
+    type Layout = ViewportLayout;
+
+    fn address_admitted(address: &str) -> bool { address == crate::workspace_browser_fixture::START }
+
+    fn layout_admitted(layout: Self::Layout) -> bool { layout.safe_rect().is_some() }
+
+    fn apply_layout(&mut self, layout: Self::Layout) -> Result<
+        crate::workspace_browser_request_owner::View, crate::workspace_browser_request_owner::ControllerError,
+    > {
+        use crate::workspace_browser_request_owner::{ControllerError, View};
+        match self.layout(layout).map_err(|_| ControllerError::Unavailable)? {
+            ViewportState::Visible(rect) => Ok(View::Visible {
+                width_px: (rect.right - rect.left) as u32, height_px: (rect.bottom - rect.top) as u32,
+            }),
+            ViewportState::Hidden => Ok(View::Hidden),
+            ViewportState::Closed => Err(ControllerError::Unavailable),
+        }
+    }
+
+    fn navigate(&self, address: &str) -> Result<(), crate::workspace_browser_request_owner::ControllerError> {
+        use crate::workspace_browser_request_owner::ControllerError;
+        TrustedViewport::navigate(self, address).map_err(|error| match error {
+            SandboxError::NotApproved => ControllerError::Denied,
+            _ => ControllerError::Unavailable,
+        })
+    }
+
+    fn close(&mut self) { TrustedViewport::close(self); }
+}
