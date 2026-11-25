@@ -24,6 +24,8 @@ use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATU
 
 use crate::ambient_context::{self, ContextError, ExplorerContext};
 
+#[cfg(all(test, feature = "ambient-media-qualification"))]
+mod explorer_gesture;
 mod nearby_actions;
 
 #[derive(Clone, Serialize)]
