@@ -16,6 +16,7 @@ const MAX_REMOTE_PEERS: usize = 64;
 pub(crate) struct PrivateRemoteProfile {
     pub(crate) identity: WindowsIdentity,
     pub(crate) trust: ProtectedRemoteTrust,
+    wan_seed: ProtectedWanSeed,
     _exclusive_profile: File,
 }
 
@@ -25,6 +26,14 @@ impl PrivateRemoteProfile {
     ) -> Result<(Identity, ProtectedRemoteTrust, File), TransferError> {
         let identity = Identity::load_or_create(&self.identity)?;
         Ok((identity, self.trust, self._exclusive_profile))
+    }
+
+    /// Intentionally not called by today's VPN host or normal app startup.
+    /// Loading is an explicit future WAN startup action under this profile lock.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn wan_endpoint_seed(&self) -> Result<[u8; 32], TransferError> {
+        let owner = Identity::load_or_create(&self.identity)?;
+        aerift_peers::load_wan_endpoint_seed(&self.wan_seed, owner.id())
     }
 
     pub(crate) fn open(root: &Path) -> Result<Self, TransferError> {
@@ -41,8 +50,25 @@ impl PrivateRemoteProfile {
                 file: ProtectedFile::new(&root, STORE_NAME),
                 mutation: Mutex::new(()),
             },
+            wan_seed: ProtectedWanSeed(ProtectedFile::new(&root, "remote-wan-endpoint-v1.dpapi")),
             _exclusive_profile: exclusive_profile,
         })
+    }
+}
+
+// Exact current-user DPAPI, with no plaintext preference fallback.
+struct ProtectedWanSeed(ProtectedFile);
+
+impl aerift_peers::SecretStore for ProtectedWanSeed {
+    fn load(&self) -> Result<Option<Vec<u8>>, TransferError> {
+        self.0.load().map_err(storage_failed)
+    }
+
+    fn initialize(&self, candidate: &[u8]) -> Result<Vec<u8>, TransferError> {
+        if self.0.create_if_absent(candidate).map_err(storage_failed)? {
+            return Ok(candidate.to_vec());
+        }
+        self.load()?.ok_or_else(|| ErrorCode::StorageFailed.into())
     }
 }
 
@@ -201,6 +227,41 @@ mod tests {
         profile.trust.remove_remote(device.id).unwrap();
         assert!(profile.trust.load_remote().unwrap().is_empty());
         assert_eq!(nearby.load().unwrap(), [device]);
+    }
+
+    #[test]
+    fn native_wan_seed_is_protected_profile_bound_and_corruption_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let record = root.path().join("remote-wan-endpoint-v1.dpapi");
+        let seed = {
+            let profile = PrivateRemoteProfile::open(root.path()).unwrap();
+            assert!(!record.exists());
+            let seed = profile.wan_endpoint_seed().unwrap();
+            assert!(lock_profile(root.path()).is_err());
+            seed
+        };
+        let blob = std::fs::read(&record).unwrap();
+        assert!(!blob.windows(seed.len()).any(|window| window == seed));
+        assert_eq!(
+            PrivateRemoteProfile::open(root.path())
+                .unwrap()
+                .wan_endpoint_seed()
+                .unwrap(),
+            seed
+        );
+        let other = tempfile::tempdir().unwrap();
+        let unrelated = PrivateRemoteProfile::open(other.path()).unwrap();
+        let _ = Identity::load_or_create(&unrelated.identity).unwrap();
+        std::fs::write(other.path().join("remote-wan-endpoint-v1.dpapi"), blob).unwrap();
+        assert!(unrelated.wan_endpoint_seed().is_err());
+        let mut corrupted = std::fs::read(&record).unwrap();
+        corrupted.truncate(corrupted.len() / 2);
+        std::fs::write(&record, &corrupted).unwrap();
+        assert!(PrivateRemoteProfile::open(root.path())
+            .unwrap()
+            .wan_endpoint_seed()
+            .is_err());
+        assert_eq!(std::fs::read(&record).unwrap(), corrupted);
     }
 
     #[test]

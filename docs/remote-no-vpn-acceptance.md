@@ -79,3 +79,38 @@ installed app test. The standalone relay loopback suite remains a separate gate.
    independently observed outcomes are required before describing both
    routes as verified. Repeat on each supported platform before claiming
    cross-platform parity.
+
+## Native host lifecycle slice
+
+The Windows profile adapter can explicitly load a stable, dedicated WAN seed
+under the existing exclusive profile lock. It uses current-user DPAPI with
+a distinct record namespace bound to the device certificate fingerprint.
+Corrupt or transplanted protected records fail closed and are not silently
+overwritten. Loading this seed is not part of current app startup. No plaintext
+fallback, default relay, network listener or app command is introduced.
+
+The outer endpoint can choose a route using the one relay already configured
+at host startup; the peer invitation cannot replace that configuration.
+Authorization must be checked after the outer key is authenticated and again
+before dispatching the stream. A pending targeted invite admits only the inner
+pairing request, never payload, and uses the existing monotonic expiration.
+Confirmation and successful redemption bind the authenticated outer keys to
+the corresponding Remote grant for this session. Replacement, rejection,
+expiry, revocation and stop cancel the relevant admissions. Revocation removes
+the key and cancels its sender even if the protected trust mutation reports a
+failure. Known route bindings are intentionally not persisted; ordinary saved
+Remote grants alone do not restore WAN routes. Persisting authenticated route
+bindings and reconciling live grant lifetimes are future work.
+
+The standalone Iroh relay fixture now exercises the signed invite and live
+admission flow, pinned inner TLS, explicit acceptance, digest and revocation
+through a forced HTTPS relay on loopback. Its other tests cover direct local
+transport only. The native DPAPI regression is Windows-only and must run on
+Windows before reporting platform qualification.
+
+Future native app startup must build the Iroh endpoint from the protected seed
+and immutable operator config, run a bounded accept loop using
+`accept_with` and `serve_wan_stream`, expose pairing approval and transfer
+acceptance through existing trusted UI, and close the endpoint plus its
+receiver at session stop. Attaching these hooks does not replace mobile,
+packaged, direct-NAT or two-uplink verification.

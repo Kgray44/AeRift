@@ -168,6 +168,14 @@ jobs:
             Write-Host $_
             $qualificationFailed = $true
           }
+          try {
+            Invoke-QualifiedTests -CargoArgs @('test', '--locked', '--manifest-path', $app,
+              '--lib', 'native_wan_seed_is_protected_profile_bound_and_corruption_fails_closed') -Expected @(
+              'native_wan_seed_is_protected_profile_bound_and_corruption_fails_closed')
+          } catch {
+            Write-Host $_
+            $qualificationFailed = $true
+          }
           if ($qualificationFailed) { throw 'One or more mandatory native fixture groups failed.' }
       - name: Compile the standard Windows app without launching or publishing it
         if: ${{ !cancelled() && (steps.native_private_lanes.outcome == 'success' || steps.native_private_lanes.outcome == 'failure') }}

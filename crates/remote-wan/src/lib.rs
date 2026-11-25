@@ -85,6 +85,18 @@ impl WanEndpoint {
         self.endpoint.bound_sockets()
     }
 
+    /// Construct a route to the authenticated peer key using only the relay
+    /// set locally at bind time. Direct addresses, if supplied by the host,
+    /// must come from a separately authenticated transport exchange.
+    /// This method takes no relay URL and cannot enable a relay after startup.
+    pub fn configured_route(
+        &self,
+        peer: EndpointId,
+        direct: &[SocketAddr],
+    ) -> io::Result<WanRoute> {
+        WanRoute::new(peer, direct, self.relay.clone())
+    }
+
     /// Do not trust an invitation to introduce a new relay. This gate runs
     /// before any network I/O for the route.
     pub async fn open(&self, route: &WanRoute) -> io::Result<WanStream> {
@@ -127,6 +139,15 @@ impl WanEndpoint {
         &self,
         allowed: &HashSet<EndpointId>,
     ) -> io::Result<(EndpointId, WanStream)> {
+        self.accept_with(|peer| allowed.contains(&peer)).await
+    }
+
+    /// Check live host permission after the actual remote endpoint key has
+    /// been authenticated. The host must recheck permission at inner dispatch.
+    pub async fn accept_with(
+        &self,
+        permitted: impl FnOnce(EndpointId) -> bool,
+    ) -> io::Result<(EndpointId, WanStream)> {
         let incoming = self
             .endpoint
             .accept()
@@ -137,7 +158,7 @@ impl WanEndpoint {
                 .await
                 .map_err(|_| io::ErrorKind::ConnectionAborted)?;
             let peer = connection.remote_id();
-            if !allowed.contains(&peer) {
+            if !permitted(peer) {
                 connection.close(0u32.into(), b"");
                 return Err(io::ErrorKind::PermissionDenied.into());
             }
