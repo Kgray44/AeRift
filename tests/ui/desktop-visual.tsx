@@ -23,6 +23,7 @@ const second = { id: "laptop", name: "Travel laptop", paired: true, online: fals
 const file: FileSelection = { selectionId: "visual-fixture", name: "Harbor survey.pdf", sizeBytes: 36812 };
 const motionFixture = query.get("motionFixture") === "1";
 const islandFixture = query.get("islandFixture") === "1";
+const inboxFixture = query.get("inboxFixture") === "1";
 let snapshot: AppSnapshot = { version: 1, devices: state === "empty" ? [] : [first, second], pendingPairing: [],
   transfers: state === "empty" || motionFixture || islandFixture ? [] : [
     { id: "current", deviceId: first.id, direction: "outgoing", state: "transferring", bytesTransferred: 15273, file },
@@ -75,6 +76,18 @@ mockIPC((cmd, args) => {
   if (cmd === "get_receive_folder") return { active: "Downloads", next: null };
   if (cmd === "watch_desktop_ambient") return true;
   if (cmd === "select_app_file") return file;
+  if (inboxFixture && cmd === "list_ambient_inbox") {
+    const { query } = args as { query: string };
+    const entry = { peer: first.id, id: "receipt", name: "Verified survey.pdf", sizeBytes: 14428,
+      requestedDestination: "inbox" };
+    return { entries: !query || entry.name.includes(query) ? [entry] : [], truncated: false };
+  }
+  if (inboxFixture && cmd === "verify_ambient_inbox_entry") {
+    const { peer, id } = args as { peer: string; id: string };
+    if (peer !== first.id || id !== "receipt") throw { code: "invalid_request" };
+    return;
+  }
+  if (inboxFixture && cmd === "save_ambient_inbox_entry") throw { code: "invalid_request" };
   return undefined;
 }, { shouldMockEvents: true });
 

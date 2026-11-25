@@ -136,10 +136,21 @@ document.querySelector('#aerift-desktop-destination')?.textContent === 'Rift' &&
     Invoke-AppExpression $socket ([ref]$id) "document.querySelector('.ae-control-gear').click()" $deadline.Token | Out-Null
     $settings = @'
 document.querySelector('#aerift-desktop-destination')?.textContent === 'Settings' &&
-[...document.querySelectorAll('button')].some(button => button.textContent.includes('Choose receive folder')) &&
-!!document.querySelector('select option[value="full"]')
+!!document.querySelector('[aria-label="Settings categories"] button[aria-pressed="true"]') &&
+!!document.querySelector('#experience-heading')?.closest('section:not([hidden])')?.querySelector('select option[value="full"]')
 '@
-    Wait-AppCondition $socket ([ref]$id) $settings $deadline.Token 'The Settings destination did not render.'
+    Wait-AppCondition $socket ([ref]$id) $settings $deadline.Token 'The Settings General destination did not render.'
+    $settingsCategory = '[aria-label="Settings categories"]'
+    $settingsTransfers = "[...document.querySelectorAll('$settingsCategory button')].find(button => button.getAttribute('title') === 'Transfers')"
+    Invoke-AppExpression $socket ([ref]$id) "($settingsTransfers).click()" $deadline.Token | Out-Null
+    $receiveFolder = @'
+!!document.querySelector('#transfer-settings-heading')?.closest('section:not([hidden])')
+  ?.querySelector('button[aria-label="Choose receive folder"]:not([disabled])')?.getClientRects().length
+'@
+    Wait-AppCondition $socket ([ref]$id) $receiveFolder $deadline.Token 'Settings Transfers did not expose the native receive folder picker.'
+    $settingsGeneral = "[...document.querySelectorAll('$settingsCategory button')].find(button => button.getAttribute('title') === 'General')"
+    Invoke-AppExpression $socket ([ref]$id) "($settingsGeneral).click()" $deadline.Token | Out-Null
+    Wait-AppCondition $socket ([ref]$id) $settings $deadline.Token 'Settings did not return to General.'
 
     $id += 1
     $settingsImage = Invoke-Cdp $socket $id 'Page.captureScreenshot' @{ format = 'png'; fromSurface = $true } $deadline.Token
