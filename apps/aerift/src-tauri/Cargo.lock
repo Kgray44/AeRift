@@ -15,6 +15,7 @@ dependencies = [
  "aerift-peers",
  "aerift-transfer",
  "libc",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -32,9 +33,11 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+ "webview2-com",
  "windows",
  "windows-core",
  "windows-sys 0.61.2",
+ "wry",
 ]
 
 [[package]]
