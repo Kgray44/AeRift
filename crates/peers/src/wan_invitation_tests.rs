@@ -141,16 +141,16 @@ fn invitation_rejects_expired_or_unsigned_changes_before_route_resolution() {
 #[derive(Clone)]
 struct LocalTestRoute {
     receiver: Arc<RemotePeerNode>,
-    sender: PeerId,
+    outer: [u8; 32],
 }
 impl crate::RemoteRoute for LocalTestRoute {
     type Stream = tokio::io::DuplexStream;
     async fn dial(&self) -> Result<Self::Stream, TransferError> {
         let (client, server) = tokio::io::duplex(128 * 1024);
         let receiver = self.receiver.clone();
-        let sender = self.sender;
+        let outer = self.outer;
         tokio::spawn(async move {
-            let _ = receiver.serve_routed_stream(server, sender).await;
+            let _ = receiver.serve_wan_stream(server, outer).await;
         });
         Ok(client)
     }
@@ -171,7 +171,7 @@ async fn signed_wan_entry_uses_pinned_tls_and_explicit_consent_for_round_trip_fi
         let invite = a.create_wan_invitation(b_id, [1; 32], [2; 32]).unwrap();
         let route = LocalTestRoute {
             receiver: a.clone(),
-            sender: b_id,
+            outer: [2; 32],
         };
         let mut pending = a.subscribe_pairing();
         let not_dialed = b
@@ -204,20 +204,26 @@ async fn signed_wan_entry_uses_pinned_tls_and_explicit_consent_for_round_trip_fi
         a.confirm_pairing(request.id, true).unwrap();
         assert_eq!(redeem.await.unwrap().unwrap().id, a_id);
 
-        for (from, to, destination, name) in
-            [(&b, &a, &a_dir, "to-a.bin"), (&a, &b, &b_dir, "to-b.bin")]
-        {
+        assert_eq!(a.wan_admitted_endpoints(), [[2; 32]]);
+        assert_eq!(b.wan_admitted_endpoints(), [[1; 32]]);
+        // Retire only the pending invitation. Confirmed routes survive.
+        a.cancel_invitation();
+        for (from, to, from_key, to_key, destination, name) in [
+            (&b, &a, [2; 32], [1; 32], &a_dir, "to-a.bin"),
+            (&a, &b, [1; 32], [2; 32], &b_dir, "to-b.bin"),
+        ] {
             let payload = name.as_bytes();
             let source = dir.path().join("source");
             std::fs::write(&source, payload).unwrap();
             let mut watch = to.subscribe_transfers();
             let sender = from
-                .sender_via(
+                .sender_wan(
                     LocalTestRoute {
                         receiver: to.clone(),
-                        sender: from.device().id,
+                        outer: from_key,
                     },
                     to.device().id,
+                    to_key,
                     Duration::from_secs(5),
                     Duration::from_secs(5),
                 )
@@ -249,7 +255,62 @@ async fn signed_wan_entry_uses_pinned_tls_and_explicit_consent_for_round_trip_fi
             assert_eq!(send.await.unwrap().state, aerift_transfer::State::Completed);
             assert_eq!(std::fs::read(destination.join(name)).unwrap(), payload);
         }
+        let old = a.wan_route_permit([2; 32]).unwrap();
+        assert!(!old.pairing_only());
+        let (left, right) = tokio::io::duplex(4096);
+        let receiver = a.clone();
+        let admitted = tokio::spawn(async move { receiver.serve_wan_stream(right, [2; 32]).await });
+        tokio::task::yield_now().await;
+        a.revoke(b.device().id).unwrap();
+        assert!(old.is_closed());
+        assert!(admitted.await.unwrap().is_err());
+        drop(left);
+        assert!(a.wan_route_permit([2; 32]).is_err());
+        assert!(!a.wan_admitted_endpoints().contains(&[2; 32]));
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn wan_admission_expires_replaces_and_stops_existing_permits() {
+    let temp = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let host = node(temp.path());
+    let peer = node(other.path()).device().id;
+    host.create_wan_invitation(peer, [1; 32], [2; 32]).unwrap();
+    assert!(host.wan_admitted_endpoints().contains(&[2; 32]));
+    assert!(host.wan_route_permit([3; 32]).is_err());
+    let old = host.wan_route_permit([2; 32]).unwrap();
+    assert_eq!(old.peer(), peer);
+    assert!(old.pairing_only());
+    host.create_wan_invitation(peer, [1; 32], [3; 32]).unwrap();
+    assert!(old.is_closed());
+    assert!(host.wan_route_permit([2; 32]).is_err());
+    let expired = host.wan_route_permit([3; 32]).unwrap();
+    let exact_deadline = expired.deadline().unwrap();
+    assert!(expired.is_closed_at(exact_deadline));
+    let _ = host.revoke(peer);
+    assert!(expired.is_closed());
+    assert!(host.wan_admitted_endpoints().is_empty());
+    host.create_wan_invitation(peer, [1; 32], [4; 32]).unwrap();
+    let stopped = host.wan_route_permit([4; 32]).unwrap();
+    host.stop_wan_routes();
+    assert!(stopped.is_closed());
+    assert!(host.wan_admitted_endpoints().is_empty());
+    assert!(host.create_wan_invitation(peer, [1; 32], [4; 32]).is_err());
+}
+
+#[test]
+fn protected_endpoint_seed_is_stable_and_corrupt_records_fail_closed() {
+    let store = Store::default();
+    let owner = PeerId::from_tls_leaf(b"fixture owner");
+    let another_owner = PeerId::from_tls_leaf(b"other fixture owner");
+    let first = crate::load_wan_endpoint_seed(&store, owner).unwrap();
+    let later = crate::load_wan_endpoint_seed(&store, owner).unwrap();
+    assert_eq!(first, later);
+    assert_ne!(first, [0; 32]);
+    assert!(crate::load_wan_endpoint_seed(&store, another_owner).is_err());
+    *store.0.lock().unwrap() = Some(vec![5; 32]);
+    assert!(crate::load_wan_endpoint_seed(&store, owner).is_err());
 }

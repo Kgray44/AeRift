@@ -52,7 +52,7 @@ try {
   assert.equal(await desktop.getByLabel("Their authorized device").count(), 0);
   assert.equal(await desktop.getByLabel("Their payload address").count(), 0);
   assert.equal(await desktop.getByText("Test phone", { exact: true }).count(), 0);
-  await desktop.getByRole("button", { name: "Choose a file and send offer" }).click();
+  await desktop.getByRole("button", { name: "Choose file and send offer" }).click();
   await desktop.getByText("Waiting for acceptance. No file has been sent.").waitFor();
   assert.equal(await desktop.getByRole("button", { name: "Send accepted file" }).isEnabled(), false);
   await desktop.getByRole("button", { name: "Back to friend details" }).click();

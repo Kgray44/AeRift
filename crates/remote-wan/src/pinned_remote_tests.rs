@@ -98,7 +98,7 @@ async fn forced_private_relay_reuses_remote_pairing_offer_and_verified_digest() 
 }
 
 async fn exercise_pinned_transfer() {
-    let (relay, url, receiver_wan, sender_wan) = tests::private_relay_fixture().await;
+    let (relay, _url, receiver_wan, sender_wan) = tests::private_relay_fixture().await;
     let receiver_wan = Arc::new(receiver_wan);
     let sender_wan = Arc::new(sender_wan);
     let temporary = tempfile::tempdir().unwrap();
@@ -110,15 +110,21 @@ async fn exercise_pinned_transfer() {
     let receiver_id = receiver.device().id;
     let outer_sender = sender_wan.id();
     let dial = RelayDial {
-        route: Arc::new(WanRoute::new(receiver_wan.id(), &[], Some(url)).unwrap()),
+        route: Arc::new(sender_wan.configured_route(receiver_wan.id(), &[]).unwrap()),
         endpoint: sender_wan.clone(),
     };
+    let receiver_key = *receiver_wan.id().as_bytes();
+    let sender_key = *outer_sender.as_bytes();
+    let invitation = receiver
+        .create_wan_invitation(sender_id, receiver_key, sender_key)
+        .unwrap();
 
     assert_eq!(
         sender
-            .sender_via(
+            .sender_wan(
                 dial.clone(),
                 receiver_id,
+                receiver_key,
                 Duration::from_secs(5),
                 Duration::from_secs(5)
             )
@@ -135,7 +141,6 @@ async fn exercise_pinned_transfer() {
         let receiver_wan = receiver_wan.clone();
         let receiver = receiver.clone();
         async move {
-            let allow = HashSet::from([outer_sender]);
             let mut tasks = tokio::task::JoinSet::new();
             loop {
                 // Reap completed handlers before entering accept. The accept
@@ -146,12 +151,16 @@ async fn exercise_pinned_transfer() {
                 tokio::select! {
                     biased;
                     _ = stop.cancelled() => break,
-                    result = receiver_wan.accept(&allow) => {
-                        let (endpoint, stream) = result.unwrap();
+                    result = receiver_wan.accept_with(|key| receiver.permits_wan_endpoint(*key.as_bytes())) => {
+                        let (endpoint, stream) = match result {
+                            Ok(value) => value,
+                            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => continue,
+                            Err(error) => panic!("receiver accept failed: {error}"),
+                        };
                         assert_eq!(endpoint, outer_sender);
                         assert_eq!(stream.selected_path(), Some(PathKind::Relay));
                         let receiver = receiver.clone();
-                        tasks.spawn(async move { receiver.serve_routed_stream(stream, sender_id).await });
+                        tasks.spawn(async move { receiver.serve_wan_stream(stream, *endpoint.as_bytes()).await });
                     }
                 }
             }
@@ -172,12 +181,12 @@ async fn exercise_pinned_transfer() {
     assert!(sender.trusted_devices().is_empty());
     assert!(receiver.subscribe_pairing().borrow().is_none());
 
-    let invitation = receiver.create_invitation(sender_id).unwrap();
     let mut pairing = receiver.subscribe_pairing();
-    // A different inner certificate on an allowed outer route cannot redeem even the correct invite.
     assert!(
         impostor
-            .redeem_via(dial.clone(), &invitation.code)
+            .redeem_wan_invitation::<RelayDial>(&invitation, receiver_id, sender_key, |_| {
+                panic!("unintended recipient cannot choose a route")
+            })
             .await
             .is_err()
     );
@@ -187,7 +196,15 @@ async fn exercise_pinned_transfer() {
     let redeem = tokio::spawn({
         let sender = sender.clone();
         let dial = dial.clone();
-        async move { sender.redeem_via(dial, &invitation.code).await.unwrap() }
+        async move {
+            sender
+                .redeem_wan_invitation(&invitation, receiver_id, sender_key, |binding| {
+                    assert_eq!(binding.issuer_endpoint_key(), receiver_key);
+                    Ok(dial)
+                })
+                .await
+                .unwrap()
+        }
     });
     let request = pairing
         .wait_for(Option::is_some)
@@ -202,14 +219,16 @@ async fn exercise_pinned_transfer() {
     receiver.confirm_pairing(request.id, true).unwrap();
     assert_eq!(redeem.await.unwrap().id, receiver_id);
 
+    receiver.cancel_invitation();
     let payload: Vec<u8> = (0..1_570_013).map(|index| (index % 251) as u8).collect();
     let source = temporary.path().join("source.bin");
     fs::write(&source, &payload).unwrap();
     let mut offers = receiver.subscribe_transfers();
     let offer_sender = sender
-        .sender_via(
+        .sender_wan(
             dial.clone(),
             receiver_id,
+            receiver_key,
             Duration::from_secs(5),
             Duration::from_secs(15),
         )
@@ -248,21 +267,18 @@ async fn exercise_pinned_transfer() {
     );
 
     receiver.revoke(sender_id).unwrap();
-    let sender = sender
-        .sender_via(
-            dial,
-            receiver_id,
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-        )
-        .unwrap();
-    assert_eq!(
+    assert!(!receiver.permits_wan_endpoint(sender_key));
+    sender.revoke(receiver_id).unwrap();
+    assert!(
         sender
-            .send_file(&source, "revoked.bin", CancellationToken::new(), |_, _| {})
-            .await
-            .unwrap_err()
-            .code,
-        ErrorCode::PeerUntrusted
+            .sender_wan(
+                dial,
+                receiver_id,
+                receiver_key,
+                Duration::from_secs(5),
+                Duration::from_secs(5)
+            )
+            .is_err()
     );
     assert!(!destination.join("revoked.bin").exists());
     stop.cancel();

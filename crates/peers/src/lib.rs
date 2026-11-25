@@ -11,6 +11,7 @@ mod remote_folder;
 mod wan_invitation;
 #[cfg(test)]
 mod wan_invitation_tests;
+mod wan_lifecycle;
 
 pub use discovery::{DiscoveredPeer, Discovery, SERVICE_TYPE};
 pub use friends::*;
@@ -23,3 +24,5 @@ pub use remote::{RemotePeerNode, RemoteTrustStore};
 
 pub use remote_folder::RemoteFolderIngress;
 pub use wan_invitation::WanInvitationBinding;
+
+pub use wan_lifecycle::{WanRoutePermit, load_wan_endpoint_seed};
