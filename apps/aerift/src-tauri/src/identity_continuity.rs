@@ -4,6 +4,7 @@ use std::{fs, io, path::Path};
 const DEVICE_BOUND_RECORDS: &[&str] = &[
     "trust.dpapi",
     "remote-trust-v1.dpapi",
+    "remote-wan-endpoint-v1.dpapi",
     "friends-v1/book.dpapi",
     "friends-member-v1/book.dpapi",
 ];

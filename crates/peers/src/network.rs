@@ -174,15 +174,19 @@ impl PeerNode {
         code: RedeemCode,
     ) -> Result<Device, TransferError> {
         let connection = self.endpoint(addresses, code.peer, None)?;
-        self.redeem_over(connection, code).await
+        self.redeem_over(connection, code, None).await
     }
 
     pub(crate) async fn redeem_over(
         &self,
         connection: impl Connector,
         code: RedeemCode,
+        wan_key: Option<[u8; 32]>,
     ) -> Result<Device, TransferError> {
         let admission = self.pairing.begin_outbound(code.peer)?;
+        let wan_stopped = wan_key
+            .map(|key| self.pairing.wan_preflight(code.peer, key))
+            .transpose()?;
         let device = self.pairing.device();
         let request = PairRequest {
             token: code.token,
@@ -190,11 +194,26 @@ impl PeerNode {
             platform: device.platform,
         };
         let request = serde_json::to_vec(&request).map_err(|_| ErrorCode::InternalError)?;
-        let reply = pair_remote(connection, self.lane.pair_route(), request).await?;
+        let exchange = pair_remote(connection, self.lane.pair_route(), request);
+        let reply = if let Some(stopped) = wan_stopped {
+            tokio::select! {
+                biased;
+                _ = stopped.cancelled() => return Err(ErrorCode::PeerUntrusted.into()),
+                _ = admission.cancelled() => return Err(ErrorCode::PeerUntrusted.into()),
+                response = exchange => response?,
+            }
+        } else {
+            exchange.await?
+        };
         if reply.id != code.peer {
             return Err(ErrorCode::PeerUntrusted.into());
         }
-        self.pairing.record_outbound(reply.clone(), &admission)?;
+        if let Some(key) = wan_key {
+            self.pairing
+                .record_wan_outbound(reply.clone(), &admission, key)?;
+        } else {
+            self.pairing.record_outbound(reply.clone(), &admission)?;
+        }
         Ok(reply)
     }
 
@@ -502,6 +521,7 @@ impl PeerNode {
         stream: S,
         expected: PeerId,
         untrusted: &Semaphore,
+        pairing_only: bool,
     ) -> Result<(), TransferError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -515,8 +535,9 @@ impl PeerNode {
             self.pairing.clone(),
             self.receiver.clone(),
             lane,
-            Some(expected),
+            expected,
             untrusted,
+            pairing_only,
         )
         .await
     }
@@ -539,6 +560,15 @@ impl PeerNode {
         } else {
             None
         };
+        self.routed_endpoint_with_lease(route, expected, trust)
+    }
+
+    pub(crate) fn routed_endpoint_with_lease<R: RemoteRoute>(
+        &self,
+        route: R,
+        expected: PeerId,
+        trust: Option<CancellationToken>,
+    ) -> Result<RoutedPinnedEndpoint<R>, TransferError> {
         let mut config = self.identity.client_config(expected)?;
         config.alpn_protocols = vec![Lane::Remote.alpn().to_vec()];
         Ok(RoutedPinnedEndpoint {
@@ -582,8 +612,9 @@ async fn serve_stream<S>(
     pairing: Arc<Pairing>,
     receiver: Arc<Receiver>,
     lane: Lane,
-    expected: Option<PeerId>,
+    expected: PeerId,
     untrusted: &Semaphore,
+    pairing_only: bool,
 ) -> Result<(), TransferError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -601,10 +632,10 @@ where
         .and_then(|chain| chain.first())
         .ok_or(ErrorCode::PeerUntrusted)?;
     let peer = PeerId::from_tls_leaf(leaf.as_ref());
-    if expected.is_some_and(|expected| expected != peer) {
+    if expected != peer {
         return Err(ErrorCode::PeerUntrusted.into());
     }
-    let _untrusted = if pairing.is_trusted(peer) {
+    let _untrusted = if !pairing_only && pairing.is_trusted(peer) {
         None
     } else {
         Some(
@@ -616,7 +647,14 @@ where
     let service = service_fn(|request| {
         let pairing = Arc::clone(&pairing);
         let receiver = Arc::clone(&receiver);
-        async move { Ok::<_, Infallible>(route(request, peer, pairing, receiver, lane).await) }
+        async move {
+            let response = if pairing_only && request.uri().path() != lane.pair_route() {
+                error(ErrorCode::PeerUntrusted.into())
+            } else {
+                route(request, peer, pairing, receiver, lane).await
+            };
+            Ok::<_, Infallible>(response)
+        }
     });
     hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
