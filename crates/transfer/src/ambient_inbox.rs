@@ -582,7 +582,10 @@ mod receipt_seal_tests {
     impl InboxReceiptSeal for TestSeal {
         fn seal(&self, bytes: &[u8]) -> io::Result<Vec<u8>> {
             let handle = Sha256::digest(bytes).to_vec();
-            self.0.lock().unwrap().insert(handle.clone(), bytes.to_vec());
+            self.0
+                .lock()
+                .unwrap()
+                .insert(handle.clone(), bytes.to_vec());
             Ok(handle)
         }
         fn unseal(&self, bytes: &[u8]) -> io::Result<Vec<u8>> {
@@ -669,10 +672,17 @@ mod receipt_seal_tests {
         assert_eq!(value["receivedAtUnixMs"].as_u64(), Some(time));
 
         let dir = inbox.entry(key);
-        let original = protector.unseal(&fs::read(dir.join(MARKER)).unwrap()).unwrap();
+        let original = protector
+            .unseal(&fs::read(dir.join(MARKER)).unwrap())
+            .unwrap();
         let original: serde_json::Value = serde_json::from_slice(&original).unwrap();
         assert_eq!(original.as_object().unwrap().len(), 4);
-        assert!(!original.as_object().unwrap().contains_key("received_at_unix_ms"));
+        assert!(
+            !original
+                .as_object()
+                .unwrap()
+                .contains_key("received_at_unix_ms")
+        );
 
         // A time sidecar signed for a different receipt never supplies chronology.
         let forged = ReceiptClock {
@@ -683,21 +693,27 @@ mod receipt_seal_tests {
             size_bytes: offer.size_bytes,
             received_at_unix_ms: time,
         };
-        let wrong = protector.seal(&serde_json::to_vec(&forged).unwrap()).unwrap();
+        let wrong = protector
+            .seal(&serde_json::to_vec(&forged).unwrap())
+            .unwrap();
         fs::write(dir.join(CLOCK_MARKER), wrong).unwrap();
-        assert!(inbox.recovery_candidates("").unwrap().entries[0]
-            .received_at_unix_ms
-            .is_none());
+        assert!(
+            inbox.recovery_candidates("").unwrap().entries[0]
+                .received_at_unix_ms
+                .is_none()
+        );
 
         // Legacy releases stored only the original marker and payload.
         fs::remove_file(dir.join(CLOCK_MARKER)).unwrap();
         assert!(inbox.verified_receipt(key).is_ok());
         let list = inbox.recovery_candidates("").unwrap();
         assert_eq!(list.entries[0].received_at_unix_ms, None);
-        assert!(serde_json::to_value(&list.entries[0])
-            .unwrap()
-            .get("receivedAtUnixMs")
-            .is_none());
+        assert!(
+            serde_json::to_value(&list.entries[0])
+                .unwrap()
+                .get("receivedAtUnixMs")
+                .is_none()
+        );
     }
 
     #[test]
@@ -803,4 +819,3 @@ mod inbox_export_tests {
         assert_eq!(destination.path().read_dir().unwrap().count(), 1);
     }
 }
-
