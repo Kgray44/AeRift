@@ -8,6 +8,9 @@ mod network;
 mod pairing;
 mod remote;
 mod remote_folder;
+mod wan_invitation;
+#[cfg(test)]
+mod wan_invitation_tests;
 
 pub use discovery::{DiscoveredPeer, Discovery, SERVICE_TYPE};
 pub use friends::*;
@@ -19,3 +22,4 @@ pub use nearby::{NearbyChallenge, NearbyPending};
 pub use remote::{RemotePeerNode, RemoteTrustStore};
 
 pub use remote_folder::RemoteFolderIngress;
+pub use wan_invitation::WanInvitationBinding;
