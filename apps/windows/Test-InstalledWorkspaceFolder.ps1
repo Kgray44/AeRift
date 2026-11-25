@@ -27,6 +27,19 @@ function Test-InstalledWorkspaceFolder {
         public static extern bool IsWindowVisible(System.IntPtr window);
         [System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
         public static extern int GetClassName(System.IntPtr window, System.Text.StringBuilder value, int capacity);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern System.IntPtr GetDlgItem(System.IntPtr dialog, int id);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern int GetDlgCtrlID(System.IntPtr control);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern System.IntPtr GetWindow(System.IntPtr window, uint command);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static extern bool IsWindowEnabled(System.IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="SendMessageTimeoutW")]
+        public static extern System.IntPtr SendMessageTimeout(
+            System.IntPtr window, uint message, System.UIntPtr wparam, System.IntPtr lparam,
+            uint flags, uint timeoutMs, out System.UIntPtr result);
 '@
 
     function Find-Chooser {
@@ -48,7 +61,7 @@ function Test-InstalledWorkspaceFolder {
             if (![AeRiftFixture.OwnedWindow]::GetClassName($candidate, $class, $class.Capacity) -or
                 $class.ToString() -cne '#32770') { continue }
             $element = [System.Windows.Automation.AutomationElement]::FromHandle($candidate)
-            if ($element.Current.ProcessId -eq $OwnedProcess.Id) { return $element }
+            if ($element.Current.ProcessId -eq $OwnedProcess.Id) { return $candidate }
         }
     }
 
@@ -118,9 +131,47 @@ function Test-InstalledWorkspaceFolder {
         } $Timeout | Out-Null
     }
 
+    function Invoke-ExactDialogAction([IntPtr]$Dialog, [bool]$Cancel) {
+        # The shell UIA provider can omit the button or expose multiple proxy
+        # elements. Only act on the unique real, standard direct HWND child.
+        $id = if ($Cancel) { 2 } else { 1 } # IDCANCEL / IDOK
+        if ((Find-Chooser) -ne $Dialog -or
+            [AeRiftFixture.OwnedWindow]::GetForegroundWindow() -ne $Dialog) {
+            throw 'Native dialog changed before its action; refusing input.'
+        }
+        $button = [AeRiftFixture.OwnedWindow]::GetDlgItem($Dialog, $id)
+        $matches = 0
+        $child = [AeRiftFixture.OwnedWindow]::GetWindow($Dialog, 5) # GW_CHILD
+        for ($count = 0; $child -ne [IntPtr]::Zero -and $count -lt 256; $count++) {
+            if ([AeRiftFixture.OwnedWindow]::GetDlgCtrlID($child) -eq $id) { $matches++ }
+            $child = [AeRiftFixture.OwnedWindow]::GetWindow($child, 2) # GW_HWNDNEXT
+        }
+        $buttonPid = [uint32]0
+        $class = [Text.StringBuilder]::new(32)
+        if ($button -eq [IntPtr]::Zero -or $child -ne [IntPtr]::Zero -or $matches -ne 1 -or
+            [AeRiftFixture.OwnedWindow]::GetDlgCtrlID($button) -ne $id -or
+            [AeRiftFixture.OwnedWindow]::GetAncestor($button, 1) -ne $Dialog -or
+            ![AeRiftFixture.OwnedWindow]::GetWindowThreadProcessId($button, [ref]$buttonPid) -or
+            $buttonPid -ne $OwnedProcess.Id -or
+            ![AeRiftFixture.OwnedWindow]::GetClassName($button, $class, $class.Capacity) -or
+            $class.ToString() -ine 'Button' -or
+            ![AeRiftFixture.OwnedWindow]::IsWindowVisible($button) -or
+            ![AeRiftFixture.OwnedWindow]::IsWindowEnabled($button) -or
+            (Find-Chooser) -ne $Dialog -or
+            [AeRiftFixture.OwnedWindow]::GetForegroundWindow() -ne $Dialog) {
+            Write-Host "Workspace picker owned action: id=$id directMatchCount=$matches nativeHandleFound=$($button -ne [IntPtr]::Zero)"
+            throw 'Could not verify the exact standard native dialog action.'
+        }
+        $reply = [UIntPtr]::Zero
+        # BM_CLICK, SMTO_BLOCK|SMTO_ABORTIFHUNG, at most two seconds, exact verified button HWND.
+        $sent = [AeRiftFixture.OwnedWindow]::SendMessageTimeout(
+            $button, 0x00f5, [UIntPtr]::Zero, [IntPtr]::Zero, 3, 2000, [ref]$reply)
+        if ($sent -eq [IntPtr]::Zero) { throw 'Exact native dialog button did not respond.' }
+    }
+
     function Select-Chooser([bool]$Cancel, [string]$SyntheticPath, [string]$Stage) {
         try {
-            $dialog = Wait-Fixture { Find-Chooser } 'No visible native picker matched the exact process and root owner.'
+            $dialogHandle = Wait-Fixture { Find-Chooser } 'No visible native picker matched the exact process and root owner.'
         } catch {
             $state = Read-ChooserState
             $foreground = [AeRiftFixture.OwnedWindow]::GetForegroundWindow()
@@ -133,6 +184,7 @@ function Test-InstalledWorkspaceFolder {
         }
         Write-Host "Workspace picker stage=${Stage}: exact owned native dialog found."
         if (!$Cancel) {
+            $dialog = [System.Windows.Automation.AutomationElement]::FromHandle($dialogHandle)
             $shellId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1152')
             $edit = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
             $fields = $dialog.FindAll([System.Windows.Automation.TreeScope]::Children,
@@ -146,14 +198,7 @@ function Test-InstalledWorkspaceFolder {
             if ($field.Current.IsReadOnly) { throw 'Native name field unexpectedly read-only.' }
             $field.SetValue($SyntheticPath)
         }
-        $buttonId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $(if ($Cancel) { '2' } else { '1' }))
-        $type = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
-        $buttons = $dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-            [System.Windows.Automation.AndCondition]::new($buttonId, $type))
-        if ($buttons.Count -ne 1 -or $buttons[0].Current.ProcessId -ne $OwnedProcess.Id -or !$buttons[0].Current.IsEnabled) {
-            throw 'Could not identify the exact native dialog action.'
-        }
-        $buttons[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Invoke-ExactDialogAction $dialogHandle $Cancel
         Wait-Fixture { !(Find-Chooser) } 'Native folder dialog did not close.' | Out-Null
     }
 

@@ -38,3 +38,11 @@ test("diagnostics expose booleans rather than app data, and both WebView express
   assert.equal(scripts.length, 2);
   for (const [, source] of scripts) assert.doesNotThrow(() => new Function(`return (${source});`));
 });
+
+test("native dialog actions target only the unique verified standard direct child", () => {
+  assert.match(fixture, /GetDlgItem\(\$Dialog, \$id\)/);
+  assert.match(fixture, /if \(\$Cancel\) \{ 2 \} else \{ 1 \}/);
+  assert.match(fixture, /\$matches -ne 1[\s\S]*GetAncestor\(\$button, 1\) -ne \$Dialog[\s\S]*\$buttonPid -ne \$OwnedProcess.Id/);
+  assert.match(fixture, /SendMessageTimeout\(\s*\$button, 0x00f5, \[UIntPtr\]::Zero, \[IntPtr\]::Zero, 3, 2000, \[ref\]\$reply\)/);
+  assert.match(fixture, /Invoke-ExactDialogAction \$dialogHandle \$Cancel[\s\S]*!?\(Find-Chooser\)/);
+});
