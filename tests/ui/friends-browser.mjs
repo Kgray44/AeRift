@@ -13,6 +13,55 @@ try {
   assert.equal(await desktop.getByRole("button", { name: "Test contact B" }).isVisible(), true);
   const panels = await desktop.locator(".ae-friends > .ae-surface").evaluateAll(panels => panels.map(panel => panel.getBoundingClientRect().x));
   assert.ok(panels[0] < panels[1], "desktop panes are side-by-side");
+  assert.equal(await desktop.getByRole("heading", { name: "Device enrollment" }).count(), 0);
+  assert.equal(await desktop.getByLabel("Received private invitation").count(), 0);
+  assert.equal(await desktop.getByLabel("Your reachable private IPv4 address").isVisible(), false);
+  const commands = () => desktop.evaluate(() => window.__aeWindowsFriendsFixtureCommands);
+  assert.equal((await commands()).includes("friends_member:view"), false);
+  assert.equal((await commands()).includes("friends_files_view"), false);
+  assert.equal(await desktop.getByRole("button", { name: "Revoke", exact: true }).count(), 0);
+
+  await desktop.getByRole("button", { name: "Review friendship invitation" }).click();
+  await desktop.getByRole("heading", { name: "Add a friend" }).waitFor();
+  await desktop.getByRole("button", { name: "Verify and approve friendship" }).click();
+  await desktop.getByRole("button", { name: "Add a friend", exact: true }).waitFor();
+  await desktop.getByRole("button", { name: "Show my private contact card" }).click();
+  assert.equal(await desktop.getByLabel("Share this card privately with your friend").inputValue(), "fixture-card");
+  await desktop.getByRole("button", { name: "Back to friend details" }).click();
+  await desktop.getByRole("button", { name: "Send a file to Test contact A" }).click();
+  await desktop.getByRole("heading", { name: "Private transfers" }).waitFor();
+  await desktop.getByLabel("Your reachable private IPv4 address").fill("100.64.0.1");
+  await desktop.getByRole("button", { name: "Open five-minute transfer window" }).click();
+  assert.equal(await desktop.getByLabel("Friend", { exact: true }).inputValue(), "friend-a");
+  await desktop.getByLabel("Their authorized device").selectOption("friend-phone");
+  await desktop.getByLabel("Their offer address").fill("100.64.0.2:54000");
+  await desktop.getByLabel("Their payload address").fill("100.64.0.2:54001");
+  await desktop.getByRole("button", { name: "Choose a file and send offer" }).click();
+  await desktop.getByText("Waiting for acceptance. No file has been sent.").waitFor();
+  assert.equal(await desktop.getByRole("button", { name: "Send accepted file" }).isEnabled(), false);
+  await desktop.getByRole("button", { name: "Back to friend details" }).click();
+  await desktop.getByRole("button", { name: "Enroll a device" }).click();
+  await desktop.getByRole("heading", { name: "Device enrollment" }).waitFor();
+  await desktop.getByLabel("Your role").waitFor();
+  await desktop.getByRole("button", { name: "Back to friend details" }).click();
+  await desktop.getByRole("button", { name: "Private transfers", exact: true }).click();
+  await desktop.getByText("Waiting for acceptance. No file has been sent.").waitFor();
+  await desktop.getByRole("button", { name: "Withdraw offer" }).click();
+  await desktop.getByRole("button", { name: "Close transfer window" }).click();
+  await desktop.getByRole("button", { name: "Open five-minute transfer window" }).waitFor();
+  const calls = await commands();
+  for (const command of ["friends_setup_answer", "friends_files_action:offer", "friends_files_action:withdraw",
+    "friends_files_action:close", "friends_member:view"]) assert.ok(calls.includes(command), command);
+  assert.equal(calls.includes("friends_files_action:send"), false);
+  await desktop.getByRole("button", { name: "Back to friend details" }).click();
+  if (process.env.AERIFT_FRIENDS_SCREENSHOT) {
+    await desktop.screenshot({ path: process.env.AERIFT_FRIENDS_SCREENSHOT, animations: "disabled" });
+  }
+  const empty = await browser.newPage({ viewport: { width: 850, height: 800 }, reducedMotion: "reduce" });
+  await empty.goto(base + "/desktop-visual.html?route=friends&friendsFixture=1&state=empty&scheme=light");
+  await empty.getByRole("heading", { name: "No friends yet" }).waitFor();
+  assert.equal(await empty.getByRole("button", { name: "Add a friend", exact: true }).isVisible(), true);
+  assert.equal(await empty.getByRole("button", { name: "Enroll a device" }).isVisible(), true);
   const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
   await phone.goto(base + "/mobile.html");
   await phone.getByRole("button", { name: "Devices", exact: true }).waitFor();

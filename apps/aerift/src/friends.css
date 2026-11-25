@@ -17,3 +17,122 @@
 .ae-friends[data-mobile] { display: block; }
 .ae-friends[data-mobile][data-detail] .ae-friends-list, .ae-friends[data-mobile]:not([data-detail]) .ae-friends-detail { display: none; }
 @media (max-width: 37rem) { .ae-friends { grid-template-columns: minmax(0, 1fr); } }
+
+/* Desktop: one calm contact surface and one working surface. The compact mobile
+   route remains a provider-independent list/detail transition. */
+.ae-friends[data-desktop] {
+  grid-template-columns: clamp(13rem, 26%, 17rem) minmax(0, 1fr);
+  align-items: stretch;
+  gap: .85rem;
+}
+.ae-friends[data-desktop] :is(.ae-friends-list, .ae-friends-detail) {
+  padding: clamp(1rem, 2.2vw, 1.55rem);
+}
+.ae-friends[data-desktop] .ae-friends-detail { position: relative; min-block-size: 18rem; }
+.ae-friends[data-desktop] [hidden] { display: none; }
+.ae-friends[data-desktop] h3 { margin: 0; font-size: 1.125rem; letter-spacing: -.02em; }
+.ae-friends[data-desktop] h4 { margin: 0; font-size: .91rem; }
+.ae-friends-header, .ae-friends-toolbar, .ae-friends-panel-heading,
+.ae-friends-contact-heading, .ae-friends-transfer-status {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+}
+.ae-friends-header, .ae-friends-transfer-status { justify-content: space-between; }
+.ae-friends-toolbar { justify-content: flex-end; margin-block-end: .7rem; }
+.ae-friends-panel-heading { margin-block-end: .8rem; }
+.ae-friends .ae-friends-icon-button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  appearance: none;
+  min-inline-size: 2.65rem;
+  min-block-size: 2.65rem;
+  padding: 0;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  position: relative;
+}
+.ae-friends-icon-button[aria-expanded="true"] { box-shadow: inset 0 0 0 1px currentColor; }
+.ae-friends-icon-button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.ae-friends-attention::after {
+  content: "";
+  position: absolute;
+  inset-block-start: .18rem;
+  inset-inline-end: .18rem;
+  border-radius: 50%;
+  inline-size: .5rem;
+  block-size: .5rem;
+  background-color: #f5aa5b;
+  box-shadow: 0 0 0 1px #4a301f;
+}
+.ae-friends-back svg { transform: rotate(180deg); }
+.ae-friends[data-desktop] .ae-friends-roster { margin-block: .75rem 0; }
+.ae-friends[data-desktop] .ae-friends-roster li { margin: .16rem 0; }
+.ae-friends[data-desktop] .ae-friends-row {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr) 1rem;
+  gap: .55rem;
+  min-block-size: 2.85rem;
+  padding: .4rem .55rem;
+  border-radius: .8rem;
+  text-align: start;
+  font-weight: 550;
+}
+.ae-friends[data-desktop] .ae-friends-row[aria-pressed="true"] {
+  outline: 0;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 27%, transparent);
+}
+.ae-friends[data-desktop] .ae-friends-row:focus-visible { outline: 2px solid currentColor; }
+.ae-friends-avatar {
+  display: inline-grid;
+  place-items: center;
+  aspect-ratio: 1;
+  inline-size: 1.8rem;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  font-weight: 600;
+}
+.ae-friends-contact-heading { gap: .8rem; }
+.ae-friends-contact-heading .ae-friends-avatar { inline-size: 3.1rem; font-size: 1.4rem; }
+.ae-friends-contact-heading div { flex: 1 1 auto; min-inline-size: 0; }
+.ae-friends-contact-heading p { margin: .2rem 0 0; font-size: .82rem; }
+.ae-friends-empty {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: .45rem;
+  min-block-size: 11rem;
+  text-align: center;
+}
+.ae-friends-empty p { max-inline-size: 32ch; margin: 0; }
+.ae-friends[data-desktop] .ae-friends-devices { margin: .4rem 0 0; }
+.ae-friends[data-desktop] .ae-friends-devices li {
+  min-block-size: 2.5rem;
+  margin: 0;
+  border-block-start: 1px solid color-mix(in srgb, currentColor 17%, transparent);
+}
+.ae-friends[data-desktop] .ae-friends-devices li > span { flex: 1 1 auto; }
+.ae-friends-check { display: flex; align-items: center; gap: .45rem; margin-block: .7rem; }
+.ae-friends[data-desktop] :is(section, details) { margin-block: .8rem; }
+.ae-friends[data-desktop] details {
+  border-block-start: 1px solid color-mix(in srgb, currentColor 17%, transparent);
+  padding-block: .55rem 0;
+}
+.ae-friends[data-desktop] form { display: grid; gap: .4rem; }
+.ae-friends[data-desktop] form > .ae-button { justify-self: start; }
+.ae-friends[data-desktop] fieldset {
+  border: 1px solid color-mix(in srgb, currentColor 23%, transparent);
+  border-radius: .75rem;
+  min-inline-size: 0;
+}
+.ae-friends[data-desktop] legend { overflow-wrap: anywhere; }
+.ae-friends-transfer-status p { margin: .2rem 0 0; }
+.ae-friends-workflow { max-inline-size: 46rem; }
+@media (max-width: 42rem) {
+  .ae-friends[data-desktop] { grid-template-columns: minmax(0, 1fr); }
+  .ae-friends[data-desktop] .ae-friends-roster { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .3rem; }
+}

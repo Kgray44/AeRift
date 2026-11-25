@@ -249,24 +249,26 @@ export function DesktopApp() {
           <div><h2 id="aerift-desktop-destination" data-orbit-focus tabIndex={-1}>{DESTINATIONS[route].label}</h2>
             {destinationIntent[route] && <p className="ae-destination-intent">{destinationIntent[route]}</p>}</div>
           {route === "rift" && <div className="ae-actions">
-            {!pairedOnline && <Button variant="quiet" onClick={() => navigate("devices")}>Find devices</Button>}
-            <Button variant="quiet" onClick={() => navigate("activity")}>Transfer activity</Button>
+            {!pairedOnline && <Button variant="quiet" aria-label="Find devices" title="Find devices" onClick={() => navigate("devices")}><SpatialIcon name="devices" /></Button>}
+            <Button variant="quiet" aria-label="Transfer activity" title="Transfer activity" onClick={() => navigate("activity")}><SpatialIcon name="activity" /></Button>
           </div>}
         </div>
         {dropError && <p role="alert">{dropError}</p>}
         {route === "home" && <DesktopHome connection={connection} gestures={settings.gestures} onNavigate={navigate} />}
-        {route === "devices" && <DeviceTrust snapshot={snapshot} actions={<>
+        {route === "devices" && <DeviceTrust snapshot={snapshot} compactActions actions={<>
             <Button disabled={!snapshot} onClick={() => setPairRequest(request => request + 1)}>
               <SpatialIcon name="pair" size={17} />{pendingPairs ? `Review pairing (${pendingPairs})` : "Pair a device"}
             </Button>
-            {connection.state === "disconnected" && <Button onClick={retryConnection}>Retry connection</Button>}
+            {connection.state === "disconnected" && <Button variant="quiet" aria-label="Retry connection" title="Retry connection" onClick={retryConnection}><SpatialIcon name="retry" /></Button>}
         </>} />}
-        {route === "friends" && friendsView && friends &&
-          <>
-            <FriendsWorkspace snapshot={friends} port={setupPort} setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />} />
-            <WindowsFriendsFiles contacts={friends.contacts} />
-            <WindowsFriendsMember contacts={friends.contacts} />
-          </>}
+        {route === "friends" && (friendsView && friends ?
+          <FriendsWorkspace snapshot={friends} port={setupPort}
+            setup={<WindowsFriendsSetup view={friendsView} refresh={refreshFriends} />}
+            desktop={{
+              pendingInvitation: !!friendsView.pendingRecipient,
+              transfer: preferredContact => <WindowsFriendsFiles contacts={friends.contacts} preferredContact={preferredContact} />,
+              enrollment: <WindowsFriendsMember contacts={friends.contacts} />,
+            }} /> : <p role="status">Friends is unavailable. Reopen AeRift and try again.</p>)}
         {route === "settings" && <DesktopSettings value={settings} onChange={(next: DesktopPreferences) => {
           if (next.experience.windowMode === "full") setKeepWorkspaceMounted(true);
           setSettings(next);
