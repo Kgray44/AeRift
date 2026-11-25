@@ -707,11 +707,10 @@ pub use export::FolderExport;
 
 pub mod admission;
 
-// The primitive is deliberately unregistered until validated on native NTFS
-// and provided a true native-picker/profile directory capability.
-#[cfg(all(windows, any(test, feature = "windows-folder-qualification")))]
+// The Windows publisher requires a held native-picker/profile directory capability.
+#[cfg(windows)]
 mod windows_handles;
-#[cfg(all(windows, feature = "windows-folder-qualification"))]
+#[cfg(windows)]
 pub use windows_handles::{
     PinnedDirectory as WindowsFolderDirectory, WindowsFolderExport,
     commit_verified_folder as commit_windows_folder,

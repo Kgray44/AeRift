@@ -33,7 +33,7 @@ use windows_sys::{
             FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FileAttributeTagInfo,
             FileDispositionInfo, GetDriveTypeW, GetFileInformationByHandleEx,
             GetFinalPathNameByHandleW, GetVolumeInformationByHandleW, QueryDosDeviceW, SYNCHRONIZE,
-            SetFileInformationByHandle, VOLUME_NAME_NT,
+            SetFileInformationByHandle, VOLUME_NAME_GUID, VOLUME_NAME_NT,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -212,6 +212,12 @@ impl PinnedDirectory {
         ))
     }
 
+    /// Compare the operating system's volume identities for held handles.
+    /// No drive letter, pathname, or caller-supplied identifier is authoritative.
+    pub fn shares_atomic_publish_volume(&self, destination: &Self) -> io::Result<bool> {
+        Ok(held_volume_guid(&self.0)? == held_volume_guid(&destination.0)?)
+    }
+
     pub fn open_verified_envelope(&self, leaf: &str) -> io::Result<File> {
         use windows_sys::Win32::Storage::FileSystem::FILE_READ_DATA;
         inspect_plain_directory(&self.0)?;
@@ -334,6 +340,70 @@ fn inspect_plain(file: &File, directory: bool) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn held_volume_guid(file: &File) -> io::Result<[u8; 36]> {
+    inspect_plain_directory(file)?;
+    let mut output = vec![0_u16; 512];
+    // The owning File keeps the native handle alive for both calls.
+    let query = |output: &mut [u16]| unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle() as HANDLE,
+            output.as_mut_ptr(),
+            output.len() as u32,
+            VOLUME_NAME_GUID,
+        )
+    } as usize;
+    let mut length = query(&mut output);
+    if length >= output.len() && length <= 32_768 {
+        output.resize(length + 1, 0);
+        length = query(&mut output);
+    }
+    if length == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length >= output.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported final volume name",
+        ));
+    }
+    parse_native_volume_guid(&output[..length]).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unrecognized native volume identity",
+        )
+    })
+}
+
+// Only parse the namespace prefix returned by the kernel. The remaining path
+// may include arbitrary Unicode; it does not contribute to the comparison.
+fn parse_native_volume_guid(path: &[u16]) -> Option<[u8; 36]> {
+    const PREFIX: &[u8] = b"\\\\?\\Volume{";
+    if path.len() < PREFIX.len() + 38
+        || !path.iter().zip(PREFIX).all(|(&unit, &expected)| {
+            u8::try_from(unit).is_ok_and(|byte| byte.eq_ignore_ascii_case(&expected))
+        })
+    {
+        return None;
+    }
+    let mut guid = [0_u8; 36];
+    for (index, byte) in guid.iter_mut().enumerate() {
+        *byte = u8::try_from(path[PREFIX.len() + index])
+            .ok()?
+            .to_ascii_lowercase();
+        if matches!(index, 8 | 13 | 18 | 23) {
+            if *byte != b'-' {
+                return None;
+            }
+        } else if !byte.is_ascii_hexdigit() {
+            return None;
+        }
+    }
+    if path[PREFIX.len() + 36] != b'}' as u16 || path[PREFIX.len() + 37] != b'\\' as u16 {
+        return None;
+    }
+    Some(guid)
 }
 
 fn restrict_ntfs(file: &File) -> io::Result<()> {
@@ -488,6 +558,12 @@ pub fn commit_verified_folder(
         selected_destination,
         mut verified_envelope,
     } = destination;
+    if !private_scratch
+        .shares_atomic_publish_volume(&selected_destination)
+        .map_err(storage)?
+    {
+        return Err(ErrorCode::StorageFailed.into());
+    }
     inspect_plain(&verified_envelope, false).map_err(storage)?;
     restrict_ntfs(&verified_envelope).map_err(storage)?;
     if verified_envelope.metadata().map_err(storage)?.len() != receipt.offer.size_bytes {
@@ -812,6 +888,23 @@ mod tests {
     }
 
     #[test]
+    fn native_guid_distinguishes_volumes_without_using_names_or_labels() {
+        let native =
+            |name: &str| parse_native_volume_guid(&name.encode_utf16().collect::<Vec<_>>());
+        let first = native(r"\\?\Volume{a1111111-2222-3333-4444-555555555555}\path").unwrap();
+        assert_eq!(
+            first,
+            native(r"\\?\volume{A1111111-2222-3333-4444-555555555555}\different").unwrap()
+        );
+        assert_ne!(
+            first,
+            native(r"\\?\Volume{a1111112-2222-3333-4444-555555555555}\path").unwrap()
+        );
+        assert!(native(r"C:\Volume{a1111111-2222-3333-4444-555555555555}\path").is_none());
+        assert!(native(r"\\?\Volume{not-a-guid}\path").is_none());
+    }
+
+    #[test]
     fn ntfs_no_replace_is_atomic_against_a_competing_leaf_creator() {
         let temp = tempfile::Builder::new()
             .prefix("aerift-ntfs-")
@@ -825,6 +918,7 @@ mod tests {
         let stage = volume.open_child("stage", false).unwrap();
         let source = stage.open_child("Tree", true).unwrap();
         let target = volume.open_child("destination", false).unwrap();
+        assert!(stage.shares_atomic_publish_volume(&target).unwrap());
         let claim = root.join("destination/Tree");
         let barrier = std::sync::Barrier::new(2);
         let (created, published) = std::thread::scope(|scope| {

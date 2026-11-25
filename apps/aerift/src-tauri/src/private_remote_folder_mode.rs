@@ -1,4 +1,4 @@
-//! Optional private Remote folder qualification. Never enabled in regular builds.
+//! Optional Windows Private Remote folder lane. Explicitly enabled per session.
 use super::*;
 use aerift_peers::RemoteFolderIngress;
 use aerift_transfer::{
@@ -73,6 +73,7 @@ pub(crate) enum FolderAction {
 pub(crate) struct FolderReply {
     incoming: Vec<FolderView>,
     outgoing_receipt: Option<Status>,
+    different_destination_volume: bool,
 }
 
 #[derive(Serialize)]
@@ -115,6 +116,7 @@ pub(crate) async fn windows_remote_folder_command(
     let mut result = FolderReply {
         incoming: Vec::new(),
         outgoing_receipt: None,
+        different_destination_volume: false,
     };
     match action {
         FolderAction::Inspect => {}
@@ -161,15 +163,38 @@ pub(crate) async fn windows_remote_folder_command(
         FolderAction::Approve { peer_id, id } => {
             let key = TransferKey { peer: peer_id, id };
             let _picker = mode.picker.try_lock().map_err(|_| ErrorCode::Conflict)?;
-            let first = mode.ingress.review(key)?.0.commitment();
+            let (original, receipt) = mode.ingress.review(key)?;
+            if receipt.status.state != State::Pending {
+                return Err(ErrorCode::Conflict.into());
+            }
+            let first = original.commitment();
             let selected = choose_folder(window.clone()).await?;
-            let pinned = tauri::async_runtime::spawn_blocking(move || {
-                WindowsFolderDirectory::from_native_selection(&selected).map_err(storage_failed)
+            let preflight_mode = mode.clone();
+            let (pinned, same_volume) = tauri::async_runtime::spawn_blocking(move || {
+                let pinned = WindowsFolderDirectory::from_native_selection(&selected)
+                    .map_err(storage_failed)?;
+                let same_volume = preflight_mode
+                    .scratch
+                    .shares_atomic_publish_volume(&pinned)
+                    .map_err(storage_failed)?;
+                Ok::<_, TransferError>((pinned, same_volume))
             })
             .await
             .map_err(|_| ErrorCode::InternalError)??;
+            let (current, receipt) = mode.ingress.review(key)?;
+            if stop.is_cancelled()
+                || current.commitment() != first
+                || receipt.status.state != State::Pending
+            {
+                return Err(ErrorCode::Cancelled.into());
+            }
+            if !same_volume {
+                // No retained lease, no approval, and no requested bytes.
+                result.different_destination_volume = true;
+                return Ok(result);
+            }
             let mut approved = mode.approved.lock().await;
-            if stop.is_cancelled() || mode.ingress.review(key)?.0.commitment() != first {
+            if stop.is_cancelled() {
                 return Err(ErrorCode::Cancelled.into());
             }
             // The user has reviewed the offer and chosen an exact native

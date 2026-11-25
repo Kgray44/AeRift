@@ -216,7 +216,6 @@ struct DevSession {
     stop: CancellationToken,
     task: JoinHandle<Result<(), TransferError>>,
     profile: Arc<std::fs::File>,
-    #[cfg(feature = "private-remote-folder-qualification")]
     folders: Option<Arc<folder_mode::FolderMode>>,
 }
 
@@ -235,7 +234,7 @@ pub(crate) struct Snapshot {
     peers: Vec<Device>,
     pairing: Option<Pending>,
     offers: Vec<OfferView>,
-    folder_qualification: bool,
+    folders_available: bool,
     folders_active: bool,
 }
 
@@ -318,8 +317,7 @@ pub(crate) async fn private_remote_snapshot(
         peers: Vec::new(),
         pairing: None,
         offers: Vec::new(),
-        folder_qualification: cfg!(feature = "private-remote-folder-qualification")
-            && !runtime.developer,
+        folders_available: !runtime.developer,
         folders_active: false,
     };
     let Some(session) = session
@@ -329,10 +327,7 @@ pub(crate) async fn private_remote_snapshot(
         return Ok(result);
     };
     result.active = true;
-    #[cfg(feature = "private-remote-folder-qualification")]
-    {
-        result.folders_active = session.folders.is_some();
-    }
+    result.folders_active = session.folders.is_some();
     result.identity = Some(session.node.device().id);
     result.peers = session.node.trusted_devices();
     result.peers.sort_by_key(|peer| peer.id.to_string());
@@ -397,9 +392,6 @@ pub(crate) async fn private_remote_start(
     enable_folders: Option<bool>,
 ) -> Result<(), TransferError> {
     require_remote_origin(&window)?;
-    if enable_folders == Some(true) && !cfg!(feature = "private-remote-folder-qualification") {
-        return Err(ErrorCode::UnsupportedVersion.into());
-    }
     if !confirmed {
         return Err(ErrorCode::Cancelled.into());
     }
@@ -424,13 +416,11 @@ pub(crate) async fn private_remote_start(
         .path()
         .app_local_data_dir()
         .map_err(|_| ErrorCode::StorageFailed)?;
-    #[cfg(feature = "private-remote-folder-qualification")]
     let folder_root = root.clone();
     let (node, lock) =
         tauri::async_runtime::spawn_blocking(move || initialize_profile(root, developer))
             .await
             .map_err(|_| ErrorCode::InternalError)??;
-    #[cfg(feature = "private-remote-folder-qualification")]
     let folders = if enable_folders == Some(true) && !developer {
         Some(Arc::new(
             tauri::async_runtime::spawn_blocking(move || {
@@ -450,10 +440,8 @@ pub(crate) async fn private_remote_start(
     let stop = CancellationToken::new();
     let task = tokio::spawn({
         let (node, stop) = (node.clone(), stop.clone());
-        #[cfg(feature = "private-remote-folder-qualification")]
         let folder_ingress = folders.as_ref().map(|mode| mode.ingress.clone());
         async move {
-            #[cfg(feature = "private-remote-folder-qualification")]
             if let Some(folders) = folder_ingress {
                 return node.serve_with_folders(listener, stop, folders).await;
             }
@@ -465,7 +453,6 @@ pub(crate) async fn private_remote_start(
         stop,
         task,
         profile: Arc::new(lock),
-        #[cfg(feature = "private-remote-folder-qualification")]
         folders,
     });
     Ok(())
@@ -709,10 +696,8 @@ mod tests {
     }
 }
 
-#[cfg(any(test, feature = "private-remote-folder-qualification"))]
 #[path = "private_remote_folder_profile.rs"]
 mod folder_profile_qualification;
 
-#[cfg(feature = "private-remote-folder-qualification")]
 #[path = "private_remote_folder_mode.rs"]
 pub(crate) mod folder_mode;

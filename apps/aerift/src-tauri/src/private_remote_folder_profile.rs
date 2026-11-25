@@ -1,4 +1,4 @@
-//! Qualification adapter; does not register an app command or a route.
+//! Protected Windows Remote folder admission storage; the host retains the profile lock.
 use std::path::Path;
 
 use aerift_transfer::{folder::admission_store::ProtectedAdmissionStorage, TransferError};
