@@ -1,0 +1,78 @@
+name: AeRift TestFlight 30551d138fb421c7e7aae6b9691753fbad07e644
+on:
+  push:
+    branches: ["codex/aerift-testflight-*"]
+permissions:
+  contents: read
+concurrency:
+  group: aerift-testflight-${{ github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  unsigned:
+    if: false
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 30551d138fb421c7e7aae6b9691753fbad07e644
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare the iOS device toolchain
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          rustup target add aarch64-apple-ios
+      - name: Verify the unsigned iOS device archive
+        run: python3 scripts/testflight/runner.py --mode upload --candidate 30551d138fb421c7e7aae6b9691753fbad07e644 --version 0.1.0 --build 6
+      - name: Recover job-owned signing state
+        if: always()
+        run: python3 scripts/testflight/runner.py --cleanup-owned
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: aerift-testflight-upload-30551d138fb421c7e7aae6b9691753fbad07e644
+          path: artifacts/aerift-testflight/public
+          if-no-files-found: error
+          retention-days: 14
+  protected:
+    if: true
+    environment: aerift-testflight
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 30551d138fb421c7e7aae6b9691753fbad07e644
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare the iOS device toolchain
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          rustup target add aarch64-apple-ios
+      - name: Run the protected Apple distribution operation
+        env:
+          AERIFT_DISTRIBUTION_P12_BASE64: ${{ secrets.AERIFT_DISTRIBUTION_P12_BASE64 }}
+          AERIFT_DISTRIBUTION_P12_PASSWORD: ${{ secrets.AERIFT_DISTRIBUTION_P12_PASSWORD }}
+          AERIFT_APPSTORE_PROFILE_BASE64: ${{ secrets.AERIFT_APPSTORE_PROFILE_BASE64 }}
+          AERIFT_ASC_PRIVATE_KEY_P8: ${{ secrets.AERIFT_ASC_PRIVATE_KEY_P8 }}
+          AERIFT_ASC_KEY_ID: ${{ vars.AERIFT_ASC_KEY_ID }}
+          AERIFT_ASC_ISSUER_ID: ${{ vars.AERIFT_ASC_ISSUER_ID }}
+          AERIFT_ASC_APP_ID: ${{ vars.AERIFT_ASC_APP_ID }}
+          AERIFT_INTERNAL_GROUP_ID: ''
+        run: python3 scripts/testflight/runner.py --mode upload --candidate 30551d138fb421c7e7aae6b9691753fbad07e644 --version 0.1.0 --build 6
+      - name: Recover job-owned signing state
+        if: always()
+        run: python3 scripts/testflight/runner.py --cleanup-owned
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: aerift-testflight-upload-30551d138fb421c7e7aae6b9691753fbad07e644
+          path: artifacts/aerift-testflight/public
+          if-no-files-found: error
+          retention-days: 14
