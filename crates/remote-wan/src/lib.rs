@@ -15,7 +15,7 @@ use std::{
 
 use iroh::{
     Endpoint, EndpointAddr, RelayMode,
-    endpoint::{Connection, RecvStream, SendStream, presets},
+    endpoint::{Connection, PortmapperConfig, RecvStream, SendStream, presets},
 };
 pub use iroh::{EndpointId, RelayUrl, SecretKey};
 mod native_host;
@@ -201,6 +201,8 @@ fn make_builder(
     let mode = relay.map_or(RelayMode::Disabled, |url| RelayMode::custom([url.clone()]));
     let mut builder = Endpoint::builder(presets::Minimal)
         .clear_address_lookup()
+        // Keep QUIC hole punching and HTTPS fallback without modifying a router.
+        .portmapper_config(PortmapperConfig::Disabled)
         .relay_mode(mode)
         .secret_key(secret)
         .alpns(vec![ALPN.to_vec()]);

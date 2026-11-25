@@ -151,3 +151,10 @@ test("WAN preview uses a dedicated qualification profile, not the installed app 
   assert.match(native, /fn show_offline_device_card[\s\S]*?open_qualification_root\(\)/);
   assert.match(native, /pub\(crate\) fn run\(\)[\s\S]*?open_qualification_root\(\)/);
 });
+
+test("WAN endpoint never requests router port mappings", () => {
+  const transport = readFileSync(new URL("../../crates/remote-wan/src/lib.rs", import.meta.url), "utf8");
+  const builder = transport.slice(transport.indexOf("fn make_builder("), transport.indexOf("fn valid_relay("));
+  assert.match(builder, /\.portmapper_config\(PortmapperConfig::Disabled\)/);
+  assert.match(builder, /\.relay_mode\(mode\)/);
+});
