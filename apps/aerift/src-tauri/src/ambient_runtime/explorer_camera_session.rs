@@ -20,6 +20,8 @@ use crate::ambient_media_foundation::{NativeCameraGrant, WindowsCameraProvider};
 pub(crate) mod chooser_admission;
 mod indicator;
 mod native_chooser;
+#[cfg(all(target_arch = "x86_64", feature = "ambient-native-model-qualification"))]
+pub(crate) mod native_command;
 mod notifications;
 
 const POLL_MILLISECONDS: u32 = 20;

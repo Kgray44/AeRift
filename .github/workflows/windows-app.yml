@@ -214,6 +214,21 @@ jobs:
           if ($ownerCode -ne 0 -or -not ($ownerLines -match 'test result: ok\. 10 passed; 0 failed')) {
             throw 'Expected all ten synthetic Explorer camera owner, indicator, chooser and revocation tests.'
           }
+      - name: Verify bounded native camera command ownership without a camera
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
+        run: |
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') {
+            throw 'Requires disposable GitHub-hosted Windows.'
+          }
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          $lines = & cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features ambient-media-qualification,ambient-native-model-qualification --lib ambient_runtime::explorer_camera_session::native_command::tests:: 2>&1
+          $code = $LASTEXITCODE
+          $lines | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0 -or -not ($lines -match 'test result: ok\. 1 passed; 0 failed')) {
+            throw 'Expected the fake-device command ownership regression.'
+          }
       - name: Verify the native camera indicator window without a camera
         shell: pwsh
         env:

@@ -27,7 +27,7 @@ pub(crate) struct CameraChooser<A> {
 }
 
 impl<A: Copy + Eq> CameraChooser<A> {
-    fn new(
+    pub(super) fn new(
         anchor: A,
         began: Instant,
         inventory: Vec<NativeCameraChoice>,
