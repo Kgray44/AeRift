@@ -68,3 +68,26 @@
 .aw-browser-history li{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;min-inline-size:0}
 .aw-browser-history button{white-space:normal;overflow-wrap:anywhere;min-inline-size:0;text-align:start}
 .aw-browser-history time{color:var(--ae-muted);font-size:.78rem}
+
+.ae-theme :is(.aw-note-search,.aw-note-editor,.aw-file-tools,.aw-browser-tools,.aw-collection-tools)
+  :is(input:not([type="checkbox"],[type="hidden"]),select,textarea){
+  border:1px solid var(--ae-display-edge,var(--ae-control-edge));border-radius:.78rem;
+  color:var(--ae-text);background:var(--ae-field);padding:.62rem .71rem;font:inherit;
+  min-block-size:2.75rem;max-inline-size:100%;
+}
+.ae-theme[data-ae-theme="glass"] :is(.aw-note-search,.aw-note-editor,.aw-file-tools,.aw-browser-tools,.aw-collection-tools)
+  :is(input:not([type="checkbox"],[type="hidden"]),select,textarea){
+  background:color-mix(in srgb,var(--ae-field) 60%,transparent);
+  box-shadow:inset 0 1px var(--ae-optical-rim);
+}
+.aw-note-editor .aw-note-toolbar{flex-wrap:wrap;gap:.38rem}
+.aw-note-editor .aw-note-toolbar .ae-button{min-block-size:2.75rem}
+.aw-note-editor .aw-note-toolbar .ae-button[data-variant="quiet"]:not(:disabled){border-color:var(--ae-control-edge)}
+.aw-note-editor .aw-note-footer .ae-button[aria-pressed="true"]{border-color:var(--ae-accent)}
+.aw-clipboard-tools,.aw-collection-tools{padding:.85rem;min-inline-size:0}
+.aw-clipboard-tools .ae-actions{align-items:end;flex-wrap:wrap}
+.aw-collection-members,.aw-collection-candidates{display:grid;gap:.35rem;padding-inline-start:1.25rem}
+.aw-collection-members li,.aw-collection-candidates li{overflow-wrap:anywhere}
+.aw-collection-members .ae-actions{flex-wrap:wrap}
+.aw-collection-candidates li .ae-button{margin-inline-start:.5rem}
+@media (forced-colors:active){.ae-theme[data-ae-theme="glass"] :is(.aw-note-search,.aw-note-editor,.aw-file-tools,.aw-browser-tools,.aw-collection-tools) :is(input,select,textarea){background:Canvas;color:CanvasText;border-color:ButtonText}}

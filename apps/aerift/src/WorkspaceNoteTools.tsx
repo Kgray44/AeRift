@@ -75,8 +75,9 @@ export function WorkspaceNoteEditor({ value, format, disabled, onChange, onForma
         : <p>Nothing to preview yet.</p>}
     </section>}
     <div className="aw-note-footer">
-      <label><input name="noteMarkdown" type="checkbox" checked={format === "markdown"}
-        disabled={disabled} onChange={event => onFormat(event.currentTarget.checked ? "markdown" : "plain")} /> Markdown</label>
+      {format === "markdown" && <input type="hidden" name="noteMarkdown" value="yes" />}
+      <Button type="button" variant="secondary" disabled={disabled} aria-pressed={format === "markdown"}
+        onClick={() => onFormat(format === "markdown" ? "plain" : "markdown")}>Markdown</Button>
       <small>{noteWordCount(value)} words · {value.length.toLocaleString()} / {workspaceNoteLimit.toLocaleString()} characters</small>
     </div>
   </div>;

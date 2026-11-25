@@ -195,6 +195,28 @@ try {
     await page.getByRole("searchbox", { name: "Search notes" }).fill("lumber");
     await page.getByText("Weekend plan", { exact: true }).waitFor();
     await back(page, "Notes");
+    await open(page, "Clipboard");
+    await page.getByText("New text pin", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Shop address");
+    await page.getByRole("textbox", { name: "Text to pin", exact: true }).fill("Synthetic clipboard pin");
+    await button(page, "Pin text").click();
+    await page.getByRole("searchbox", { name: "Search pinned text" }).fill("synthetic");
+    await page.getByText("Shop address", { exact: true }).waitFor();
+    assert.equal(await page.getByText("Synthetic clipboard pin", { exact: true }).count(), 0,
+      "clipboard content is not exposed in the list");
+    await page.getByRole("searchbox", { name: "Search pinned text" }).fill("unrelated");
+    await page.getByText("No pins match your filters.").waitFor();
+    await back(page, "Clipboard");
+    await open(page, "Collections");
+    await page.getByText("New collection", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Weekend items");
+    await button(page, "Create collection").click();
+    const contents = page.getByRole("region", { name: "Weekend items contents" });
+    await contents.getByRole("searchbox", { name: "Find an item to add" }).fill("Weekend plan");
+    await button(contents, "Add Weekend plan to collection").click();
+    await button(contents, "Remove Weekend plan from collection").click();
+    await contents.getByText("This collection is empty.").waitFor();
+    await back(page, "Collections");
     const settle = async () => {
       await page.waitForFunction(() => !document.querySelector(".af-dock-bead")?.getAnimations().some(anim => anim.playState === "running"));
     };

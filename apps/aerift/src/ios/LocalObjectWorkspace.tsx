@@ -3,6 +3,8 @@ import { Button } from "@aerift/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { WorkspaceNoteEditor, WorkspaceNoteSearch } from "../WorkspaceNoteTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
+import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
+import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
 import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
 import { matchesWorkspaceNote, type NoteFilter } from "../workspace-note-tools";
 import type { MobileOperations, MobilePlatformCopy } from "./mobile-platform";
@@ -47,7 +49,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const [markdown, setMarkdown] = useState(false);
   const [noteFilter, setNoteFilter] = useState<NoteFilter>({ query: "", format: "any" });
   const [editing, setEditing] = useState<string>();
-  const [member, setMember] = useState("");
+  const clipboardTools = useWorkspaceClipboardTools({ copyAllowed: clipboardSharing });
   const [attachmentIds, setAttachmentIds] = useState<readonly string[]>([]);
   const [pendingAttachment, setPendingAttachment] = useState("");
   const [mediaItems, setMediaItems] = useState<readonly ImportedMedia[]>();
@@ -65,7 +67,8 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const collections = module === "collections";
   const kind = notes ? "note" : browser ? "url" : clips ? "text" : "collection";
   const entries = objects.filter(item => item.kind === kind);
-  const visibleEntries = notes ? entries.filter(item => item.kind === "note" && matchesWorkspaceNote(item, noteFilter)) : entries;
+  const visibleEntries = notes ? entries.filter(item => item.kind === "note" && matchesWorkspaceNote(item, noteFilter))
+    : clips ? clipboardTools.browse(entries, item => item.kind === "text" ? item : undefined) : entries;
   const selected = entries.find(item => item.id === editing);
   const candidates = objects.filter(item => item.kind !== "collection");
 
@@ -128,7 +131,6 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     setTitle("");
     setDraft("");
     setMarkdown(false);
-    setMember("");
     setAttachmentIds([]);
     setPendingAttachment("");
   }
@@ -141,7 +143,6 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     setMarkdown("format" in object && object.format === "markdown");
     setAttachmentIds(object.kind === "note" ? object.attachmentIds ?? [] : []);
     setPendingAttachment("");
-    setMember("");
     setFeedback("");
   }
 
@@ -240,22 +241,13 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     return mediaById.get(id)?.name ?? `Attachment ${index + 1}`;
   }
 
-  function updateMembers(collection: Collection, itemIds: readonly string[]) {
-    if (upsert({ ...collection, itemIds })) setFeedback("Collection updated.");
-  }
-
-  function move(collection: Collection, index: number, direction: -1 | 1) {
-    const next = [...collection.itemIds];
-    [next[index], next[index + direction]] = [next[index + direction], next[index]];
-    updateMembers(collection, next);
-  }
-
   return <section className="ae-surface ios-section ios-object-editor aw-focused-surface" data-material="content" aria-label={module}>
     {notes && <WorkspaceNoteSearch filter={noteFilter} onChange={setNoteFilter} count={visibleEntries.length} />}
     {browser && <WorkspaceBrowserTools storageKey={browserHistoryKey} onOpen={browse} disabled={browsing}
       labels={{ description: copy.browserTip }} />}
     {clips && <>
       <p>Use the system Paste menu for text. AeRift keeps text only when you pin it.</p>
+      <WorkspaceClipboardTools tools={clipboardTools} count={visibleEntries.length} total={entries.length} />
       {imagePasteSupported === true &&
         <Button disabled={!regions.canSelect || !clipboardSharing} onClick={() => void pasteImage()}>Paste image for Rift</Button>}
       {imagePasteSupported === false && <p>{copy.clipboardImageUnavailable}</p>}
@@ -311,32 +303,10 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       </div>
     </form>
     </details>
-    {selected?.kind === "collection" && <div className="ios-collection">
-      <h4>Collection contents</h4>
-      <ol className="ios-list">
-        {selected.itemIds.map((id, index) => {
-          const item = candidates.find(entry => entry.id === id);
-          if (!item) return null;
-          return <li key={id}>
-            <strong>{item.name}</strong>
-            <div className="ae-actions">
-              <Button variant="quiet" aria-label={`Move ${item.name} up`} disabled={index === 0}
-                onClick={() => move(selected, index, -1)}>↑</Button>
-              <Button variant="quiet" aria-label={`Move ${item.name} down`} disabled={index === selected.itemIds.length - 1}
-                onClick={() => move(selected, index, 1)}>↓</Button>
-              <Button variant="quiet" aria-label={`Remove ${item.name} from collection`}
-                onClick={() => updateMembers(selected, selected.itemIds.filter(memberId => memberId !== id))}>Remove</Button>
-            </div>
-          </li>;
-        })}
-      </ol>
-      <label className="ios-add-member">Add an item <select value={member} onChange={event => setMember(event.currentTarget.value)}>
-        <option value="">Choose a saved item</option>
-        {candidates.filter(item => !selected.itemIds.includes(item.id)).map(item =>
-          <option key={item.id} value={item.id}>{item.name}</option>)}
-      </select></label>
-      <Button disabled={!member} onClick={() => { updateMembers(selected, [...selected.itemIds, member]); setMember(""); }}>Add</Button>
-    </div>}
+    {selected?.kind === "collection" && <WorkspaceCollectionTools key={selected.id} name={selected.name}
+      objects={candidates} memberIds={selected.itemIds}
+      onChange={(next, previous) => selected.itemIds.length === previous.length &&
+        previous.every((id, index) => id === selected.itemIds[index]) && upsert({ ...selected, itemIds: next })} />}
     {feedback && <p role="status">{feedback}</p>}
     {notes && !visibleEntries.length && <p>{entries.length ? "No notes match your search." : "Start with a new note."}</p>}
     {visibleEntries.length > 0 && <ul className="ios-object-list">
@@ -345,6 +315,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
         {object.kind === "collection" ? <small>{object.itemIds.length} saved items</small> :
           object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
           <small className="ios-preview">{object.kind === "text" ? "Pinned text" : object.text.slice(0, 180)}</small>}
+        {object.kind === "text" && <WorkspaceClipboardDetails text={object.text} format={object.format} />}
         {object.kind === "collection" && includesClipboard(object) && !clipboardSharing &&
           <small>Enable clipboard sharing to offer the pinned text in this collection.</small>}
         {object.kind === "note" && !!object.attachmentIds?.length && <details>
@@ -370,6 +341,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
             <Button disabled={!regions.canSelect || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>
               {object.kind === "note" && object.attachmentIds?.length ? "Send note text" : "Send copy"}
             </Button>}
+          {object.kind === "text" && <WorkspaceClipboardCopy tools={clipboardTools} name={object.name} text={object.text} />}
           {object.kind === "url" && <Button variant="quiet" disabled={browsing} onClick={() => void browse(object.url, true)}>Open</Button>}
           <Button variant="quiet" onClick={() => edit(object)}>Edit</Button>
           {confirmRemoval === object.id ? <div className="ae-actions" data-ae-route-enter="neutral">

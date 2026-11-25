@@ -11,8 +11,8 @@ The Workspace is a launcher for working tools in the shared AeRift desktop and m
 | Documents | A document-only catalog search and ordering alongside existing copy/preview actions | Document editing and provider-backed folders are not part of this wave. |
 | Images & Videos | Search and filter imported photos and video alongside the existing native preview and transfer actions | No background photo-library scan, media indexing, or editing. |
 | Web Browser | Address/search bar, saved links, and clearable opt-in history of explicit opens. iOS and Android use their existing browser surfaces; desktop uses its default browser for now | Never navigate the app's privileged WebView or inject untrusted remote content into it. External history, search terms, query strings, and fragments are not kept. |
-| Clipboard | Existing explicit capture and send actions preserved | Multi-entry sorting, filtering, pin groups and exports are next; never read in the background. |
-| Collections | Existing object membership and transfer actions preserved | Next: reorder and edit memberships across platforms, search and preview objects without duplicating payloads. |
+| Clipboard | Search/filter/order explicitly pinned snippets, inspect text counts, and deliberately copy back to the system clipboard | No background reads, saved search terms, silent permission fallback, or new history. Existing capture and transfer policies remain in place. |
+| Collections | Search eligible items and add, reorder or remove collection references across platforms | Changes never duplicate or delete underlying assets. Existing dedicated transfer actions remain in place. |
 
 ## Native follow-on gates
 

@@ -6,6 +6,8 @@ import { command } from "../nativeAppPort";
 import { DesktopNoteEditor, WorkspaceNoteSearch } from "../WorkspaceNoteTools";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
+import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
+import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
 import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
 import { matchesWorkspaceNote, workspaceNoteLimit, type NoteFilter } from "../workspace-note-tools";
 import { useDesktopContentEnter } from "./desktopContentMotion";
@@ -80,8 +82,13 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const noteEditor = useRef<HTMLDetailsElement>(null);
   const [noteFilter, setNoteFilter] = useState<NoteFilter>({ query: "", format: "any" });
   const [noteRevision, setNoteRevision] = useState(0);
+  const [editingCollection, setEditingCollection] = useState<string>();
+  const clipboardTools = useWorkspaceClipboardTools({ copyAllowed: clipboardAllowed });
   const [selected, setSelected] = useState<readonly string[]>([]);
   const items = entries ?? [];
+  const byId = new Map(items.map(({ object }) => [object.id, object]));
+  const candidates = items.map(({ object }) => object).filter(object => object.kind !== "collection");
+  const selectedCollection = editingCollection ? byId.get(editingCollection) : undefined;
   const inCategory = (object: DigitalObject, id: WorkspaceSectionId, module: ModuleId) =>
     belongsTo(object, module) && (id !== "documents" || (object.kind === "file" && isWorkspaceDocument(object.name, object.mediaType)));
   const categoryItems = section ? items.filter(({ object }) => inCategory(object, section.id, section.module)) : [];
@@ -93,14 +100,18 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         mediaType: object.mediaType, sizeBytes: object.sizeBytes,
         kind: object.kind === "file" && isWorkspaceDocument(object.name, object.mediaType) ? "document" as const : object.kind,
       } : {}),
-    })) : categoryItems;
+    })) : section?.id === "clipboard" ? clipboardTools.browse(categoryItems, ({ object }) => {
+      const saved = object.kind === "clipboard" ? byId.get(object.objectId) : undefined;
+      return saved?.kind === "text" ? { name: object.name, text: saved.text, format: saved.format } : undefined;
+    }) : categoryItems;
   const counts = entries && Object.fromEntries(workspaceSections.map(({ id, module }) =>
     [id, entries.filter(({ object }) => inCategory(object, id, module)).length]));
   function openSection(id: WorkspaceSectionId) {
-    setError(undefined); setStatus(undefined); setPreview(undefined); setEditing(undefined); setPageIndex(0); workspace.open(id);
+    setError(undefined); setStatus(undefined); setPreview(undefined); setEditing(undefined); setEditingCollection(undefined);
+    setPageIndex(0); clipboardTools.reset(); workspace.open(id);
   }
 
-  useEffect(() => { setPageIndex(0); }, [fileTools.query, fileTools.kind, fileTools.sort]);
+  useEffect(() => { setPageIndex(0); }, [fileTools.query, fileTools.kind, fileTools.sort, clipboardTools.options]);
 
   useEffect(() => {
     let disposed = false;
@@ -177,7 +188,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       form.reset();
       setEditing(undefined);
       if (kind === "note") setNoteRevision(revision => revision + 1);
-      if (kind === "collection") setSelected([]);
+      if (kind === "collection") { setSelected([]); setEditingCollection(object.id); }
     }
   }
 
@@ -234,6 +245,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         setSelected(current => current.filter(id => !deleted.has(id)));
         if (preview && deleted.has(preview)) setPreview(undefined);
         if (editing && deleted.has(editing)) setEditing(undefined);
+        if (editingCollection && deleted.has(editingCollection)) setEditingCollection(undefined);
       }
     });
   }
@@ -257,7 +269,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
 
   return <div className="aerift-workspace">
     {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} counts={counts} desktop />}
-    {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={workspace.back} desktop />}
+    {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={() => { clipboardTools.reset(); workspace.back(); }} desktop />}
     {!entries && !error && <p>Opening Workspace…</p>}
     {error && <p role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
@@ -301,6 +313,13 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
           <div><Button type="submit" disabled={disabled || !selected.length}>Create collection</Button></div>
         </form></details>}
       </div>
+      {current.id === "clipboard" && <WorkspaceClipboardTools tools={clipboardTools} count={visible.length} total={categoryItems.length} />}
+      {current.id === "collections" && selectedCollection?.kind === "collection" &&
+        <WorkspaceCollectionTools key={selectedCollection.id} name={selectedCollection.name}
+          objects={candidates} memberIds={selectedCollection.itemIds} disabled={disabled}
+          onChange={(next, previous) => previous.length === selectedCollection.itemIds.length &&
+            previous.every((id, index) => id === selectedCollection.itemIds[index]) &&
+            change(() => [{ object: { ...selectedCollection, itemIds: next } }], "Collection updated.")} />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
           label={section?.id === "documents" ? "Search imported documents" : current.id === "photos" ? "Search imported media" : "Search imported files"}
@@ -317,7 +336,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         </div>}
         {visible.length > 0 && <ol>{visiblePage.map(entry => {
           const { object } = entry;
-          const captured = object.kind === "clipboard" ? items.find(item => item.object.id === object.objectId)?.object : undefined;
+          const captured = object.kind === "clipboard" ? byId.get(object.objectId) : undefined;
           return <li key={object.id} className="ae-surface aerift-workspace-object" data-material="content" data-selected={selected.includes(object.id)}><div>
             <span className="aerift-object-glyph"><SpatialIcon name={object.kind === "url" ? "pair" : object.kind === "collection" ? "workspace" : "file"} size={24} /></span>
             <span className="aerift-object-kind">{object.kind}</span>
@@ -325,12 +344,18 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
               <label className="aerift-check"><input type="checkbox" checked={selected.includes(object.id)}
                 onChange={event => select(object.id, event.currentTarget.checked)} />{object.name}</label>}
             {object.kind === "note" && <p className="aerift-note-text">{object.text}</p>}
-            {captured?.kind === "text" && <p className="aerift-note-text">{captured.text}</p>}
+            {captured?.kind === "text" && <>
+              <p className="aerift-note-text">{captured.text}</p>
+              <WorkspaceClipboardDetails text={captured.text} format={captured.format} />
+              <WorkspaceClipboardCopy tools={clipboardTools} name={object.name} text={captured.text} />
+            </>}
             {object.kind === "collection" && (object.itemIds.length
               ? <ol>{object.itemIds.map(id => <li key={id}>{label(id)}</li>)}</ol> : <p>This collection is empty.</p>)}
             <Popover label={`Actions for ${object.name}`} actions={[
               ...(entry.hasAsset ? [{ id: "preview", label: preview === object.id ? "Close file details" : "File details",
                 onSelect: () => setPreview(preview === object.id ? undefined : object.id) }] : []),
+              ...(object.kind === "collection" ? [{ id: "members", label: "Manage collection",
+                onSelect: () => setEditingCollection(object.id) }] : []),
               ...(object.kind === "note" ? [{ id: "edit", label: "Edit note",
                 onSelect: () => { setEditing(object.id); if (noteEditor.current) noteEditor.current.open = true; } }] : []),
               ...(object.kind === "url" ? [{ id: "open-link", label: "Open in browser", onSelect: () =>
