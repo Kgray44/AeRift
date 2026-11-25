@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { verifyCollectionsGallery } from "./collections-gallery-integration-browser.mjs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,6 +25,7 @@ const back = async (page, name) => {
   assert.equal(await focused(button(page, name)), true, "focus returns to originating card");
 };
 try {
+  await verifyCollectionsGallery(browser, root);
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
   await snapped(desktop, "desktop-workspace-dark");
@@ -258,8 +260,8 @@ try {
     await page.getByText("No pins match your filters.").waitFor();
     await back(page, "Clipboard");
     await open(page, "Collections");
-    await page.getByText("New collection", { exact: true }).click();
-    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Weekend items");
+    await button(page, "New collection").click();
+    await page.getByRole("textbox", { name: "Collection name", exact: true }).fill("Weekend items");
     await button(page, "Create collection").click();
     const contents = page.getByRole("region", { name: "Weekend items contents" });
     await contents.getByRole("searchbox", { name: "Find an item to add" }).fill("Weekend plan");
