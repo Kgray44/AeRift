@@ -49,12 +49,27 @@ pub(crate) enum ControllerError {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct History {
+    pub can_back: bool,
+    pub can_forward: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HistoryAction {
+    Back,
+    Forward,
+    Reload,
+}
+
 pub(crate) trait Controller {
     type Layout: Copy;
     fn address_admitted(address: &str) -> bool;
     fn layout_admitted(layout: Self::Layout) -> bool;
     fn apply_layout(&mut self, layout: Self::Layout) -> Result<View, ControllerError>;
     fn navigate(&self, address: &str) -> Result<(), ControllerError>;
+    fn history(&self) -> History;
+    fn history_action(&self, action: HistoryAction) -> Result<(), ControllerError>;
     fn close(&mut self);
 }
 
@@ -109,7 +124,7 @@ impl<C: Controller> RequestOwner<C> {
         };
         match controller.apply_layout(self.layout) {
             Ok(next) => {
-                let reply = Self::projection(next);
+                let reply = Self::projection(next, controller.history());
                 if next != View::Hidden && reply == Reply::Unavailable {
                     self.remove();
                 } else {
@@ -124,7 +139,7 @@ impl<C: Controller> RequestOwner<C> {
         }
     }
 
-    fn projection(view: View) -> Reply {
+    fn projection(view: View, history: History) -> Reply {
         match view {
             View::Visible {
                 width_px,
@@ -133,8 +148,8 @@ impl<C: Controller> RequestOwner<C> {
                 Reply::Presented {
                     width_px,
                     height_px,
-                    can_back: false,
-                    can_forward: false,
+                    can_back: history.can_back,
+                    can_forward: history.can_forward,
                 }
             }
             _ => Reply::Unavailable,
@@ -179,7 +194,7 @@ impl<C: Controller> RequestOwner<C> {
                 let reply = match self.view.as_ref() {
                     Some((controller, view @ View::Visible { .. })) => {
                         match controller.navigate(address) {
-                            Ok(()) => Self::projection(*view), // Pane exists; does not promise a loaded page.
+                            Ok(()) => Self::projection(*view, controller.history()), // Pane exists; does not promise a loaded page.
                             Err(ControllerError::Denied) => Reply::Denied,
                             Err(ControllerError::Unavailable) => {
                                 self.remove();
@@ -191,11 +206,30 @@ impl<C: Controller> RequestOwner<C> {
                 };
                 (reply, None)
             }
-            // Not implemented by this qualification host; never advertise history controls.
-            Request::Back { .. } | Request::Forward { .. } | Request::Reload { .. } => {
-                (Reply::Unavailable, None)
-            }
+            Request::Back { .. } => (self.history_action(HistoryAction::Back), None),
+            Request::Forward { .. } => (self.history_action(HistoryAction::Forward), None),
+            Request::Reload { .. } => (self.history_action(HistoryAction::Reload), None),
             Request::Present { .. } => (Reply::Denied, None),
+        }
+    }
+
+    fn history_action(&mut self, action: HistoryAction) -> Reply {
+        let Some((controller, view @ View::Visible { .. })) = self.view.as_ref() else {
+            return Reply::Denied;
+        };
+        let snapshot = controller.history();
+        if (action == HistoryAction::Back && !snapshot.can_back)
+            || (action == HistoryAction::Forward && !snapshot.can_forward)
+        {
+            return Reply::Denied;
+        }
+        match controller.history_action(action) {
+            Ok(()) => Self::projection(*view, controller.history()),
+            Err(ControllerError::Denied) => Reply::Denied,
+            Err(ControllerError::Unavailable) => {
+                self.remove();
+                Reply::Unavailable
+            }
         }
     }
 
@@ -275,6 +309,20 @@ mod tests {
             self.navigations.set(self.navigations.get() + 1);
             Ok(())
         }
+        fn history(&self) -> History {
+            History {
+                can_back: self.navigations.get() > 0,
+                can_forward: false,
+            }
+        }
+        fn history_action(&self, action: HistoryAction) -> Result<(), ControllerError> {
+            match action {
+                HistoryAction::Back if self.navigations.get() > 0 => self.navigations.set(0),
+                HistoryAction::Reload => {}
+                _ => return Err(ControllerError::Denied),
+            }
+            Ok(())
+        }
         fn close(&mut self) {
             self.closed.set(self.closed.get() + 1);
         }
@@ -350,15 +398,15 @@ mod tests {
         assert_eq!(owner.request(navigate(1)).0, Reply::Denied);
         assert_eq!(
             owner.request(Request::Back { generation: 1 }).0,
-            Reply::Unavailable
+            Reply::Denied
         );
         assert_eq!(
             owner.request(Request::Forward { generation: 1 }).0,
-            Reply::Unavailable
+            Reply::Denied
         );
         assert_eq!(
             owner.request(Request::Reload { generation: 1 }).0,
-            Reply::Unavailable
+            Reply::Denied
         );
         owner.revoke();
         drop(owner);
@@ -397,5 +445,44 @@ mod tests {
             Reply::Presented { .. }
         ));
         assert_eq!(closed.get(), 1);
+    }
+    #[test]
+    fn history_actions_require_current_visible_controller_and_native_affordance() {
+        let closed = Rc::new(Cell::new(0));
+        let mut owner = RequestOwner::<Fake>::new(Admission::ClosedFixture, Some((600, 480)));
+        let ticket = owner.request(present(0)).1.unwrap();
+        assert_eq!(
+            owner.request(Request::Reload { generation: 0 }).0,
+            Reply::Denied
+        );
+        owner.complete(ticket, Ok(fake(&closed)));
+        assert_eq!(
+            owner.request(Request::Back { generation: 0 }).0,
+            Reply::Denied
+        );
+        assert_eq!(
+            owner.request(Request::Forward { generation: 0 }).0,
+            Reply::Denied
+        );
+        assert!(matches!(
+            owner.request(navigate(0)).0,
+            Reply::Presented { can_back: true, .. }
+        ));
+        assert!(matches!(
+            owner.request(Request::Reload { generation: 0 }).0,
+            Reply::Presented { can_back: true, .. }
+        ));
+        assert!(matches!(
+            owner.request(Request::Back { generation: 0 }).0,
+            Reply::Presented {
+                can_back: false,
+                ..
+            }
+        ));
+        owner.request(Request::Close { generation: 0 });
+        assert_eq!(
+            owner.request(Request::Reload { generation: 0 }).0,
+            Reply::Denied
+        );
     }
 }

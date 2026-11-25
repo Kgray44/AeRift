@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyReceivedActivity } from "./received-activity-browser.mjs";
+import { verifyWorkspaceReactMotion } from "./workspace-motion-browser.mjs";
 const module = process.env.AERIFT_PLAYWRIGHT_MODULE;
 const { chromium } = await import(module ? pathToFileURL(module).href : "playwright");
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
 const evidence = process.env.AERIFT_WORKSPACE_EVIDENCE;
 if (evidence) await mkdir(evidence, { recursive: true });
-const browser = await chromium.launch(process.env.AERIFT_CHROMIUM ? { executablePath: process.env.AERIFT_CHROMIUM } : {});
+const executablePath = process.env.AERIFT_CHROMIUM_PATH ?? process.env.AERIFT_CHROMIUM;
+const browser = await chromium.launch(executablePath ? { executablePath } : {});
 const snapped = async (page, name) => {
   if (!evidence) return;
   await page.screenshot({ path: join(evidence, name + ".png"), animations: "disabled" });
@@ -15,6 +18,19 @@ const snapped = async (page, name) => {
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
+const verifyHeader = async page => {
+  const header = page.locator("header.ae-compact-header");
+  const logo = header.getByRole("img", { name: "AeRift", exact: true });
+  const status = header.getByRole("group", { name: "App status" });
+  await logo.evaluate(el => el.decode());
+  const [bar, mark] = await Promise.all([header.boundingBox(), logo.boundingBox()]);
+  assert.ok(bar && mark && Math.abs(bar.x + bar.width / 2 - mark.x - mark.width / 2) <= 1);
+  assert.equal(await logo.getAttribute("src"), "/branding/aerift-mark-transparent.png");
+  assert.equal(await status.getByRole("img").count(), 2);
+  assert.equal(await status.getByRole("button").count(), 0);
+  assert.equal(await header.locator(".ae-nav-brand, .ae-nav-tools").count(), 0);
+};
+
 const assertFloatingNoteTools = async (editor, required) => {
   assert.equal(await editor.getByRole("combobox", { name: /category/i }).count(), 0, "no always-visible category dropdown");
   const canvas = editor.locator(".aw-note-canvas");
@@ -38,8 +54,10 @@ const back = async (page, name) => {
   assert.equal(await focused(button(page, name)), true, "focus returns to originating card");
 };
 try {
+  await verifyWorkspaceReactMotion(browser, root, evidence);
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
+  await verifyHeader(desktop);
   await snapped(desktop, "desktop-workspace-dark");
   await open(desktop, "File Browser");
   const importButton = button(desktop, "Import files");
@@ -224,8 +242,28 @@ try {
   await button(inbox, "Search Inbox").click();
   await verify.waitFor();
   assert.equal(await activity.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await verifyReceivedActivity(activity, { expectedTime: "2026-11-25T14:02:00.000Z" });
+  const timeline = inbox.getByRole("region", { name: "Receipt timeline" });
+  const newest = timeline.getByRole("button").first();
+  assert.equal(await newest.getAttribute("aria-label"), "View timeline entry for Received sketch.txt");
+  await newest.press("Enter");
+  const receiptPreview = inbox.getByRole("region", { name: "File preview", exact: true });
+  await button(receiptPreview, "Preview file").click();
+  await receiptPreview.getByText("<script>preview is inert text</script>", { exact: true }).waitFor();
+  assert.equal(await receiptPreview.locator("script").count(), 0);
   await snapped(activity, "desktop-activity-inbox-polished");
   await activity.close();
+
+  const receivedAndroid = await browser.newPage({ viewport: { width: 360, height: 800 } });
+  await receivedAndroid.goto(root + "/mobile.html?platform=android&receivedFixture=1");
+  await receivedAndroid.getByRole("button", { name: /^Activity(?:\s*Transfers active)?$/ }).click();
+  const androidFiles = receivedAndroid.getByRole("region", { name: "Received files", exact: true });
+  await androidFiles.getByRole("searchbox", { name: "Find a file", exact: true }).fill("chart");
+  await button(androidFiles, "View received Received chart.pdf").click();
+  await button(androidFiles, "Open file").click();
+  await androidFiles.getByText("Opened received copy.", { exact: true }).waitFor();
+  await snapped(receivedAndroid, "android-activity-received-library");
+  await receivedAndroid.close();
 
   for (const platform of ["ios", "android"]) {
     const page = await browser.newPage({ viewport: { width: platform === "ios" ? 390 : 320, height: 844 },
@@ -239,6 +277,10 @@ try {
     assert.ok(bounds.every((b, i) => i === 0 || b.left >= bounds[i - 1].right - 1));
     assert.equal(await dock.locator(".af-label-compact").filter({ hasText: /^Space$/ }).isVisible(), true);
     assert.ok(await dock.locator(".af-dock-label").evaluateAll(labels => labels.every(label => label.scrollWidth <= label.clientWidth + 1)));
+    await verifyHeader(page);
+    assert.equal(await page.locator("header.ae-compact-header").getByRole("button").count(), 0);
+    const dockSettings = button(dock, "Settings");
+    assert.equal(await dockSettings.count(), 1);
     await snapped(page, platform + "-workspace");
     await open(page, "File Browser");
     await button(page, "Import files").click();
@@ -283,7 +325,7 @@ try {
     await button(mobileEditor, "Back to notes").click();
     await back(page, "Notes");
     assert.equal(await button(page, "Clipboard").count(), 0, "Clipboard is not enabled by default");
-    await button(page, "Control Center").click();
+    await button(dock, "Settings").click();
     const controls = page.getByRole("dialog", { name: "Control Center" });
     await controls.getByRole("checkbox", { name: "Clipboard", exact: true }).check();
     await button(controls, "Close").click();
@@ -310,11 +352,75 @@ try {
     await contents.getByText("This collection is empty.").waitFor();
     await back(page, "Collections");
     const settle = async () => {
-      await page.waitForFunction(() => !document.querySelector(".af-dock-bead")?.getAnimations().some(anim => anim.playState === "running"));
+      await page.waitForFunction(() => {
+        const track = document.querySelector(".af-dock-fluid");
+        const active = track?.parentElement?.querySelector('button[aria-current="page"]');
+        if (!track || !active) return false;
+        const { x, width } = track.getBoundingClientRect();
+        const selected = active.getBoundingClientRect();
+        const shape = new DOMMatrixReadOnly(getComputedStyle(track.firstElementChild).transform);
+        return Math.abs(x + width / 2 - selected.x - selected.width / 2) < 0.6 &&
+          Math.abs(shape.a - 1) < 0.002 && Math.abs(shape.d - 1) < 0.002;
+      });
     };
     await settle();
+    // A touch scrub previews the Glass location, but neither its synthetic
+    // trailing click nor a cancellation delivers route activation.
+    const scrub = await dock.evaluate(async nav => {
+      const current = nav.querySelector('button[aria-current="page"]');
+      const lens = nav.querySelector(".af-dock-fluid");
+      const { left, width } = nav.getBoundingClientRect();
+      const start = current.getBoundingClientRect();
+      const x = start.x + start.width / 2;
+      const y = start.y + start.height / 2;
+      const end = x >= left + width / 2 ? left + 8 : left + width - 8;
+      const pointer = (kind, x) => current.dispatchEvent(new PointerEvent(kind, {
+        bubbles: true, pointerId: 21, pointerType: "touch", isPrimary: true, clientX: x, clientY: y,
+      }));
+      const initial = lens.getBoundingClientRect().x;
+      pointer("pointerdown", x);
+      pointer("pointermove", end);
+      const deadline = performance.now() + 370;
+      let visibleMovement = false;
+      while (performance.now() < deadline) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        if (Math.abs(lens.getBoundingClientRect().x - initial) > 6) { visibleMovement = true; break; }
+      }
+      pointer("pointercancel", end);
+      const inactive = [...nav.querySelectorAll("button")].find(button => button !== current);
+      const cancelled = !inactive.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      return { visibleMovement, cancelled, retainedRoute: current.getAttribute("aria-current") === "page" };
+    });
+    assert.deepEqual(scrub, { visibleMovement: true, cancelled: true, retainedRoute: true });
+    await settle();
     const before = await dock.locator(".af-dock-fluid").boundingBox();
-    await dock.getByRole("button", { name: "Rift", exact: true }).click();
+    // Capture actual frames on the same synchronous fixture interaction so CI
+    // scheduling can't skip the in-flight lens. Transport state remains unchanged.
+    const transit = await dock.evaluate(async nav => {
+      const lens = nav.querySelector(".af-dock-fluid");
+      const buttons = [...nav.querySelectorAll("button")];
+      const destination = buttons.find(node => node.textContent.trim().startsWith("Rift"));
+      const samples = [];
+      const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+      const initial = lens.getBoundingClientRect().x;
+      const last = destination.getBoundingClientRect().x;
+      const start = performance.now();
+      destination.click();
+      while (performance.now() - start < 700) {
+        await frame();
+        const x = lens.getBoundingClientRect().x;
+        const shape = new DOMMatrixReadOnly(getComputedStyle(lens.firstElementChild).transform);
+        samples.push({ x, sx: shape.a, sy: shape.d });
+        if (samples.length > 2 && Math.abs(x - last) < 0.6 &&
+          Math.abs(shape.a - 1) < 0.002 && Math.abs(shape.d - 1) < 0.002) break;
+      }
+      return { initial, last, samples, elapsed: performance.now() - start };
+    });
+    assert.ok(transit.samples.some(({ x }) => x > Math.min(transit.initial, transit.last) + 2 &&
+      x < Math.max(transit.initial, transit.last) - 2), "spring visibly travels between tabs");
+    assert.ok(transit.samples.some(({ sx, sy }) => sx > 1.015 && sx <= 1.141 && sy < 0.99 && sy >= 0.898),
+      "moving Glass stretches and compresses within the recipe bounds");
+    assert.ok(transit.elapsed < 650, "dock settles within the animation watchdog and one slow frame");
     await settle();
     const after = await dock.locator(".af-dock-fluid").boundingBox();
     assert.notEqual(before.x, after.x);
@@ -354,10 +460,11 @@ try {
     assert.equal(await prompt.count(), 0);
     assert.ok(await nearby.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
     await snapped(page, platform + "-devices");
-    await page.emulateMedia({ reducedMotion: "reduce" });
     await dock.getByRole("button", { name: "Home", exact: true }).click();
-    assert.equal(await dock.locator(".af-dock-fluid").evaluate(node => getComputedStyle(node).transitionDuration), "0s");
-    assert.equal(await dock.locator(".af-dock-bead").evaluate(node => node.getAnimations().length), 0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await settle();
+    assert.equal(await dock.locator(".af-dock-fluid").getAttribute("data-dock-quiet"), "true");
+    assert.equal(await dock.locator(".af-dock-bead").evaluate(node => getComputedStyle(node).transform), "none");
     await page.close();
   }
   for (const platform of ["windows", "ios", "android"]) {
@@ -516,3 +623,4 @@ try {
 } finally {
   await browser.close();
 }
+

@@ -48,7 +48,9 @@ try {
     };
   });
   await page.goto(target);
-  await page.getByRole("button", { name: "Control Center", exact: true }).click();
+  const homeOrbit = page.getByRole("button", { name: /^Current destination:/ });
+  if (await homeOrbit.count()) await homeOrbit.click();
+  await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   const categories = page.getByRole("group", { name: "Settings categories" });
   const category = name => categories.getByRole("button", { name, exact: true });
   const snapshot = async name => {

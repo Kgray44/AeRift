@@ -4,6 +4,7 @@ import { defineConfig, searchForWorkspaceRoot } from "vite";
 const root = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   root,
+  publicDir: fileURLToPath(new URL("../../apps/aerift/public", import.meta.url)),
   cacheDir: fileURLToPath(new URL("../../node_modules/.vite/aerift-showcase", import.meta.url)),
   server: { fs: { allow: [searchForWorkspaceRoot(root)] } },
   esbuild: { jsx: "automatic" },

@@ -32,13 +32,18 @@ test("extra peers retain individual positions in the compact list", () => {
   assert.equal(next.get("arrival"), 0);
 });
 
-test("native shells expose an accessible Control Center gear", async () => {
-  const [desktop, mobile] = await Promise.all(["windows/DesktopApp.tsx", "ios/IosApp.tsx"].map(file =>
-    readFile(new URL(`../../apps/aerift/src/${file}`, import.meta.url), "utf8")));
-  for (const source of [desktop, mobile]) {
-    assert.match(source, /aria-label="Control Center"/);
-    assert.match(source, /<SpatialIcon name="settings"/);
+test("compact native headers retain Settings only through existing navigation", async () => {
+  const [desktop, phone, dock, header] = await Promise.all([
+    "windows/DesktopApp.tsx", "ios/IosApp.tsx", "ios/MobileNavigation.tsx", "CompactHeader.tsx",
+  ].map(file => readFile(new URL(`../../apps/aerift/src/${file}`, import.meta.url), "utf8")));
+  for (const source of [desktop, phone]) {
+    assert.match(source, /<CompactHeaderMark\s*\/>/);
+    assert.match(source, /<CompactHeaderStatus/);
+    assert.doesNotMatch(source, /aria-label="Control Center"/);
   }
-  assert.match(desktop, /onClick=\{\(\) => navigate\("settings"\)\}/);
-  assert.match(mobile, /<Sheet[^>]+title="Control Center"/);
+  assert.match(desktop, /<Orbit destinations=\{navigation\.primary\}/);
+  assert.match(phone, /<Sheet[^>]+title="Control Center"/);
+  assert.match(dock, /aria-haspopup="dialog"/);
+  assert.match(header, /aerift-mark-transparent.png/);
+  assert.doesNotMatch(header, /<button/);
 });

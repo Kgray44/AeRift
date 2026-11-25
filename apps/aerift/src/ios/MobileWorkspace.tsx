@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { WorkspaceCategoryHeading, WorkspaceLibrary, useWorkspaceLibrary } from "../WorkspaceLibrary";
+import { WorkspaceCategoryHeading, WorkspaceLibrary, WorkspaceScene, useWorkspaceLibrary } from "../WorkspaceLibrary";
 import { isWorkspaceDocument, workspaceSections } from "../workspace-categories";
 import { MobileMediaTray } from "./MobileMediaTray";
 import type { MediaSource } from "./mobile-media";
@@ -8,8 +8,7 @@ import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
 import type { MobileOperations, MobilePlatformCopy, ReceivedCopy } from "./mobile-platform";
 import type { AppPort, Transfer } from "@aerift/app-contract";
-import { observeMobileMotionSuppression, type MobileMotionDirection } from "./mobile-motion";
-import { Button, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
+import { Button, MotionFeedbackProvider, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
 
 export type PickerSource = MediaSource;
 export type ModuleVisibility = Record<PickerSource | LocalModule, boolean>;
@@ -49,13 +48,10 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
   const section = workspace.section;
   const current = section?.module;
   const documents = section?.id === "documents";
-  const [moduleMotion, setModuleMotion] = useState<MobileMotionDirection>();
   function openSection(id: (typeof workspaceSections)[number]["id"]) {
-    setModuleMotion("forward");
     workspace.open(id);
   }
   function back() {
-    setModuleMotion("back");
     workspace.back();
   }
   const [catalog, setCatalog] = useState<readonly ReceivedCopy[]>([]);
@@ -85,9 +81,6 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
     : received.map(item => ({ id: item.id, ...item.file })))
     .filter(item => !documents || isWorkspaceDocument(item.name)).slice(0, operations.listReceived ? catalogLimit : 5);
 
-  useEffect(() => {
-    if (moduleMotion) return observeMobileMotionSuppression(reducedMotion, () => setModuleMotion(undefined));
-  }, [moduleMotion, reducedMotion]);
   async function present(action: "preview" | "export") {
     if (!regions.selection || presenting) return;
     setPresentationError("");
@@ -97,7 +90,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
     if (!result.ok) setPresentationError(action === "preview" ? `${copy.previewer} couldn't preview this item.` : "AeRift couldn't open sharing for this item.");
   }
 
-  return <>
+  return <MotionFeedbackProvider group="mobile-workspace">
     {regions.selection && <section key={regions.selection.selectionId} className="ios-section" aria-label="Selected object"
       data-ae-route-enter={regions.selection.selectionId !== initialSelection.current ? "neutral" : undefined}>
       <h3>Ready for Rift</h3>
@@ -110,8 +103,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       </div>
       {presentationError && <p role="alert">{presentationError}</p>}
     </section>}
-    <div className="ios-module-moment" key={section?.id ?? "library"} data-ae-route-enter={moduleMotion}
-      onAnimationEnd={event => { if (event.target === event.currentTarget && event.animationName.startsWith("ae-route-")) setModuleMotion(undefined); }}>
+    <WorkspaceScene scene={workspace}><div className="ios-module-moment" key={section?.id ?? "library"}>
     {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} />}
     {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} />}
     {current === "files" && <section className="ae-surface ios-section aw-focused-surface" data-material="content" aria-labelledby="ios-files">
@@ -156,7 +148,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
         regions={regions} openRift={openRift} clipboardSharing={clipboardSharing}
         markClipboardSelection={markClipboardSelection} operations={operations} copy={copy} />
       : <p role="alert">AeRift couldn't read the saved workspace. Files and Photos are still available.</p>)}
-    </div>
+    </div></WorkspaceScene>
     {regions.selecting && <p role="status">Opening picker or preparing item…</p>}
-  </>;
+  </MotionFeedbackProvider>;
 }
