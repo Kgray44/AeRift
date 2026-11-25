@@ -88,7 +88,7 @@ try {
   assert.equal(await phone.getByRole("button", { name: "Test contact B" }).isVisible(), false);
   assert.equal(await phone.getByRole("heading", { name: "Test contact A" }).evaluate(node => document.activeElement === node), true);
   assert.equal(await phone.locator(".ae-friends-detail").evaluate(node => getComputedStyle(node).animationName), "none");
-  await phone.getByLabel("Send to").selectOption("friend-phone");
+  await phone.getByRole("region", { name: "Send to friend" }).getByRole("combobox", { name: /^Send to/ }).selectOption("friend-phone");
   await phone.getByRole("button", { name: "File", exact: true }).click();
   await phone.getByRole("button", { name: "Send offer" }).click();
   await phone.getByText("Synthetic sample · queued").waitFor();
