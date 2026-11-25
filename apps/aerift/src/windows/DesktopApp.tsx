@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FriendsWorkspace } from "../FriendsWorkspace";
 import { WindowsFriendsSetup, setupPort, type SetupView } from "./WindowsFriendsSetup";
-import type { FriendsSnapshot } from "@aerift/app-contract/friends";
+import { ordinaryDevices, type FriendsSnapshot } from "@aerift/app-contract/friends";
 import { WindowsFriendsFiles } from "./WindowsFriendsFiles";
 import { WindowsFriendsMember } from "./WindowsFriendsMember";
 import { DeviceTrust } from "../DeviceTrust";
@@ -36,7 +36,11 @@ export function DesktopApp() {
   const friends: FriendsSnapshot | undefined = friendsView ? {
     version: 1, contacts: friendsView.contacts, offers: [], invitations: [], supportedObjects: [],
   } : undefined;
-  const snapshot = connection.state === "ready" ? { ...connection.snapshot, friends } : undefined;
+  const snapshot = connection.state === "ready" ? {
+    ...connection.snapshot,
+    devices: ordinaryDevices(connection.snapshot.devices, friends),
+    friends,
+  } : undefined;
   const refreshFriends = useCallback(() => {
     void command<SetupView>("friends_setup_view").then(answer => setFriendsView(answer.ok ? answer.value : undefined));
   }, []);
@@ -285,6 +289,7 @@ export function DesktopApp() {
         <TransferWorkspace
           port={nativeAppPort}
           desktopView={transferView}
+          friendsRoster={friends}
           onOpenRift={() => navigate("rift")}
           pairRequest={pairRequest}
           platform="windows"

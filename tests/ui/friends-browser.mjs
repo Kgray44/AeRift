@@ -94,7 +94,23 @@ try {
   assert.equal(await phone.getByRole("button", { name: "Friends" }).count(), 0);
   await phone.goto(base + "/mobile.html?friendsFixture=1");
   await phone.getByRole("button", { name: "Devices", exact: true }).click();
-  assert.equal(await phone.getByText("Test phone", { exact: true }).count(), 0);
+  const nearby = phone.getByRole("region", { name: "Nearby Devices" });
+  await nearby.getByText("Studio PC", { exact: true }).waitFor();
+  assert.equal(await nearby.getByText("Test phone", { exact: true }).count(), 0);
+  assert.equal(await phone.getByText("Test phone", { exact: true }).count(), 0,
+    "a known Friends device is not mounted in the hidden ordinary composer");
+  await phone.getByRole("button", { name: "Rift", exact: true }).click();
+  const ordinaryPicker = phone.getByRole("radiogroup", { name: "Destination device" });
+  const studio = ordinaryPicker.locator("label.ae-spatial-peer").filter({ hasText: "Studio PC" });
+  await studio.waitFor();
+  assert.equal(await phone.getByText("Test phone", { exact: true }).count(), 0,
+    "the active ordinary picker excludes Friends devices too");
+  const manual = phone.getByRole("region", { name: "Manual transfer" });
+  await manual.getByRole("button", { name: "Choose another file" }).click();
+  await manual.getByText("Harbor survey.pdf", { exact: true }).waitFor();
+  await studio.click();
+  await manual.getByRole("button", { name: "Send file", exact: true }).waitFor();
+  assert.equal(await manual.getByRole("button", { name: "Send file", exact: true }).isEnabled(), true);
   await phone.getByRole("button", { name: "Friends", exact: true }).click();
   const mobileAddFriend = phone.getByRole("button", { name: "Add a friend", exact: true });
   await mobileAddFriend.click();
