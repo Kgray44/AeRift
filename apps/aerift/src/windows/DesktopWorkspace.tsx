@@ -5,6 +5,7 @@ import { Button, IconAction, MotionFeedbackProvider, Popover, SpatialIcon } from
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
+import { WorkspaceDocumentsGallery } from "../WorkspaceDocumentsGallery";
 import { WorkspaceChosenFolder } from "./WorkspaceChosenFolder";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
@@ -55,6 +56,21 @@ function AssetPreview({ object }: { object: DigitalObject }) {
     {object.kind === "video" && <video src={url} aria-label={object.name} controls preload="metadata" />}
     <a href={url} download={object.name}>Save a copy</a>
   </>;
+}
+
+async function exportDocumentCopy(id: string, name: string) {
+  const asset = await loadWorkspaceAsset(id);
+  if (!asset) return false;
+  const href = URL.createObjectURL(asset);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = name.replace(/[\u0000-\u001f\u007f/\\]/gu, "_") || "document";
+  document.body.append(link);
+  try { link.click(); } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 10_000);
+  }
+  return true;
 }
 
 const pageSize = 48;
@@ -141,7 +157,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
     }
   }
 
-  function importFiles(files: File[], mediaOnly: boolean) {
+  async function importFiles(files: File[], mediaOnly: boolean): Promise<readonly string[]> {
     const additions: WorkspaceEntry[] = [];
     for (const file of files) {
       const kind = file.type.startsWith("image/") ? "photo" : file.type.startsWith("video/") ? "video" : "file";
@@ -149,8 +165,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
       additions.push({ object: { ...newObject(file.name), kind: mediaOnly ? kind : "file",
         sizeBytes: file.size, mediaType: file.type || undefined }, asset: file });
     }
-    if (additions.length) void change(() => additions, `Imported ${additions.length} ${additions.length === 1 ? "item" : "items"}.`);
-    else if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
+    if (additions.length) {
+      const saved = await change(() => additions, `Imported ${additions.length} ${additions.length === 1 ? "item" : "items"}.`);
+      return saved ? additions.map(({ object }) => object.id) : [];
+    }
+    if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
+    return [];
   }
 
   async function submit(event: FormEvent<HTMLFormElement>, kind: "url" | "collection") {
@@ -264,7 +284,16 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
       disabled={disabled} onSave={object => change(() => [{ object }], "")} onRemove={id => removeObjects([id])}
       onBack={workspace.back} heading={back => <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} desktop />}
       collectionSelection={selected} onCollectionSelect={select} />}
-    {current && section?.id !== "notes" && <div className="aerift-workspace-content">
+    {section?.id === "documents" && <WorkspaceDocumentsGallery
+      catalog={categoryItems.flatMap(({ object, hasAsset }) =>
+        object.kind === "file" && hasAsset ? [{id: object.id, name: object.name, sizeBytes: object.sizeBytes}] : [])}
+      scope="desktop" disabled={disabled} readAsset={loadWorkspaceAsset}
+      onImport={files => importFiles(files, false)} onRemove={id => removeObjects([id])}
+      onExport={row => exportDocumentCopy(row.id, row.name)}
+      onSelect={row => { select(row.id, !selected.includes(row.id)); return true; }}
+      selectLabel="Toggle collection selection"
+      emptyText="No documents here yet. Use the plus icon to import documents." />}
+    {current && section?.id !== "notes" && section?.id !== "documents" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
         onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
@@ -272,7 +301,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
           <div className="aerift-workspace-import">
             <IconAction variant="secondary" icon="add" label={importLabel} disabled={disabled}
               onClick={() => importInput.current?.click()} />
-            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
+            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : undefined}
               onChange={event => {
                 importFiles(Array.from(event.currentTarget.files ?? []), current.id === "photos");
                 event.currentTarget.value = "";
@@ -305,8 +334,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
       {active && section?.id === "files" && isTauri() && <WorkspaceChosenFolder />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
-          label={section?.id === "documents" ? "Search imported documents" : current.id === "photos" ? "Search imported media" : "Search imported files"}
-          kinds={section?.id === "documents" ? [] : current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
+          label={current.id === "photos" ? "Search imported media" : "Search imported files"}
+          kinds={current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
       </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
         {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}

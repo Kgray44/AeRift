@@ -413,7 +413,7 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
                   {preferences.gestures ? "Camera gestures are enabled in Rift." : "Camera gestures are off."}</p>
               </>}
               {destination === "workspace" && <>
-                <MobileWorkspace regions={regions} modules={preferences} reducedMotion={appearance.motion === "reduce"}
+                <MobileWorkspace platform={platform} regions={regions} modules={preferences} reducedMotion={appearance.motion === "reduce"}
                   pick={pick ?? operations.pick} media={library} operations={operations} copy={copy} received={summary.received} openRift={() => navigate("rift")}
                   objects={objects} save={saveObjects} clipboardSharing={canShareClipboard}
                   markClipboardSelection={id => { clipboardSelections.current.add(id); }} />
