@@ -116,6 +116,10 @@ impl PeerNode {
         })
     }
 
+    pub(crate) fn identity(&self) -> &Identity {
+        &self.identity
+    }
+
     pub fn pairing(&self) -> &Pairing {
         &self.pairing
     }

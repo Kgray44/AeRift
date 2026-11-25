@@ -12,7 +12,7 @@ use tokio::{sync::watch, time::Instant};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const INVITATION_TTL: Duration = Duration::from_secs(300);
+pub(crate) const INVITATION_TTL: Duration = Duration::from_secs(300);
 const MAX_BAD_ATTEMPTS: u8 = 12;
 const MAX_REDEMPTIONS_PER_PEER: u8 = 3;
 
