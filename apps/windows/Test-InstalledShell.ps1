@@ -75,10 +75,16 @@ $listener.Stop()
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port --remote-debugging-address=127.0.0.1"
 # Optional runner-owned observations; no app sampling outside this smoke.
 $perf = $env:AERIFT_PERF_OBSERVE -eq '1'
+$folderFixture = $env:AERIFT_WORKSPACE_FOLDER_FIXTURE -ceq 'synthetic-fixed-ntfs-only'
+if ($folderFixture -and ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted')) {
+    throw 'The foreground folder fixture may only launch on a disposable hosted runner.'
+}
+$windowStyle = if ($folderFixture) { 'Normal' } else { 'Hidden' }
 $launchClock = if ($perf) { [Diagnostics.Stopwatch]::StartNew() } else { $null }
-$process = Start-Process -FilePath (Join-Path $installDirectory 'aerift.exe') -PassThru -WindowStyle Hidden
+$process = Start-Process -FilePath (Join-Path $installDirectory 'aerift.exe') -PassThru -WindowStyle $windowStyle
 $socket = [Net.WebSockets.ClientWebSocket]::new()
-$deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(110))
+$deadlineSeconds = if ($folderFixture) { 220 } else { 110 }
+$deadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($deadlineSeconds))
 $registryCleanup = [System.Collections.Generic.List[string]]::new()
 $forwarded = $null
 $id = 0
@@ -97,7 +103,11 @@ try {
     }
     if (-not $target) { throw 'AeRift WebView did not become available.' }
 
-    $socket.ConnectAsync([uri]$target.webSocketDebuggerUrl, $deadline.Token).GetAwaiter().GetResult() | Out-Null
+    $debugEndpoint = [uri]$target.webSocketDebuggerUrl
+    if ($debugEndpoint.Scheme -cne 'ws' -or $debugEndpoint.Host -cne '127.0.0.1' -or $debugEndpoint.Port -ne $port) {
+        throw 'Unexpected non-owned WebView debugger endpoint.'
+    }
+    $socket.ConnectAsync($debugEndpoint, $deadline.Token).GetAwaiter().GetResult() | Out-Null
     $homeCheck = @'
 document.querySelector('h1')?.textContent === 'AeRift' &&
 document.querySelector('#aerift-desktop-destination')?.textContent === 'Home' &&
@@ -206,6 +216,12 @@ document.querySelector('.ae-dock-file')?.textContent.includes('AeRift Explorer t
     }
 
     $version = Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/version" -TimeoutSec 5
+    $workspaceFolderFixture = $null
+    if ($folderFixture) {
+        . (Join-Path $PSScriptRoot 'Test-InstalledWorkspaceFolder.ps1')
+        $workspaceFolderFixture = Test-InstalledWorkspaceFolder $socket ([ref]$id) $deadline.Token $process
+        if (!$workspaceFolderFixture.releasedOnNativeClose) { throw 'Installed workspace folder qualification did not complete.' }
+    }
     $receipt = [ordered]@{
         commit = (git rev-parse HEAD)
         windowsVersion = [Environment]::OSVersion.VersionString
@@ -217,11 +233,12 @@ document.querySelector('.ae-dock-file')?.textContent.includes('AeRift Explorer t
         settingsRendered = $true
         simplifiedHomeAndOrbit = $true
         fullWorkspace = $true
+        workspaceSyntheticNativeFolder = $workspaceFolderFixture
         nativeTrayVisibilityCommands = $true
         explorerAndStartupRegistration = ($env:GITHUB_ACTIONS -eq 'true')
         secondInstanceStagesWithoutSending = ($env:GITHUB_ACTIONS -eq 'true')
     }
-    $receipt | ConvertTo-Json | Tee-Object -FilePath (Join-Path $evidence 'windows-launch.json')
+    $receipt | ConvertTo-Json -Depth 4 | Tee-Object -FilePath (Join-Path $evidence 'windows-launch.json')
 } finally {
     if ($socket.State -eq [Net.WebSockets.WebSocketState]::Open -and $registryCleanup.Count) {
         $cleanupDeadline = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(10))
