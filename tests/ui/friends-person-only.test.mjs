@@ -18,5 +18,5 @@ test("Friends requires a verified route and allows explicit accept and decline o
   assert.match(windows, /!view\.personTransfersAvailable/);
   assert.match(windows, /action: "accept_contact_offer", id: offer\.id/);
   assert.match(windows, /action: "decline_contact_offer", id: offer\.id/);
-  assert.match(windows, /!view\.canRelease/);
+  assert.doesNotMatch(windows, /(?:action: "send"|Send accepted file)/, "native first acceptance releases the offer; no second sender action");
 });

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { verifyFriendProfiles } from "./friends-profile-browser.mjs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 const playwright = process.env.AERIFT_FRIENDS_PLAYWRIGHT;
@@ -54,7 +55,7 @@ try {
   assert.equal(await desktop.getByText("Test phone", { exact: true }).count(), 0);
   await desktop.getByRole("button", { name: "Choose file and send offer" }).click();
   await desktop.getByText("Waiting for acceptance. No file has been sent.").waitFor();
-  assert.equal(await desktop.getByRole("button", { name: "Send accepted file" }).isEnabled(), false);
+  assert.equal(await desktop.getByRole("button", { name: "Send accepted file" }).count(), 0);
   await desktop.getByRole("button", { name: "Back to friend details" }).click();
   await desktop.getByRole("button", { name: "Enroll a device" }).click();
   await desktop.getByRole("heading", { name: "Device enrollment" }).waitFor();
@@ -120,7 +121,7 @@ try {
   assert.equal(await mobileAddFriend.evaluate(node => document.activeElement === node), true);
   await phone.getByRole("button", { name: "Test contact A" }).click();
   assert.equal(await phone.getByRole("button", { name: "Test contact B" }).isVisible(), false);
-  assert.equal(await phone.getByRole("heading", { name: "Test contact A" }).evaluate(node => document.activeElement === node), true);
+  assert.equal(await phone.getByRole("heading", { name: "Test contact A", level: 3, exact: true }).evaluate(node => document.activeElement === node), true);
   assert.equal(await phone.locator(".ae-friends-detail").evaluate(node => getComputedStyle(node).animationName), "none");
   assert.equal(await phone.getByRole("region", { name: "Send to friend" }).getByRole("combobox").count(), 0);
   assert.equal(await phoneName.count(), 0, "sender never sees the recipient’s device");
@@ -133,5 +134,6 @@ try {
   await phone.getByRole("button", { name: "Test contact B" }).click();
   assert.equal(await phone.locator(".ae-friends-detail option").count(), 0);
   assert.equal(await phone.getByText("Synthetic sample · queued").count(), 0);
+  await verifyFriendProfiles(browser, base);
   console.log("Friends desktop two-pane and mobile list/detail, capability gating, recipient scoping, confirm/send and native snapshots verified with synthetic IPC.");
 } finally { await browser.close(); }

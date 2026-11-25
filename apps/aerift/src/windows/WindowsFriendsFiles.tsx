@@ -11,13 +11,12 @@ type FileView = {
   personTransfersAvailable?: boolean;
   incoming: FileOffer[];
   outgoing: readonly [string, number, string | null] | null;
-  canRelease: boolean;
   receipts: readonly [string, string, SendStatus][];
 };
 type Action =
   | { action: "offer_contact"; friendId: string }
   | { action: "accept_contact_offer" | "decline_contact_offer" | "reconcile_contact_offer"; id: string }
-  | { action: "send" | "withdraw"; id: string };
+  | { action: "withdraw"; id: string };
 
 export function WindowsFriendsFiles({ contacts, preferredContact }: { contacts: readonly FriendContact[]; preferredContact?: string }) {
   const friendField = useId();
@@ -51,7 +50,7 @@ export function WindowsFriendsFiles({ contacts, preferredContact }: { contacts: 
     setBusy(true);
     setNote("");
     try {
-      const result = await command<SendStatus | null>("friends_files_action", { request });
+      const result = await command<null>("friends_files_action", { request });
       if (!result.ok) {
         setNote(result.error.code === "cancelled" ? "Action canceled." : "Couldn’t complete this action. Try again.");
       } else if (request.action === "offer_contact") {
@@ -60,8 +59,6 @@ export function WindowsFriendsFiles({ contacts, preferredContact }: { contacts: 
         setNote("You accepted the file on this device.");
       } else if (request.action === "decline_contact_offer") {
         setNote("You declined the file on this device.");
-      } else if (request.action === "send") {
-        setNote(result.value?.state === "completed" ? "File received and verified." : "Transfer did not complete.");
       }
     } catch {
       setNote("Friends transfers are temporarily unavailable.");
@@ -93,9 +90,7 @@ export function WindowsFriendsFiles({ contacts, preferredContact }: { contacts: 
           <Button type="submit" disabled={busy || !selected}>Choose file and send offer</Button>
         </form>}
       {outgoing && <section aria-label="Outgoing offer">
-        <p>{view.canRelease ? "Accepted. You can send the file now." : "Waiting for acceptance. No file has been sent."}</p>
-        <Button disabled={busy || !view.personTransfersAvailable || !view.canRelease}
-          onClick={() => void apply({ action: "send", id: outgoing[0] })}>Send accepted file</Button>
+        <p>Waiting for acceptance. No file has been sent.</p>
         <FriendsIconButton icon="close" name="Withdraw offer" disabled={busy}
           onClick={() => void apply({ action: "withdraw", id: outgoing[0] })} />
       </section>}

@@ -24,6 +24,7 @@ const icons = {
   collection: <><path d="M4 6.7h6l2 2h7.5a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.2v-10A1.5 1.5 0 0 1 4.5 6.7Zm1-2.4h12.4" /></>,
   friends: <><circle cx="9" cy="8" r="3" /><path d="M2 20v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2m1-14a3 3 0 0 1 0 6m2 2a5 5 0 0 1 3 4v2" /></>,
   send: <><path d="m3 10 18-7-7 18-3-8Zm8 3L21 3" /></>,
+  edit: <><path d="m4 16 11-11 4 4L8 20l-5 1 1-5Zm9-9 4 4" /><path d="m15 5 2-2c.6-.6 1.4-.6 2 0l2 2c.6.6.6 1.4 0 2l-2 2" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   workspace: <><circle cx="12" cy="12" r="2.5" /><circle cx="12" cy="12" r="8.5" /><path d="M12 1v2.5m0 17V23M1 12h2.5m17 0H23" /></>,

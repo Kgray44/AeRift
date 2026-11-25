@@ -4,6 +4,8 @@ import {
   type FriendContact, type FriendObjectKind, type FriendsPort, type FriendsRequest, type FriendsSnapshot,
 } from "@aerift/app-contract/friends";
 import "./friends.css";
+import { FriendProfileEditor, ProfileBadge, type ReceivedProfileImages } from "./FriendProfileEditor";
+import { emptyFriendProfiles, emptyPresentation, friendDisplayName, readFriendProfiles, saveFriendPresentation } from "./friends-profile";
 
 const kinds: Record<FriendObjectKind, string> = {
   file: "File", folder: "Folder", photo: "Photo", video: "Video", link: "Link", clipboard: "Clipboard item", note: "Note",
@@ -25,9 +27,18 @@ export function FriendsIconButton({ name, icon, ...props }: Omit<ComponentProps<
 
 const panelNames = { transfer: "Private transfers", enrollment: "Device enrollment" } as const;
 
-export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop }: {
-  snapshot: FriendsSnapshot; port: Pick<FriendsPort, "apply"> & Partial<FriendsPort>; mobile?: boolean; setup?: ReactNode; desktop?: FriendsDesktop;
+export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, receivedProfileImages, verifiedOwnProfileName }: {
+  snapshot: FriendsSnapshot; port: Pick<FriendsPort, "apply"> & Partial<FriendsPort>; mobile?: boolean; setup?: ReactNode; desktop?: FriendsDesktop; receivedProfileImages?: ReceivedProfileImages;
+  /** Read-only name from a host that has verified the user's shared profile. */
+  verifiedOwnProfileName?: string;
 }) {
+  const [profiles, setProfiles] = useState(() => {
+    try { return readFriendProfiles(localStorage); } catch { return emptyFriendProfiles(); }
+  });
+  const [edit, setEdit] = useState<{ kind: "own" } | { kind: "friend"; id: string }>();
+  const [editOpen, setEditOpen] = useState(false);
+  const editorRevision = useRef(0);
+  const editOrigin = useRef<HTMLButtonElement>(null);
   const headingId = useId();
   const inviteId = useId();
   const cardId = useId();
@@ -53,6 +64,9 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop }: {
   const busyRef = useRef(false);
   const [error, setError] = useState("");
   const contact = snapshot.contacts.find(item => item.id === selected);
+  const editFriend = edit?.kind === "friend" ? snapshot.contacts.find(item => item.id === edit.id) : undefined;
+  const ownName = friendDisplayName(verifiedOwnProfileName ?? "My profile", profiles.self);
+  const contactName = contact ? friendDisplayName(contact.label, profiles.people[contact.id]) : undefined;
   const title = useRef<HTMLHeadingElement>(null);
   const previous = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
@@ -63,6 +77,14 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop }: {
   useLayoutEffect(() => {
     if (panel !== "overview") panelHeading.current?.focus();
   }, [panel]);
+
+  function editProfile(target: NonNullable<typeof edit>, origin: HTMLButtonElement) {
+    editOrigin.current = origin;
+    origin.focus({ preventScroll: true });
+    editorRevision.current++;
+    setEdit(target);
+    setEditOpen(true);
+  }
 
   function showPairing(origin: HTMLButtonElement) {
     // Native dialog focus restoration uses the element focused before showModal.
@@ -124,13 +146,18 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop }: {
             aria-controls={pairingMounted ? pairingId : undefined} onClick={event => showPairing(event.currentTarget)} />
         </div>}
       </div>
+      <div className="ae-friends-own">
+        <ProfileBadge name={ownName} avatar={profiles.self.avatar} />
+        <span><strong>{ownName}</strong>{ownName !== "My profile" && <small>My profile</small>}</span>
+        <FriendsIconButton icon="edit" name="Edit my profile" aria-haspopup="dialog"
+          onClick={event => editProfile({ kind: "own" }, event.currentTarget)} />
+      </div>
       {!desktop && <p>Friends are invited privately. Nearby devices aren't added here automatically.</p>}
       {snapshot.contacts.length > 0 ? <ul className="ae-friends-roster">
         {snapshot.contacts.map(person => <li key={person.id}><Button className="ae-friends-row" variant="quiet"
           aria-pressed={person.id === contact?.id} onClick={() => { setEntry("forward"); setSelected(person.id); setPanel("overview"); }}>
-          {desktop ? <span aria-hidden="true" className="ae-friends-avatar">{person.label.trim().slice(0, 1).toLocaleUpperCase() || "?"}</span>
-            : <SpatialIcon name="friends" />}
-          <span>{person.label}</span><SpatialIcon name="chevron" size={16} />
+          <ProfileBadge name={friendDisplayName(person.label, profiles.people[person.id])} avatar={profiles.people[person.id]?.avatar} />
+          <span>{friendDisplayName(person.label, profiles.people[person.id])}</span><SpatialIcon name="chevron" size={16} />
         </Button></li>)}
       </ul> : !desktop ? <p>No friends yet.</p> : null}
     </GlassSurface>
@@ -149,8 +176,12 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop }: {
         {contact ? <>
           {mobile && <Button variant="quiet" onClick={() => { setEntry("back"); setSelected(undefined); }}>Back to friends</Button>}
           <div className="ae-friends-contact-heading">
-            {desktop && <span aria-hidden="true" className="ae-friends-avatar">{contact.label.trim().slice(0, 1).toLocaleUpperCase() || "?"}</span>}
-            <div><h3 tabIndex={-1} ref={title}>{contact.label}</h3>{desktop && <p>Verified friend</p>}</div>
+            <ProfileBadge name={contactName!} avatar={profiles.people[contact.id]?.avatar} size="detail" />
+            <div><h3 tabIndex={-1} ref={title}>{contactName}</h3>
+              {desktop && <p>{contactName === contact.label ? "Verified friend" : `Verified as ${contact.label}`}</p>}
+            </div>
+            <FriendsIconButton icon="edit" name="Edit friend appearance" aria-haspopup="dialog"
+              onClick={event => editProfile({ kind: "friend", id: contact.id }, event.currentTarget)} />
             {desktop && <FriendsIconButton variant="primary" icon="send" name={`Send a file to ${contact.label}`}
               onClick={event => reveal("transfer", event.currentTarget, contact.id)} />}
           </div>
@@ -210,6 +241,13 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop }: {
       </div>}
       {error && pairing && <p role="alert">{error}</p>}
     </Sheet>}
+    {edit && (edit.kind === "own" || editFriend) && <FriendProfileEditor key={editorRevision.current}
+      open={editOpen} received={receivedProfileImages}
+      target={edit.kind === "own" ? { kind: "own", verifiedName: verifiedOwnProfileName ?? "My profile", local: profiles.self }
+        : { kind: "friend", verifiedName: editFriend!.label, local: profiles.people[edit.id] ?? emptyPresentation() }}
+      onClose={() => setEditOpen(false)}
+      onAfterClose={() => (editOrigin.current?.isConnected ? editOrigin.current : title.current)?.focus({ preventScroll: true })}
+      onSave={value => setProfiles(saveFriendPresentation(localStorage, edit.kind === "own" ? "self" : edit.id, value))} />}
     {error && !pairing && <p className="ae-friends-feedback" role="alert">{error}</p>}
   </div>;
 }
