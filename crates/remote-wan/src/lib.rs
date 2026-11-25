@@ -20,8 +20,8 @@ use iroh::{
 pub use iroh::{EndpointId, RelayUrl, SecretKey};
 mod native_host;
 mod qualification;
-pub use qualification::{QualificationAction, QualificationController, QualificationReply};
 pub use native_host::{DeviceCard, OperatorRelay, WanSession};
+pub use qualification::{QualificationAction, QualificationController, QualificationReply};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const ALPN: &[u8] = b"aerift/remote/opaque-tls/1";
