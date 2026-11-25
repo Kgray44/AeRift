@@ -32,7 +32,9 @@ try {
   await desktop.getByRole("heading", { name: "Private transfers" }).waitFor();
   await desktop.getByLabel("Your reachable private IPv4 address").fill("100.64.0.1");
   await desktop.getByRole("button", { name: "Open five-minute transfer window" }).click();
-  assert.equal(await desktop.getByLabel("Friend", { exact: true }).inputValue(), "friend-a");
+  await desktop.getByText("Transfer window open", { exact: true }).waitFor();
+  assert.ok((await commands()).includes("friends_files_action:open"));
+  assert.equal(await desktop.getByRole("combobox", { name: "Friend", exact: true }).inputValue(), "friend-a");
   await desktop.getByLabel("Their authorized device").selectOption("friend-phone");
   await desktop.getByLabel("Their offer address").fill("100.64.0.2:54000");
   await desktop.getByLabel("Their payload address").fill("100.64.0.2:54001");

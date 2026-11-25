@@ -136,3 +136,5 @@
   .ae-friends[data-desktop] { grid-template-columns: minmax(0, 1fr); }
   .ae-friends[data-desktop] .ae-friends-roster { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .3rem; }
 }
+
+.ae-friends-field { display: grid; gap: .4rem; }

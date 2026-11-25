@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
 import { Button } from "@aerift/ui";
 import { FriendsIconButton } from "../FriendsWorkspace";
@@ -29,6 +29,7 @@ type Action =
   | { action: "send" | "withdraw"; id: string };
 
 export function WindowsFriendsFiles({ contacts, preferredContact }: { contacts: readonly FriendContact[]; preferredContact?: string }) {
+  const friendField = useId();
   const [view, setView] = useState<FileView>();
   const [local, setLocal] = useState("");
   const [person, setPerson] = useState(preferredContact ?? "");
@@ -136,10 +137,13 @@ export function WindowsFriendsFiles({ contacts, preferredContact }: { contacts: 
             void apply({ action: "offer_person", friendId: select.id, routes: personRoutes });
           } else if (!forPerson && recipient && select) void apply({ action: "offer", friendId: select.id, device: recipient.id, offerRoute: offerRoute.trim(), payloadRoute: payloadRoute.trim() });
         }}>
-          <label>Friend<select value={person} onChange={event => { setPerson(event.target.value); setDevice(""); setTarget("device"); setRoutes({}); setOfferRoute(""); setPayloadRoute(""); }}>
-            <option value="">Choose a verified friend</option>
-            {selectedRoster.map(contact => <option key={contact.id} value={contact.id}>{contact.label}</option>)}
-          </select></label>
+          <div className="ae-friends-field">
+            <label htmlFor={friendField}>Friend</label>
+            <select id={friendField} value={person} onChange={event => { setPerson(event.target.value); setDevice(""); setTarget("device"); setRoutes({}); setOfferRoute(""); setPayloadRoute(""); }}>
+              <option value="">Choose a verified friend</option>
+              {selectedRoster.map(contact => <option key={contact.id} value={contact.id}>{contact.label}</option>)}
+            </select>
+          </div>
           {view.profile === "primary" && (select?.devices.length ?? 0) >= 2 &&
             <label>Target<select value={target} onChange={event => setTarget(event.target.value as "device" | "person")}>
               <option value="device">One specific device</option>
