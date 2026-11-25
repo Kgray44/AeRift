@@ -16,7 +16,11 @@ test("the existing ordinary installer lane requires the disposable native folder
 });
 
 test("fixture drives only its foreground app's actual chooser and synthetic fixed NTFS scope", () => {
-  assert.match(fixture, /ProcessIdProperty, \[int\]\$OwnedProcess.Id/);
+  assert.match(fixture, /GetWindowThreadProcessId\(\$candidate, \[ref\]\$processId\)[\s\S]*\$processId -ne \$OwnedProcess.Id/);
+  assert.match(fixture, /GetAncestor\(\$candidate, 3\) -ne \$hwnd/);
+  assert.match(fixture, /AutomationElement\]::FromHandle\(\$candidate\)/);
+  assert.match(fixture, /Input\.dispatchMouseEvent/);
+  assert.match(fixture, /button\.contains\(document\.elementFromPoint/);
   assert.match(fixture, /GetForegroundWindow\(\) -eq \$hwnd/);
   assert.match(fixture, /AutomationIdProperty, '1152'/);
   assert.match(fixture, /Select-Chooser \$true ''/);
@@ -25,4 +29,12 @@ test("fixture drives only its foreground app's actual chooser and synthetic fixe
   assert.match(fixture, /-ItemType Junction -Target \$outside/);
   assert.match(fixture, /CloseMainWindow\(\)/);
   assert.doesNotMatch(fixture, /SendKeys|__TAURI_INTERNALS__|window\.invoke|Start-Process/);
+});
+
+test("diagnostics expose booleans rather than app data, and both WebView expressions parse", () => {
+  assert.match(fixture, /probeAvailable=/);
+  assert.match(fixture, /ownerForeground=\$ownedForeground ownedPopupForeground=\$popupOwned/);
+  const scripts = [...fixture.matchAll(/\$(?:probe|point) = @'\n([\s\S]*?)\n'@/g)];
+  assert.equal(scripts.length, 2);
+  for (const [, source] of scripts) assert.doesNotThrow(() => new Function(`return (${source});`));
 });

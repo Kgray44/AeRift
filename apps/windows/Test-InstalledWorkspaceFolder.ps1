@@ -16,15 +16,40 @@ function Test-InstalledWorkspaceFolder {
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
         public static extern bool SetForegroundWindow(System.IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern System.IntPtr GetLastActivePopup(System.IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern System.IntPtr GetAncestor(System.IntPtr window, uint flag);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(System.IntPtr window, out uint processId);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static extern bool IsWindowVisible(System.IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+        public static extern int GetClassName(System.IntPtr window, System.Text.StringBuilder value, int capacity);
 '@
 
     function Find-Chooser {
-        $owned = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$OwnedProcess.Id)
-        $native = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')
-        $dialogs = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,
-            [System.Windows.Automation.AndCondition]::new($owned, $native))
-        if ($dialogs.Count -gt 1) { throw 'Multiple owned dialog candidates.' }
-        if ($dialogs.Count -eq 1) { return $dialogs[0] }
+        # A parented shell dialog need not be a child of UIA's desktop root.
+        # Find the actual foreground/popup HWND, then bind UIA to that exact
+        # visible #32770 owned by the installed app's original main HWND.
+        $foreground = [AeRiftFixture.OwnedWindow]::GetForegroundWindow()
+        $popup = [AeRiftFixture.OwnedWindow]::GetLastActivePopup($hwnd)
+        foreach ($candidate in @($foreground, $popup) | Select-Object -Unique) {
+            if ($candidate -eq [IntPtr]::Zero -or $candidate -eq $hwnd -or
+                ![AeRiftFixture.OwnedWindow]::IsWindowVisible($candidate) -or
+                [AeRiftFixture.OwnedWindow]::GetAncestor($candidate, 3) -ne $hwnd) {
+                continue
+            }
+            $processId = [uint32]0
+            if (![AeRiftFixture.OwnedWindow]::GetWindowThreadProcessId($candidate, [ref]$processId) -or
+                $processId -ne $OwnedProcess.Id) { continue }
+            $class = [Text.StringBuilder]::new(32)
+            if (![AeRiftFixture.OwnedWindow]::GetClassName($candidate, $class, $class.Capacity) -or
+                $class.ToString() -cne '#32770') { continue }
+            $element = [System.Windows.Automation.AutomationElement]::FromHandle($candidate)
+            if ($element.Current.ProcessId -eq $OwnedProcess.Id) { return $element }
+        }
     }
 
     function Wait-Fixture($Predicate, [string]$Message) {
@@ -37,8 +62,74 @@ function Test-InstalledWorkspaceFolder {
         throw $Message
     }
 
-    function Select-Chooser([bool]$Cancel, [string]$SyntheticPath) {
-        $dialog = Wait-Fixture { Find-Chooser } 'Native folder dialog did not open in the owned process.'
+    function Read-ChooserState {
+        $probe = @'
+(() => {
+  const panel = document.querySelector('section[aria-label="Browse a local folder"]');
+  const buttons = [...panel?.querySelectorAll('button') ?? []];
+  const chooser = buttons.find(b => b.textContent.trim() === 'Choose folder');
+  return {
+    panel: !!panel, busy: chooser?.disabled === true, alert: !!panel?.querySelector('[role=alert]'),
+    embedded: location.hostname === 'tauri.localhost' && (location.pathname === '/' || location.pathname === '/index.html'),
+    focused: document.hasFocus(), visible: document.visibilityState === 'visible',
+    uuid: typeof globalThis.crypto?.randomUUID === 'function'
+  };
+})()
+'@
+        $budget = [Threading.CancellationTokenSource]::CreateLinkedTokenSource($Timeout, [Threading.CancellationToken]::None)
+        try {
+            $budget.CancelAfter(2000)
+            Invoke-AppExpression $Socket $Id $probe $budget.Token
+        } catch {
+            $null
+        } finally {
+            $budget.Dispose()
+        }
+    }
+
+    function Click-Chooser {
+        # Produce the same pointer interaction as a visible user's click,
+        # after verifying both the main native foreground and WebView hit.
+        if ([AeRiftFixture.OwnedWindow]::GetForegroundWindow() -ne $hwnd) {
+            throw 'Native owner lost foreground before the picker click.'
+        }
+        $point = @'
+(() => {
+  const panel = document.querySelector('section[aria-label="Browse a local folder"]');
+  const button = [...panel?.querySelectorAll('button') ?? []].find(b => b.textContent.trim() === 'Choose folder');
+  if (!button || button.disabled) return null;
+  button.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+  const box = button.getBoundingClientRect();
+  const x = box.x + box.width/2, y = box.y + box.height/2;
+  return button.contains(document.elementFromPoint(x,y)) ? {x,y} : null;
+})()
+'@
+        $target = Invoke-AppExpression $Socket $Id $point $Timeout
+        if ($null -eq $target) { throw 'Visible chooser control did not receive a WebView hit.' }
+        $Id.Value += 1
+        Invoke-Cdp $Socket $Id.Value 'Input.dispatchMouseEvent' @{
+            type = 'mousePressed'; x = $target.x; y = $target.y; button = 'left'; buttons = 1; clickCount = 1
+        } $Timeout | Out-Null
+        $Id.Value += 1
+        Invoke-Cdp $Socket $Id.Value 'Input.dispatchMouseEvent' @{
+            type = 'mouseReleased'; x = $target.x; y = $target.y; button = 'left'; buttons = 0; clickCount = 1
+        } $Timeout | Out-Null
+    }
+
+    function Select-Chooser([bool]$Cancel, [string]$SyntheticPath, [string]$Stage) {
+        try {
+            $dialog = Wait-Fixture { Find-Chooser } 'No visible native picker matched the exact process and root owner.'
+        } catch {
+            $state = Read-ChooserState
+            $foreground = [AeRiftFixture.OwnedWindow]::GetForegroundWindow()
+            $ownedForeground = $foreground -eq $hwnd
+            $popupOwned = $foreground -ne [IntPtr]::Zero -and $foreground -ne $hwnd -and
+                [AeRiftFixture.OwnedWindow]::GetAncestor($foreground, 3) -eq $hwnd
+            Write-Host "Workspace picker stage=${Stage}: probeAvailable=$($null -ne $state) panel=$($state.panel) busy=$($state.busy) alert=$($state.alert) embedded=$($state.embedded) webFocused=$($state.focused) visible=$($state.visible) uuid=$($state.uuid) ownerForeground=$ownedForeground ownedPopupForeground=$popupOwned"
+            if ($state.alert) { throw 'Installed app reported folder access unavailable before any matching native dialog was observed.' }
+            throw
+        }
+        Write-Host "Workspace picker stage=${Stage}: exact owned native dialog found."
         if (!$Cancel) {
             $shellId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1152')
             $edit = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
@@ -97,23 +188,23 @@ function Test-InstalledWorkspaceFolder {
         Invoke-AppExpression $Socket $Id "document.querySelector('$fileCard').click()" $Timeout | Out-Null
         $panel = "document.querySelector('section[aria-label=`"Browse a local folder`"]')"
         Wait-AppCondition $Socket $Id "!!($panel)" $Timeout 'Real Windows Files panel did not render.'
-        if ((Find-Chooser) -or (Invoke-AppExpression $Socket $Id "!!($panel)?.querySelector('bdi')" $Timeout)) {
-            throw 'Folder information or prompt was visible without a choice.'
-        }
         $OwnedProcess.Refresh()
         $hwnd = $OwnedProcess.MainWindowHandle
         if ($hwnd -eq [IntPtr]::Zero) { throw 'Installed app has no native owner window.' }
+        if ((Find-Chooser) -or (Invoke-AppExpression $Socket $Id "!!($panel)?.querySelector('bdi')" $Timeout)) {
+            throw 'Folder information or prompt was visible without a choice.'
+        }
         [AeRiftFixture.OwnedWindow]::SetForegroundWindow($hwnd) | Out-Null
         Wait-Fixture { [AeRiftFixture.OwnedWindow]::GetForegroundWindow() -eq $hwnd } 'Owned app was not actually foreground.' | Out-Null
 
         $choose = "[...($panel).querySelectorAll('button')].find(b => b.textContent.trim() === 'Choose folder')"
-        Invoke-AppExpression $Socket $Id "($choose).click()" $Timeout | Out-Null
-        Select-Chooser $true ''
+        Click-Chooser
+        Select-Chooser $true '' 'cancel'
         Wait-AppCondition $Socket $Id "!!($choose) && !($choose).disabled && !($panel).querySelector('bdi,[role=alert]')" $Timeout 'Cancel did not leave a clean chooser state.'
 
         $expected = "JSON.stringify([...($panel).querySelectorAll('bdi')].map(n=>n.textContent).sort()) === '[`"fixture-visible-child`",`"fixture-visible.txt`"]'"
-        Invoke-AppExpression $Socket $Id "($choose).click()" $Timeout | Out-Null
-        Select-Chooser $false $chosen
+        Click-Chooser
+        Select-Chooser $false $chosen 'choose'
         Wait-AppCondition $Socket $Id $expected $Timeout 'Folder list differs from the bounded synthetic metadata.'
         $absolute = ConvertTo-Json -InputObject $chosen -Compress
         if (Invoke-AppExpression $Socket $Id "($panel).textContent.includes($absolute)" $Timeout) {
@@ -143,8 +234,8 @@ function Test-InstalledWorkspaceFolder {
 
         Go-WorkspaceRoute 'Workspace'
         Wait-AppCondition $Socket $Id "!!($choose) && !($choose).disabled && !($panel).querySelector('bdi')" $Timeout 'Returning to Files unexpectedly restored a grant.'
-        Invoke-AppExpression $Socket $Id "($choose).click()" $Timeout | Out-Null
-        Select-Chooser $false $chosen
+        Click-Chooser
+        Select-Chooser $false $chosen 'reopen'
         Wait-AppCondition $Socket $Id $expected $Timeout 'A new explicit choice did not obtain metadata.'
         if (!$OwnedProcess.CloseMainWindow()) { throw 'Native close did not reach the owned app window.' }
         Wait-Fixture { $OwnedProcess.HasExited } 'Ordinary owned app did not close.' | Out-Null
