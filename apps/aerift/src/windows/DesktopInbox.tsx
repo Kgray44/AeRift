@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, GlassSurface } from "@aerift/ui";
+import { Button, GlassSurface, IconAction, SpatialIcon } from "@aerift/ui";
 import { command } from "../nativeAppPort";
 
 type Candidate = {
@@ -76,7 +76,7 @@ export function DesktopInbox({ contextualEnabled = false }: { contextualEnabled?
     const result = await command("arm_explorer_receive", { peer: entry.peer, receipt: entry.id });
     setExplorerBusy(false);
     if (result.ok) setExplorerView({ state: "armed" });
-    else setExplorerNotice("Couldn't arm that Inbox item. Check the receipt and confirm the shortcut is available.");
+    else setExplorerNotice("Couldn't arm that Inbox item. Check that the Explorer shortcut is available and try again.");
   }
 
   async function confirmExplorer(id: string) {
@@ -116,15 +116,24 @@ export function DesktopInbox({ contextualEnabled = false }: { contextualEnabled?
     if (!response.ok || response.value) setSaved({ key, ok: response.ok });
   }
 
-  return <GlassSurface material="content">
-    <section aria-label="Inbox">
-      <h2>Inbox</h2>
-      <p>Files you explicitly accepted to Inbox stay here across app restarts. Check intact files before relying on them. Nothing opens automatically.</p>
-      <form onSubmit={event => { event.preventDefault(); setFilter(query); setRefresh(next => next + 1); }}>
-        <label>Find a file <input value={query} maxLength={64} onChange={event => setQuery(event.target.value)} /></label>
-        <Button type="submit" disabled={!!checking || !!saving}>Search or refresh</Button>
-      </form>
-      {contextualEnabled && explorerView && <div aria-label="Explorer destination confirmation">
+  function searchInbox() {
+    setFilter(query.trim());
+    setRefresh(next => next + 1);
+  }
+
+  return <GlassSurface material="content" className="aerift-desktop-inbox">
+    <section aria-labelledby="desktop-inbox-title">
+      <div className="aerift-inbox-heading">
+        <h3 id="desktop-inbox-title"><SpatialIcon name="drop" />Inbox</h3>
+        <form role="search" aria-label="Inbox files" onSubmit={event => { event.preventDefault(); searchInbox(); }}>
+          <input type="search" aria-label="Find a file" placeholder="Find a file" value={query} maxLength={64}
+            onChange={event => setQuery(event.target.value)} />
+          <IconAction type="submit" label="Search Inbox" icon="search" disabled={!!checking || !!saving} />
+          <IconAction label="Refresh Inbox" icon="retry" disabled={!!checking || !!saving}
+            onClick={() => setRefresh(next => next + 1)} />
+        </form>
+      </div>
+      {contextualEnabled && explorerView && <div className="aerift-inbox-review" aria-label="Explorer destination confirmation">
         {explorerView.state === "armed" && <p>Open the destination in File Explorer and press Ctrl + Alt + Shift + F within 30 seconds. Then return here to confirm.</p>}
         {explorerView.state === "resolving" && <p>Checking the focused Explorer folder…</p>}
         {explorerView.state === "review" && <>
@@ -138,21 +147,25 @@ export function DesktopInbox({ contextualEnabled = false }: { contextualEnabled?
       {explorerNotice && <p role="status">{explorerNotice}</p>}
       {listing && <p role="status">Loading Inbox…</p>}
       {listError && <p role="alert">Could not read the Inbox. Your regular receive folder is unaffected.</p>}
-      {!!list?.truncated && <p>Showing a bounded recovery scan. Not all files may be listed.</p>}
-      {list?.entries.length === 0 && <p>No matching files.</p>}
-      {!!list?.entries.length && <ul>{list.entries.map(entry => {
+      {!!list?.truncated && <p>Some files aren’t shown. Search by name to narrow the list.</p>}
+      {list?.entries.length === 0 && <p>{filter ? "No matching files." : "No files saved to Inbox yet."}</p>}
+      {!!list?.entries.length && <ul className="aerift-inbox-list">{list.entries.map(entry => {
         const key = keyOf(entry);
         return <li key={key}>
-          <strong>{entry.name}</strong> · {entry.sizeBytes.toLocaleString()} bytes
-          {entry.requestedDestination === "external_requires_authorization" && <p>Saved here because external delivery needs approval.</p>}
-          <Button variant="quiet" disabled={!!checking || !!saving} onClick={() => void verify(entry)}>
-            {checking === key ? "Checking…" : "Check integrity"}
-          </Button>
-          <Button variant="quiet" disabled={!!checking || !!saving} onClick={() => void save(entry)}>
-            {saving === key ? "Saving…" : "Save a copy"}
-          </Button>
-          {contextualEnabled && <Button variant="quiet" disabled={explorerBusy || !!explorerView}
-            onClick={() => void armExplorer(entry)}>Choose Explorer folder</Button>}
+          <div className="aerift-inbox-file">
+            <SpatialIcon name="file" size={20} />
+            <div><strong>{entry.name}</strong><small>{entry.sizeBytes.toLocaleString()} bytes
+              {entry.requestedDestination === "external_requires_authorization" && " · External delivery needs approval"}</small>
+            </div>
+          </div>
+          <div className="aerift-inbox-tools">
+            <IconAction icon="check" label={`Check integrity for ${entry.name}`} disabled={(!!checking && checking !== key) || !!saving}
+              loading={checking === key} onClick={() => void verify(entry)} />
+            <IconAction icon="drop" label={`Save a copy of ${entry.name}`} disabled={!!checking || (!!saving && saving !== key)}
+              loading={saving === key} onClick={() => void save(entry)} />
+            {contextualEnabled && <IconAction icon="folder" label={`Choose Explorer folder for ${entry.name}`}
+              disabled={explorerBusy || !!explorerView} onClick={() => void armExplorer(entry)} />}
+          </div>
           {saved?.key === key && <p role="status">{saved.ok ? "Verified copy saved." : "No copy was saved. Choose a new filename and check the file’s integrity."}</p>}
           {result?.key === key && <p role="status">{result.ok ? "File integrity verified." : "Could not verify this file. It was not opened or moved."}</p>}
         </li>;

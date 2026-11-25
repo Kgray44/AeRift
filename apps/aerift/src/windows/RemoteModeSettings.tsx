@@ -54,12 +54,9 @@ export function RemoteModeSettings() {
       setError("Could not save the transfer mode. Use a local private overlay IPv4 address and a port from 1024 through 65535.");
     } finally { setBusy(false); }
   }
-  return <section className="ae-private-remote-dev" aria-label="Remote transfer settings">
-    <h2>Remote transfers over a private VPN</h2>
-    <p>Use a private VPN you already control, such as Tailscale. AeRift never searches that network for devices.
-      Remote invitations and permissions are separate from Nearby pairing.</p>
-    <p>Nearby and Remote cannot run together on Windows yet. The choice applies after you exit and reopen AeRift.
-      Remote does not start listening until you choose to start it.</p>
+  return <details className="ae-private-vpn-settings" open={mode?.current === "unavailable" || mode?.restartNeeded || undefined}>
+    <summary>Remote transfers over a private VPN</summary>
+    <p>Use an existing private VPN, such as Tailscale. Pair by invitation only. Switching modes requires restarting AeRift and turns Nearby off.</p>
     <form onSubmit={(event) => { event.preventDefault(); void save(endpoint.trim()); }}>
       <label>This computer’s VPN IPv4 address and port
         <input value={endpoint} placeholder="100.x.y.z:48888" maxLength={22} spellCheck={false} autoComplete="off"
@@ -78,5 +75,5 @@ export function RemoteModeSettings() {
       }}>Exit AeRift</Button>
     </p>}
     {error && <p role="alert">{error}</p>}
-  </section>;
+  </details>;
 }

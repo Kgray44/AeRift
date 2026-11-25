@@ -59,6 +59,7 @@ try {
       async invoke(channel, args) {
         calls.push({ channel, args });
         switch (channel) {
+          case "windows_remote_mode": return { current: "nearby", nextEndpoint: null, restartNeeded: false };
           case "watch_app":
             publish(args.updates, { version: 1, devices: [device], transfers: [transfer], pendingPairing: [] });
             return "mock-session";
@@ -74,6 +75,13 @@ try {
           case "set_desktop_explorer": explorerAction = args.enabled; return explorerAction;
           case "desktop_startup_enabled": return startedAtSignIn;
           case "set_desktop_startup": startedAtSignIn = args.enabled; return startedAtSignIn;
+          case "list_ambient_inbox":
+            return { entries: !args.query || "Saved sender check.pdf".includes(args.query)
+              ? [{ peer: device.id, id: "verified-receipt", name: "Saved sender check.pdf", sizeBytes: 200,
+                  requestedDestination: "inbox" }]
+              : [], truncated: false };
+          case "verify_ambient_inbox_entry": return;
+          case "save_ambient_inbox_entry": return true;
           case "pair_app_peer": throw new Error("Pairing requires physical verification");
           case "transfer_app_file": throw new Error("File delivery requires physical verification");
           case "desktop_transfer_preview":
@@ -117,6 +125,10 @@ try {
 
   await destination("Home").waitFor();
   await page.getByText(fixture.device.name, { exact: true }).filter({ visible: true }).waitFor();
+  const devicesShortcut = page.getByRole("button", { name: "Manage devices", exact: true });
+  await devicesShortcut.waitFor();
+  assert.equal(await devicesShortcut.innerText(), "", "Home device shortcut is icon-first");
+  assert.equal(await devicesShortcut.getAttribute("title"), "Manage devices");
   await page.keyboard.press("Alt+o");
   await page.getByRole("button", { name: "Settings", exact: true }).last().waitFor();
   assert.equal(await page.getByRole("button", { name: "Workspace", exact: true }).count(), 0);
@@ -133,20 +145,52 @@ try {
   assert.equal(await page.getByRole("button", { name: "Use camera gesture" }).count(), 0);
   await openOrbit("Settings");
   assert.equal(await destination("Settings").evaluate(node => node === document.activeElement), true);
+  const settingsGroups = page.getByRole("group", { name: "Settings categories" });
+  assert.equal(await page.getByLabel("Camera activation shortcut").isVisible(), false);
+  const gesturesGroup = settingsGroups.getByRole("button", { name: "Gestures" });
+  await gesturesGroup.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await gesturesGroup.getAttribute("aria-pressed"), "true");
   assert.equal(await page.getByLabel("Camera activation shortcut").inputValue(), "v");
+  await settingsGroups.getByRole("button", { name: "Transfers" }).click();
+  assert.equal(await page.getByLabel("Camera activation shortcut").isVisible(), false);
+  const vpn = page.getByText("Remote transfers over a private VPN", { exact: true });
+  assert.equal(await vpn.isVisible(), true);
+  const vpnAddress = page.getByLabel("This computer’s VPN IPv4 address and port");
+  assert.equal(await vpnAddress.isVisible(), false);
+  await vpn.click();
+  assert.equal(await vpnAddress.isVisible(), true);
+  assert.equal(await page.getByRole("button", { name: "Use Remote after reopening" }).isEnabled(), false);
+  await vpn.click();
+  await settingsGroups.getByRole("button", { name: "General" }).click();
+  await capture(page, "dark-control-center");
   await page.getByLabel("Window mode").selectOption("full");
   await page.getByRole("combobox", { name: /^Navigation/ }).selectOption("conventional");
+  await settingsGroups.getByRole("button", { name: "Ambient" }).click();
   await page.getByLabel("Keep AeRift in the Windows notification area").check();
   await page.waitForFunction(() => window.desktopFixture.last("set_desktop_ambient")?.enabled === true);
   await page.getByRole("combobox", { name: /^Windows shortcut to open the Rift/ }).selectOption("alt-shift-r");
   await page.waitForFunction(() => window.desktopFixture.last("set_desktop_shortcut")?.choice === "alt-shift-r");
   await page.getByLabel("Open AeRift when I sign in").check();
+  await settingsGroups.getByRole("button", { name: "Privacy" }).click();
   await page.getByLabel("Allow manual clipboard capture").check();
+  await settingsGroups.getByRole("button", { name: "Transfers" }).click();
   await page.getByLabel("Add Stage in AeRift").check();
   await page.waitForFunction(() => window.desktopFixture.last("set_desktop_explorer")?.enabled === true);
   await page.waitForFunction(() => window.desktopFixture.last("set_desktop_startup")?.enabled === true);
 
   const nav = label => slot.getByRole("button", { name: label, exact: true });
+  await nav("Devices").click();
+  const unpair = page.getByRole("button", { name: "Unpair Studio laptop", exact: true });
+  await unpair.waitFor();
+  assert.equal(await unpair.innerText(), "", "Device row does not repeat visible button copy");
+  await unpair.press("Enter");
+  const trust = page.getByRole("group", { name: "Unpair Studio laptop?", exact: true });
+  await trust.getByRole("button", { name: "Confirm unpair", exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.desktopFixture.count("pair_app_peer")), 0);
+  await trust.getByRole("button", { name: "Keep paired", exact: true }).press("Escape");
+  assert.equal(await unpair.evaluate(node => node === document.activeElement), true);
+  await capture(page, "dark-polished-devices");
   await nav("Workspace").click();
   await destination("Workspace").waitFor();
   async function openCategory(name) {
@@ -165,7 +209,9 @@ try {
   await page.getByText("Review the field recording.").waitFor();
   await page.getByRole("checkbox", { name: "Expedition notes" }).check();
   await openCategory('File Browser');
-  await page.getByLabel("Import files").setInputFiles({
+  const filePicker = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import files", exact: true }).press("Enter");
+  await (await filePicker).setFiles({
     name: "sample.txt", mimeType: "text/plain", buffer: Buffer.from("Example text"),
   });
   await page.getByRole("checkbox", { name: "sample.txt" }).check();
@@ -176,7 +222,7 @@ try {
   await capture(page, "dark-full-workspace");
 
   await openCategory('Images & Videos');
-  await page.getByLabel("Import photos and videos").setInputFiles({
+  await page.locator('input[type="file"][aria-label="Import photos and videos"]').setInputFiles({
     name: "sample.png", mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jXNYAAAAASUVORK5CYII=", "base64"),
   });
@@ -201,11 +247,29 @@ try {
 
   await page.evaluate(() => window.desktopFixture.tray("activity"));
   await destination("Activity").waitFor();
-  assert.equal(await page.getByRole("progressbar", { name: fixture.transfer.file.name }).getAttribute("aria-valuenow"), "43");
+  assert.equal(await page.getByRole("progressbar", { name: fixture.transfer.file.name, exact: true }).getAttribute("aria-valuenow"), "43");
   await page.getByRole("combobox", { name: /^Show/ }).selectOption("finished");
   await page.getByText("No transfers match this view.").waitFor();
   await page.getByRole("combobox", { name: /^Show/ }).selectOption("all");
   await page.getByText("Outgoing · Studio laptop", { exact: true }).filter({ visible: true }).waitFor();
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const verify = inbox.getByRole("button", { name: "Check integrity for Saved sender check.pdf", exact: true });
+  await verify.waitFor();
+  assert.equal(await verify.innerText(), "");
+  await verify.press("Enter");
+  await inbox.getByText("File integrity verified.", { exact: true }).waitFor();
+  assert.deepEqual(await page.evaluate(() => window.desktopFixture.last("verify_ambient_inbox_entry")),
+    { peer: fixture.device.id, id: "verified-receipt" });
+  assert.equal(await page.evaluate(() => window.desktopFixture.count("save_ambient_inbox_entry")), 0);
+  const search = inbox.getByRole("searchbox", { name: "Find a file", exact: true });
+  await search.fill("no such file");
+  await search.press("Enter");
+  await inbox.getByText("No matching files.", { exact: true }).waitFor();
+  await search.fill("");
+  await search.press("Enter");
+  await inbox.getByRole("button", { name: "Refresh Inbox", exact: true }).click();
+  await inbox.getByText("Saved sender check.pdf", { exact: true }).waitFor();
+  await capture(page, "dark-polished-activity");
 
   await page.getByRole("button", { name: "Control Center" }).click();
   await destination("Settings").waitFor();
@@ -223,6 +287,7 @@ try {
   assert.equal(await page.getByRole("button", { name: "Notes", exact: true }).count(), 0);
   await nav("Settings").click();
   await page.getByRole("checkbox", { name: "Notes", exact: true }).check();
+  await settingsGroups.getByRole("button", { name: "Appearance" }).click();
   await page.getByRole("radio", { name: "Light", exact: true }).check();
   await nav("Workspace").click();
   await page.reload();
