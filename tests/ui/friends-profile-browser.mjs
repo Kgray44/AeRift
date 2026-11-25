@@ -38,7 +38,7 @@ export async function verifyFriendProfiles(browser, base) {
     await own.getByRole("button", { name: "Sea glass" }).click();
     await own.getByRole("button", { name: "Save profile" }).click();
     await own.waitFor({ state: "hidden" });
-    await page.getByText("Scout", { exact: true }).waitFor();
+    await page.locator(".ae-friends-own strong").getByText("Scout", { exact: true }).waitFor();
 
     await page.getByRole("button", { name: "Test contact A" }).click();
     await page.getByRole("button", { name: "Edit friend appearance" }).click();
