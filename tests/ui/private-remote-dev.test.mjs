@@ -63,17 +63,30 @@ test("Windows Ambient capture and its global shortcut respect the native exclusi
   assert.match(shortcut, /if !app\.state::<AppRuntime>\(\)\.nearby_enabled\(\) \{\s*return;/);
 });
 
-test("folder qualification is gated off by default and never treats an envelope as publication", () => {
+test("folder transfers require explicit session opt-in and never treats an envelope as publication", () => {
   const native = read("apps/aerift/src-tauri/src/private_remote_app.rs");
   const dispatch = read("apps/aerift/src-tauri/src/lib.rs");
   const folder = read("apps/aerift/src-tauri/src/private_remote_folder_mode.rs");
   const view = read("apps/aerift/src/windows/PrivateRemoteFolders.tsx");
   assert.match(native, /enable_folders == Some\(true\) && !developer/);
-  assert.match(dispatch, /#\[cfg\(feature = "private-remote-folder-qualification"\)\]\s+private_remote_app::folder_mode::windows_remote_folder_command/);
+  assert.match(dispatch, /private_remote_app::folder_mode::windows_remote_folder_command/);
+  assert.doesNotMatch(native + dispatch, /private-remote-folder-qualification/);
+  assert.match(native, /folders_available: !runtime\.developer/);
   assert.match(folder, /choose_folder\(window\.clone\(\)\)\.await\?/);
   assert.match(folder, /WindowsFolderDirectory::from_native_selection\(&selected\)/);
   assert.match(folder, /from_native_selection\(&selected\)[\s\S]*?mode\.ingress\.respond\(key, true\)/);
   assert.match(folder, /with_completed\(key,[\s\S]*?commit_windows_folder\(/);
   assert.match(view, /Folder data verified\. Not exported yet\./);
   assert.match(view, /folder\.destinationRetained/);
+});
+
+test("Windows folder destination mismatch stays pending and advises same-volume selection", () => {
+  const folder = read("apps/aerift/src-tauri/src/private_remote_folder_mode.rs");
+  const view = read("apps/aerift/src/windows/PrivateRemoteFolders.tsx");
+  const windows = read("crates/transfer/src/folder/windows_handles.rs");
+  assert.match(folder, /scratch\s*\.shares_atomic_publish_volume\(&pinned\)/);
+  assert.match(folder, /if !same_volume \{[\s\S]*?different_destination_volume = true;[\s\S]*?return Ok\(result\);[\s\S]*?mode\.ingress\.respond\(key, true\)/);
+  assert.match(view, /offer is still pending\. Choose a folder on the same drive/);
+  assert.match(windows, /GetFinalPathNameByHandleW\([\s\S]*?VOLUME_NAME_GUID/);
+  assert.match(windows, /private_scratch[\s\S]*?\.shares_atomic_publish_volume\(&selected_destination\)/);
 });
