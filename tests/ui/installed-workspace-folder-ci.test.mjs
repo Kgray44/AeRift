@@ -46,3 +46,8 @@ test("native dialog actions target only the unique verified standard direct chil
   assert.match(fixture, /SendMessageTimeout\(\s*\$button, 0x00f5, \[UIntPtr\]::Zero, \[IntPtr\]::Zero, 3, 2000, \[ref\]\$reply\)/);
   assert.match(fixture, /Invoke-ExactDialogAction \$dialogHandle \$Cancel[\s\S]*!?\(Find-Chooser\)/);
 });
+
+test("the native filename field selector does not shadow PowerShell's automatic ShellId", () => {
+  assert.doesNotMatch(fixture, /\$shellid\b/i);
+  assert.match(fixture, /AndCondition\]::new\(\$fileNameAutomationId, \$edit\)/);
+});

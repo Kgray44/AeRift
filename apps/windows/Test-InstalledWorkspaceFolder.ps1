@@ -185,10 +185,10 @@ function Test-InstalledWorkspaceFolder {
         Write-Host "Workspace picker stage=${Stage}: exact owned native dialog found."
         if (!$Cancel) {
             $dialog = [System.Windows.Automation.AutomationElement]::FromHandle($dialogHandle)
-            $shellId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1152')
+            $fileNameAutomationId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1152')
             $edit = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
             $fields = $dialog.FindAll([System.Windows.Automation.TreeScope]::Children,
-                [System.Windows.Automation.AndCondition]::new($shellId, $edit))
+                [System.Windows.Automation.AndCondition]::new($fileNameAutomationId, $edit))
             if ($fields.Count -ne 1 -or $fields[0].Current.ProcessId -ne $OwnedProcess.Id -or
                 $fields[0].Current.ClassName -cne 'Edit' -or !$fields[0].Current.IsEnabled -or
                 $fields[0].Current.Name -cnotin @('Folder:', 'Folder name:', 'File name:')) {
