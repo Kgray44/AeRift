@@ -1,4 +1,7 @@
-use super::{DelegatedFriendMember, DeviceEnrollment, FriendRecord, PersonId};
+use super::{
+    DelegatedFriendMember, DeviceEnrollment, FriendProfileCursor, FriendRecord, PersonId,
+    SharedFriendProfile, VerifiedFriendProfile,
+};
 use aerift_transfer::{ErrorCode, PeerId, TransferError};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -44,6 +47,8 @@ pub struct FriendBook {
     owner: PersonId,
     // Serialize the mutation + durable commit, and reject stale writers via CAS.
     writes: Mutex<Vec<Restriction>>,
+    // Only explicit live person offers register a one-shot readiness signal.
+    ready: Mutex<std::collections::HashMap<Uuid, tokio::sync::oneshot::Sender<PeerId>>>,
 }
 
 // You may remove authorization while storage is unhealthy, but never create
@@ -72,6 +77,14 @@ impl Restriction {
                     .ok_or(ErrorCode::PeerUntrusted)?;
                 friend.devices.remove(index);
                 friend.revoked.push(device);
+                if let Some(stored) = friend
+                    .profile
+                    .as_mut()
+                    .filter(|record| record.origin == device)
+                {
+                    // Keep the relationship-wide replay floor without keeping revoked presentation.
+                    stored.presentation = None;
+                }
                 for offer in state.offers.iter_mut().filter(|o| o.person == person) {
                     offer.eligible.retain(|peer| *peer != device);
                     offer.withdrawn |= offer.winner == Some(device) || offer.eligible.is_empty();
@@ -140,6 +153,16 @@ struct Friend {
     receive_allowed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     transcript: Option<super::authority::FriendshipTranscript>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    profile: Option<StoredProfile>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredProfile {
+    cursor: FriendProfileCursor,
+    origin: PeerId,
+    presentation: Option<SharedFriendProfile>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -276,6 +299,95 @@ impl FriendBook {
         Ok(book)
     }
 
+    pub(super) fn profile_owner(&self) -> PersonId {
+        self.owner
+    }
+
+    /// Resolve only an existing person with a currently enrolled pinned
+    /// device. A local revocation overlay is part of the read.
+    pub(super) fn profile_relationship(
+        &self,
+        person: PersonId,
+        authenticated_device: PeerId,
+    ) -> Result<Uuid, TransferError> {
+        self.read()?
+            .friends
+            .into_iter()
+            .find(|friend| {
+                friend.person == person && friend.devices.contains(&authenticated_device)
+            })
+            .map(|friend| friend.relationship)
+            .ok_or_else(|| ErrorCode::PeerUntrusted.into())
+    }
+
+    /// Called only with a live, pinned and authenticated Friends session.
+    /// The verified profile and the relationship-wide revision floor enter
+    /// the existing protected store in one compare-and-swap.
+    pub fn apply_shared_profile(
+        &self,
+        wire: &[u8],
+        self_device: PeerId,
+        authenticated_sender: PeerId,
+        now: u64,
+    ) -> Result<(), TransferError> {
+        let verified =
+            self.verify_shared_profile(wire, self_device, authenticated_sender, now, None)?;
+        self.mutate(|state| {
+            let friend = state
+                .friends
+                .iter_mut()
+                .find(|friend| {
+                    friend.person == verified.cursor.issuer
+                        && friend.relationship == verified.cursor.relationship
+                        && friend.devices.contains(&authenticated_sender)
+                })
+                .ok_or(ErrorCode::PeerUntrusted)?;
+            if friend
+                .profile
+                .as_ref()
+                .is_some_and(|current| current.cursor.revision >= verified.cursor.revision)
+            {
+                return Err(ErrorCode::Conflict.into());
+            }
+            friend.profile = Some(StoredProfile {
+                cursor: verified.cursor,
+                origin: authenticated_sender,
+                presentation: Some(verified.profile),
+            });
+            // Older builds rejected all non-v1 ledgers. Do not let a
+            // downgrade silently drop the floor on its next write.
+            state.version = 2;
+            Ok(())
+        })
+    }
+
+    /// Reads a presentation only through the currently active relationship
+    /// with an enrolled origin; this is a snapshot, not a lasting cache grant.
+    pub fn shared_profile(
+        &self,
+        person: PersonId,
+    ) -> Result<Option<VerifiedFriendProfile>, TransferError> {
+        let data = self.read()?;
+        let stored = data
+            .friends
+            .into_iter()
+            .find(|friend| friend.person == person)
+            .and_then(|friend| {
+                friend
+                    .profile
+                    .filter(|profile| friend.devices.contains(&profile.origin))
+            });
+        let Some((cursor, profile)) =
+            stored.and_then(|stored| stored.presentation.map(|profile| (stored.cursor, profile)))
+        else {
+            return Ok(None);
+        };
+        // Validate the one projected presentation, not every avatar on every
+        // unrelated book operation (e.g. offer reconciliation).
+        profile.validate().map_err(|_| ErrorCode::StorageFailed)?;
+        Ok(Some(VerifiedFriendProfile { cursor, profile }))
+    }
+
     pub fn contacts(&self) -> Result<Vec<FriendContactView>, TransferError> {
         Ok(self
             .read()?
@@ -302,6 +414,7 @@ impl FriendBook {
             store,
             owner,
             writes: Mutex::new(Vec::new()),
+            ready: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -324,11 +437,25 @@ impl FriendBook {
             return Err(ErrorCode::StorageFailed.into());
         }
         let data: Data = serde_json::from_slice(raw).map_err(|_| ErrorCode::StorageFailed)?;
-        if data.version != 1 {
+        if data.version != 1 && data.version != 2 {
             return Err(ErrorCode::UnsupportedVersion.into());
         }
         if data.owner != owner {
             return Err(ErrorCode::PeerUntrusted.into());
+        }
+        for friend in &data.friends {
+            if let Some(profile) = &friend.profile {
+                if data.version != 2
+                    || profile.cursor.issuer != friend.person
+                    || profile.cursor.recipient != owner
+                    || profile.cursor.relationship != friend.relationship
+                    || !profile.cursor.version_valid()
+                    || profile.presentation.is_some() != friend.devices.contains(&profile.origin)
+                    || (profile.presentation.is_none() && !friend.revoked.contains(&profile.origin))
+                {
+                    return Err(ErrorCode::StorageFailed.into());
+                }
+            }
         }
         Ok(data)
     }
@@ -418,6 +545,7 @@ impl FriendBook {
             revoked: Vec::new(),
             receive_allowed: true,
             transcript: Some(friend.transcript),
+            profile: None,
         });
         Ok(())
     }
@@ -592,6 +720,71 @@ impl FriendBook {
                 }
             }
         })
+    }
+
+    pub(super) fn arm_person_ready(
+        &self,
+        id: Uuid,
+    ) -> Result<tokio::sync::oneshot::Receiver<PeerId>, TransferError> {
+        let mut entries = self.ready.lock().map_err(|_| ErrorCode::InternalError)?;
+        if entries.len() >= 8 || entries.contains_key(&id) {
+            return Err(ErrorCode::Conflict.into());
+        }
+        let (send, receive) = tokio::sync::oneshot::channel();
+        entries.insert(id, send);
+        Ok(receive)
+    }
+
+    pub(super) fn disarm_person_ready(&self, id: Uuid) {
+        if let Ok(mut entries) = self.ready.lock() {
+            entries.remove(&id);
+        }
+    }
+
+    /// Only the exact already committed winner may attest that its local
+    /// consent is durable and its payload receiver is ready.
+    pub(super) fn note_person_ready(
+        &self,
+        id: Uuid,
+        peer: PeerId,
+        digest: [u8; 32],
+        ticket: Uuid,
+    ) -> Result<(), TransferError> {
+        if self.decision(id, peer, digest, ticket)? != FriendDecision::Granted {
+            return Err(ErrorCode::TransferRejected.into());
+        }
+        if let Some(send) = self
+            .ready
+            .lock()
+            .map_err(|_| ErrorCode::InternalError)?
+            .remove(&id)
+        {
+            let _ = send.send(peer);
+        }
+        Ok(())
+    }
+
+    /// Produce only another device's own terminal disposition, scoped by
+    /// its original delivery ticket. Do not include the winner's identity.
+    pub(super) fn loser_notice(
+        &self,
+        id: Uuid,
+        device: PeerId,
+    ) -> Result<Option<([u8; 32], Uuid)>, TransferError> {
+        let state = self.read()?;
+        let offer = state
+            .offers
+            .iter()
+            .find(|offer| offer.id == id)
+            .ok_or(ErrorCode::TransferRejected)?;
+        if offer.winner.is_none() || offer.winner == Some(device) {
+            return Ok(None);
+        }
+        Ok(offer
+            .delivery_tickets
+            .iter()
+            .find(|(peer, _)| *peer == device)
+            .map(|(_, ticket)| (offer.digest, *ticket)))
     }
 
     /// Current disposition for a device included in the specific offer.

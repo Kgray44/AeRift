@@ -1,4 +1,4 @@
-use crate::windows_friends::{host, Host};
+use crate::windows_friends::{Host, WindowsFriends, host};
 use crate::windows_friends_member::existing_member;
 use aerift_peers::{FriendBook, FriendDecision, FriendFileRoute, FriendFileWindow};
 use aerift_transfer::{ErrorCode, PeerId, Status, TransferError};
@@ -7,7 +7,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
 };
-use tauri::WebviewWindow;
+use tauri::{Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
@@ -51,6 +51,7 @@ pub(crate) struct FileView {
     outgoing: Option<(Uuid, usize, Option<PeerId>)>,
     profile: Option<Profile>,
     can_release: bool,
+    person_transfers_available: bool,
     member_roster: Vec<Contact>,
     receipts: Vec<(PeerId, Uuid, Status)>,
 }
@@ -92,6 +93,7 @@ pub(crate) async fn friends_files_view(window: WebviewWindow) -> Result<FileView
             member_roster,
             profile: None,
             can_release: false,
+            person_transfers_available: false,
         });
     };
     let files = mounted.files;
@@ -119,6 +121,7 @@ pub(crate) async fn friends_files_view(window: WebviewWindow) -> Result<FileView
         incoming,
         outgoing,
         can_release,
+        person_transfers_available: window.state::<WindowsFriends>().file_routes().is_some(),
         member_roster,
         profile: Some(mounted.profile),
         receipts: files.receipts(),
@@ -148,6 +151,18 @@ pub(crate) enum FilesAction {
     OfferPerson {
         friend_id: String,
         routes: Vec<RouteInput>,
+    },
+    OfferContact {
+        friend_id: String,
+    },
+    AcceptContactOffer {
+        id: Uuid,
+    },
+    ReconcileContactOffer {
+        id: Uuid,
+    },
+    DeclineContactOffer {
+        id: Uuid,
     },
     Reconcile {
         id: Uuid,
@@ -259,6 +274,46 @@ pub(crate) async fn friends_files_action(
                 .offer(person, device, selected_path(window).await?, routes)
                 .await?;
         }
+        FilesAction::OfferContact { friend_id } => {
+            let source = window
+                .state::<WindowsFriends>()
+                .file_routes()
+                .ok_or(ErrorCode::PeerUnavailable)?;
+            let mounted = current(&h).await?;
+            let person = mounted.book.contact_id(&friend_id)?;
+            mounted
+                .files
+                .check_person_targets(person, source.as_ref())?;
+            mounted
+                .files
+                .offer_contact(person, selected_path(window).await?, source.as_ref())
+                .await?;
+        }
+        FilesAction::AcceptContactOffer { id } => {
+            let source = window
+                .state::<WindowsFriends>()
+                .file_routes()
+                .ok_or(ErrorCode::PeerUnavailable)?;
+            current(&h)
+                .await?
+                .files
+                .accept_contact_offer(id, source.as_ref())
+                .await?;
+        }
+        FilesAction::ReconcileContactOffer { id } => {
+            let source = window
+                .state::<WindowsFriends>()
+                .file_routes()
+                .ok_or(ErrorCode::PeerUnavailable)?;
+            current(&h)
+                .await?
+                .files
+                .reconcile_contact_offer(id, source.as_ref())
+                .await?;
+        }
+        FilesAction::DeclineContactOffer { id } => {
+            current(&h).await?.files.decline_contact_offer(id).await?;
+        }
         FilesAction::OfferPerson { friend_id, routes } => {
             let mounted = current(&h).await?;
             // Delegated member scope only targets the one pinned original device.
@@ -315,4 +370,43 @@ pub(crate) async fn friends_files_action(
         FilesAction::Withdraw { id } => current(&h).await?.files.withdraw(id).await?,
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod person_action_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn person_actions_admit_only_person_and_offer_identifiers() {
+        assert!(matches!(
+            serde_json::from_value::<FilesAction>(
+                json!({ "action": "offer_contact", "friendId": "friend-a" })
+            ),
+            Ok(FilesAction::OfferContact { .. })
+        ));
+        assert!(
+            serde_json::from_value::<FilesAction>(json!({
+                "action": "offer_contact", "friendId": "friend-a", "routes": []
+            }))
+            .is_err()
+        );
+        let id = Uuid::new_v4();
+        for action in [
+            "accept_contact_offer",
+            "reconcile_contact_offer",
+            "decline_contact_offer",
+        ] {
+            assert!(
+                serde_json::from_value::<FilesAction>(json!({ "action": action, "id": id }))
+                    .is_ok()
+            );
+            assert!(
+                serde_json::from_value::<FilesAction>(json!({
+                    "action": action, "id": id, "offerRoute": "127.0.0.1:12345"
+                }))
+                .is_err()
+            );
+        }
+    }
 }

@@ -1,11 +1,11 @@
 //! Normal Windows Friends setup. No discovery, no global directory, no automatic listening.
 use crate::{
     runtime::AppRuntime,
-    windows_storage::{open_friends, storage_failed, WindowsIdentity},
+    windows_storage::{WindowsIdentity, open_friends, storage_failed},
 };
 use aerift_peers::{
-    FriendAuthority, FriendBook, FriendInvitation, FriendInviteEndpoint, FriendInviteState,
-    Identity, PersonId,
+    FriendAuthority, FriendBook, FriendFileRouteSource, FriendInvitation, FriendInviteEndpoint,
+    FriendInviteState, Identity, PersonId,
 };
 use aerift_transfer::{ErrorCode, TransferError};
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,26 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Default)]
-pub(crate) struct WindowsFriends(OnceCell<Arc<Host>>);
+pub(crate) struct WindowsFriends(
+    OnceCell<Arc<Host>>,
+    std::sync::OnceLock<Arc<dyn FriendFileRouteSource>>,
+);
+
+impl WindowsFriends {
+    /// Install the native verified route provider once. This method is not
+    /// registered as an IPC command; WebView-supplied routes cannot reach it.
+    #[allow(dead_code)] // Called by the authenticated host when it is wired.
+    pub(crate) fn register_file_routes(
+        &self,
+        routes: Arc<dyn FriendFileRouteSource>,
+    ) -> Result<(), TransferError> {
+        self.1.set(routes).map_err(|_| ErrorCode::Conflict.into())
+    }
+
+    pub(crate) fn file_routes(&self) -> Option<Arc<dyn FriendFileRouteSource>> {
+        self.1.get().cloned()
+    }
+}
 pub(crate) struct Host {
     pub(crate) identity: Arc<Identity>,
     pub(crate) authority: FriendAuthority,
