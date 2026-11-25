@@ -36,6 +36,17 @@ impl PrivateRemoteProfile {
         aerift_peers::load_wan_endpoint_seed(&self.wan_seed, owner.id())
     }
 
+    /// Future optional host integration consumes this exact profile, not an
+    /// externally chosen seed or independently opened profile directory.
+    #[allow(dead_code)]
+    pub(crate) fn into_wan_host_parts(
+        self,
+    ) -> Result<(Identity, ProtectedRemoteTrust, [u8; 32], File), TransferError> {
+        let identity = Identity::load_or_create(&self.identity)?;
+        let seed = aerift_peers::load_wan_endpoint_seed(&self.wan_seed, identity.id())?;
+        Ok((identity, self.trust, seed, self._exclusive_profile))
+    }
+
     pub(crate) fn open(root: &Path) -> Result<Self, TransferError> {
         let root = root.canonicalize().map_err(storage_failed)?;
         if !root.is_dir() {
@@ -236,7 +247,7 @@ mod tests {
         let seed = {
             let profile = PrivateRemoteProfile::open(root.path()).unwrap();
             assert!(!record.exists());
-            let seed = profile.wan_endpoint_seed().unwrap();
+            let (_identity, _trust, seed, _lease) = profile.into_wan_host_parts().unwrap();
             assert!(lock_profile(root.path()).is_err());
             seed
         };

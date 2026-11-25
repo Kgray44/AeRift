@@ -108,9 +108,32 @@ through a forced HTTPS relay on loopback. Its other tests cover direct local
 transport only. The native DPAPI regression is Windows-only and must run on
 Windows before reporting platform qualification.
 
-Future native app startup must build the Iroh endpoint from the protected seed
-and immutable operator config, run a bounded accept loop using
-`accept_with` and `serve_wan_stream`, expose pairing approval and transfer
-acceptance through existing trusted UI, and close the endpoint plus its
-receiver at session stop. Attaching these hooks does not replace mobile,
-packaged, direct-NAT or two-uplink verification.
+### Joinable application adapter
+
+The standalone transport now exports `WanSession`. Explicit startup consumes
+a Remote peer node, protected endpoint seed, validated `OperatorRelay`, and
+the existing locked profile file. The Windows profile has an unregistered
+constructor for these same protected parts. The relay config is fixed for
+the session, never supplied by a card or invite. Sending by confirmed device
+uses only its session-bound approved key; neither a legacy Remote grant nor
+a card alone allows a file send. The worker bounds the live handlers, checks
+outer permission during accept and again at dispatch, and closes WAN grants,
+pending receiver work and the endpoint before releasing the OS profile lock.
+The awaited stop is the join/restart barrier. Dropping a session signals
+closure but is not itself proof that the worker already released the lock.
+
+Both native host directions were exercised over a real HTTPS relay on
+loopback, in the fixture that disables the direct transports. The fixture
+used signed targeted pairing, explicit acceptance, verified bytes, revocation
+and lock release at shutdown. It injected a test-only CA below the public
+constructor. This is not a test of an installer, Windows DPAPI execution,
+public TLS trust or independent WAN uplinks.
+
+The ordinary Windows application and the existing VPN launcher remain
+unchanged. The isolated app dependency probe would add 134 lock packages and
+the full Windows-target offline resolution stopped on uncached
+`ipconfig v0.3.4`; its manifest and lock were restored. Before attaching
+Tauri, qualify an exact reviewed lock and Windows build, implement trust
+preserving native invoke and UI flow with the immutable approved relay,
+and verify deployment, and the direct and relay tests above. No default,
+relay deployment or feature toggle is registered by this seam.

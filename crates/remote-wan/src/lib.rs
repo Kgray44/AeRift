@@ -18,6 +18,8 @@ use iroh::{
     endpoint::{Connection, RecvStream, SendStream, presets},
 };
 pub use iroh::{EndpointId, RelayUrl, SecretKey};
+mod native_host;
+pub use native_host::{DeviceCard, OperatorRelay, WanSession};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const ALPN: &[u8] = b"aerift/remote/opaque-tls/1";
