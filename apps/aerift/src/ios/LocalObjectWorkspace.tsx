@@ -1,6 +1,12 @@
 import type { TransferWorkspaceRegions } from "@aerift/ui";
 import { Button } from "@aerift/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { WorkspaceNoteEditor, WorkspaceNoteSearch } from "../WorkspaceNoteTools";
+import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
+import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
+import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
+import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
+import { matchesWorkspaceNote, type NoteFilter } from "../workspace-note-tools";
 import type { MobileOperations, MobilePlatformCopy } from "./mobile-platform";
 import type { ObservedMediaPort } from "./mobile-media-observer";
 import type { ImportedMedia } from "./mobile-media";
@@ -13,6 +19,7 @@ export type LocalModule = typeof localModules[number];
 
 type Entry = Exclude<MobileObject, { kind: "collection" }>;
 type Collection = Extract<MobileObject, { kind: "collection" }>;
+const browserHistoryKey = "aerift.mobile.workspace.browser-history.v1";
 
 function newObject(name: string) {
   const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, "0")).join("");
@@ -40,8 +47,9 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [markdown, setMarkdown] = useState(false);
+  const [noteFilter, setNoteFilter] = useState<NoteFilter>({ query: "", format: "any" });
   const [editing, setEditing] = useState<string>();
-  const [member, setMember] = useState("");
+  const clipboardTools = useWorkspaceClipboardTools({ copyAllowed: clipboardSharing });
   const [attachmentIds, setAttachmentIds] = useState<readonly string[]>([]);
   const [pendingAttachment, setPendingAttachment] = useState("");
   const [mediaItems, setMediaItems] = useState<readonly ImportedMedia[]>();
@@ -59,6 +67,8 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const collections = module === "collections";
   const kind = notes ? "note" : browser ? "url" : clips ? "text" : "collection";
   const entries = objects.filter(item => item.kind === kind);
+  const visibleEntries = notes ? entries.filter(item => item.kind === "note" && matchesWorkspaceNote(item, noteFilter))
+    : clips ? clipboardTools.browse(entries, item => item.kind === "text" ? item : undefined) : entries;
   const selected = entries.find(item => item.id === editing);
   const candidates = objects.filter(item => item.kind !== "collection");
 
@@ -121,7 +131,6 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     setTitle("");
     setDraft("");
     setMarkdown(false);
-    setMember("");
     setAttachmentIds([]);
     setPendingAttachment("");
   }
@@ -134,7 +143,6 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     setMarkdown("format" in object && object.format === "markdown");
     setAttachmentIds(object.kind === "note" ? object.attachmentIds ?? [] : []);
     setPendingAttachment("");
-    setMember("");
     setFeedback("");
   }
 
@@ -165,22 +173,33 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     }
   }
 
-  async function browse(value: string) {
-    if (browsing) return;
+  async function browse(value: string, saved = false): Promise<boolean> {
+    if (browsing) return false;
     const url = normalWebUrl(value);
-    if (!url) { setFeedback("Enter a valid web address."); return; }
+    if (!url) { setFeedback("Enter a valid web address."); return false; }
+    const remember = saved && readWorkspaceBrowserHistory(browserHistoryKey).enabled;
     setFeedback("");
     setBrowsing(true);
-    const result = await operations.openBrowser(url);
-    setBrowsing(false);
-    if (!result.ok) {
+    try {
+      const result = await operations.openBrowser(url);
+      if (!result.ok) {
+        setFeedback("The browser couldn't open this address.");
+        return false;
+      }
+      const next = addBrowserLinks(objects, result.value, () => newObject("").id);
+      const added = next.length - objects.length;
+      if (added > 0 && save(next)) setFeedback(added === 1 ? "Link collected." : `${added} links collected.`);
+      else if (result.value.length > 0 && added === 0) setFeedback("These links are already saved.");
+      if (remember && !recordWorkspaceBrowserLaunch(browserHistoryKey, url)) {
+        setFeedback("The page opened, but AeRift could not save this visit.");
+      }
+      return true;
+    } catch {
       setFeedback("The browser couldn't open this address.");
-      return;
+      return false;
+    } finally {
+      setBrowsing(false);
     }
-    const next = addBrowserLinks(objects, result.value, () => newObject("").id);
-    const added = next.length - objects.length;
-    if (added > 0 && save(next)) setFeedback(added === 1 ? "Link collected." : `${added} links collected.`);
-    else if (result.value.length > 0 && added === 0) setFeedback("These links are already saved.");
   }
 
   async function stage(object: Entry | Collection) {
@@ -222,21 +241,13 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     return mediaById.get(id)?.name ?? `Attachment ${index + 1}`;
   }
 
-  function updateMembers(collection: Collection, itemIds: readonly string[]) {
-    if (upsert({ ...collection, itemIds })) setFeedback("Collection updated.");
-  }
-
-  function move(collection: Collection, index: number, direction: -1 | 1) {
-    const next = [...collection.itemIds];
-    [next[index], next[index + direction]] = [next[index + direction], next[index]];
-    updateMembers(collection, next);
-  }
-
   return <section className="ae-surface ios-section ios-object-editor aw-focused-surface" data-material="content" aria-label={module}>
-    {notes && <p>Save plain text or Markdown and attach imported files, photos, or videos.</p>}
-    {browser && <p>{copy.browserTip}</p>}
+    {notes && <WorkspaceNoteSearch filter={noteFilter} onChange={setNoteFilter} count={visibleEntries.length} />}
+    {browser && <WorkspaceBrowserTools storageKey={browserHistoryKey} onOpen={browse} disabled={browsing}
+      labels={{ description: copy.browserTip }} />}
     {clips && <>
       <p>Use the system Paste menu for text. AeRift keeps text only when you pin it.</p>
+      <WorkspaceClipboardTools tools={clipboardTools} count={visibleEntries.length} total={entries.length} />
       {imagePasteSupported === true &&
         <Button disabled={!regions.canSelect || !clipboardSharing} onClick={() => void pasteImage()}>Paste image for Rift</Button>}
       {imagePasteSupported === false && <p>{copy.clipboardImageUnavailable}</p>}
@@ -251,11 +262,11 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       </label>
       {browser ? <label><span>Address</span><input value={draft} required maxLength={4000}
         inputMode="url" autoCapitalize="none" spellCheck={false} onChange={event => setDraft(event.currentTarget.value)} /></label>
-        : !collections && <label><span>{clips ? "Text to pin" : "Note"}</span>
+        : notes ? <WorkspaceNoteEditor key={editing ?? "new"} value={draft}
+          format={markdown ? "markdown" : "plain"} onChange={setDraft} onFormat={format => setMarkdown(format === "markdown")} />
+        : !collections && <label><span>Text to pin</span>
           <textarea value={draft} required rows={4} maxLength={maxTextLength}
             onChange={event => setDraft(event.currentTarget.value)} /></label>}
-      {notes && <label className="ios-check"><input type="checkbox" checked={markdown}
-        onChange={event => setMarkdown(event.currentTarget.checked)} />Save as Markdown</label>}
       {notes && <fieldset className="ios-object-form ios-note-attachments">
         <legend>Attachments</legend>
         {attachmentIds.length > 0 && <ol className="ios-list">
@@ -288,44 +299,23 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       <div className="ae-actions">
         <Button type="submit">{editing ? "Save changes" : clips ? "Pin text" : browser ? "Collect link" :
           collections ? "Create collection" : "Save note"}</Button>
-        {browser && <Button variant="quiet" disabled={browsing || !draft.trim()} onClick={() => void browse(draft)}>Open page</Button>}
         {editing && <Button variant="quiet" onClick={reset}>Done editing</Button>}
       </div>
     </form>
     </details>
-    {selected?.kind === "collection" && <div className="ios-collection">
-      <h4>Collection contents</h4>
-      <ol className="ios-list">
-        {selected.itemIds.map((id, index) => {
-          const item = candidates.find(entry => entry.id === id);
-          if (!item) return null;
-          return <li key={id}>
-            <strong>{item.name}</strong>
-            <div className="ae-actions">
-              <Button variant="quiet" aria-label={`Move ${item.name} up`} disabled={index === 0}
-                onClick={() => move(selected, index, -1)}>↑</Button>
-              <Button variant="quiet" aria-label={`Move ${item.name} down`} disabled={index === selected.itemIds.length - 1}
-                onClick={() => move(selected, index, 1)}>↓</Button>
-              <Button variant="quiet" aria-label={`Remove ${item.name} from collection`}
-                onClick={() => updateMembers(selected, selected.itemIds.filter(memberId => memberId !== id))}>Remove</Button>
-            </div>
-          </li>;
-        })}
-      </ol>
-      <label className="ios-add-member">Add an item <select value={member} onChange={event => setMember(event.currentTarget.value)}>
-        <option value="">Choose a saved item</option>
-        {candidates.filter(item => !selected.itemIds.includes(item.id)).map(item =>
-          <option key={item.id} value={item.id}>{item.name}</option>)}
-      </select></label>
-      <Button disabled={!member} onClick={() => { updateMembers(selected, [...selected.itemIds, member]); setMember(""); }}>Add</Button>
-    </div>}
+    {selected?.kind === "collection" && <WorkspaceCollectionTools key={selected.id} name={selected.name}
+      objects={candidates} memberIds={selected.itemIds}
+      onChange={(next, previous) => selected.itemIds.length === previous.length &&
+        previous.every((id, index) => id === selected.itemIds[index]) && upsert({ ...selected, itemIds: next })} />}
     {feedback && <p role="status">{feedback}</p>}
-    {entries.length > 0 && <ul className="ios-object-list">
-      {entries.map(object => <li key={object.id} data-ae-route-enter={justAdded === object.id ? "neutral" : undefined}>
+    {notes && !visibleEntries.length && <p>{entries.length ? "No notes match your search." : "Start with a new note."}</p>}
+    {visibleEntries.length > 0 && <ul className="ios-object-list">
+      {visibleEntries.map(object => <li key={object.id} data-ae-route-enter={justAdded === object.id ? "neutral" : undefined}>
         <strong>{object.name}</strong>
         {object.kind === "collection" ? <small>{object.itemIds.length} saved items</small> :
           object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
           <small className="ios-preview">{object.kind === "text" ? "Pinned text" : object.text.slice(0, 180)}</small>}
+        {object.kind === "text" && <WorkspaceClipboardDetails text={object.text} format={object.format} />}
         {object.kind === "collection" && includesClipboard(object) && !clipboardSharing &&
           <small>Enable clipboard sharing to offer the pinned text in this collection.</small>}
         {object.kind === "note" && !!object.attachmentIds?.length && <details>
@@ -351,7 +341,8 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
             <Button disabled={!regions.canSelect || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>
               {object.kind === "note" && object.attachmentIds?.length ? "Send note text" : "Send copy"}
             </Button>}
-          {object.kind === "url" && <Button variant="quiet" disabled={browsing} onClick={() => void browse(object.url)}>Open</Button>}
+          {object.kind === "text" && <WorkspaceClipboardCopy tools={clipboardTools} name={object.name} text={object.text} />}
+          {object.kind === "url" && <Button variant="quiet" disabled={browsing} onClick={() => void browse(object.url, true)}>Open</Button>}
           <Button variant="quiet" onClick={() => edit(object)}>Edit</Button>
           {confirmRemoval === object.id ? <div className="ae-actions" data-ae-route-enter="neutral">
             <Button variant="danger" onClick={() => {
