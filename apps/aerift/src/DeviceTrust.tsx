@@ -1,4 +1,4 @@
-import { Button, ConnectionStatus, GlassSurface, SpatialIcon } from "@aerift/ui";
+import { Button, ConnectionStatus, GlassSurface, IconAction, SpatialIcon } from "@aerift/ui";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import type { AppPort, AppSnapshot } from "@aerift/app-contract";
 import { partitionDevices } from "@aerift/app-contract/friends";
@@ -9,7 +9,9 @@ const devicePlatform = {
   macos: ["Mac", "desktop"], linux: ["Linux", "desktop"],
 } as const;
 
-export function DeviceTrust({ snapshot, port = nativeAppPort, actions }: { snapshot: AppSnapshot | undefined; port?: AppPort; actions?: ReactNode }) {
+export function DeviceTrust({ snapshot, port = nativeAppPort, actions, compactActions = false }: {
+  snapshot: AppSnapshot | undefined; port?: AppPort; actions?: ReactNode; compactActions?: boolean;
+}) {
   const [selected, setSelected] = useState<string>();
   const [revoking, setRevoking] = useState(false);
   const [feedback, setFeedback] = useState<{ message: string; error: boolean }>();
@@ -49,11 +51,16 @@ export function DeviceTrust({ snapshot, port = nativeAppPort, actions }: { snaps
     }
   }
 
+  function trackTrigger(deviceId: string, node: HTMLButtonElement | null) {
+    if (node) triggers.current.set(deviceId, node);
+    else triggers.current.delete(deviceId);
+  }
+
   return (
     <section className="aerift-device-trust" aria-label="Nearby and trusted devices">
       {snapshot?.personalDeviceIds && <GlassSurface className="aerift-device-zone" material="content" role="region" aria-label="My Devices">
         <div className="aerift-device-zone-head">
-          <div><h3>My Devices</h3><p>Devices authorized as yours. This is separate from nearby pairing.</p></div>
+          <div><h3>My Devices</h3><p>{compactActions ? "Your authorized devices." : "Devices authorized as yours. This is separate from nearby pairing."}</p></div>
         </div>
         {personal.length ? <ul className="aerift-devices">{personal.map(device => <li key={device.id}>
           <div className="aerift-device-id"><SpatialIcon name={devicePlatform[device.platform][1]} size={22} />
@@ -63,7 +70,8 @@ export function DeviceTrust({ snapshot, port = nativeAppPort, actions }: { snaps
       </GlassSurface>}
       <GlassSurface className="aerift-device-zone" material="content" role="region" aria-label="Nearby Devices">
       <div className="aerift-device-zone-head">
-        <div><h3 ref={nearbyHeading} tabIndex={-1}>Nearby Devices</h3><p>Pair with a device you recognize on this network. Pairing alone does not grant remote access.</p></div>
+        <div><h3 ref={nearbyHeading} tabIndex={-1}>Nearby Devices</h3><p>{compactActions ? "Pair on this network. Remote access requires separate approval." :
+          "Pair with a device you recognize on this network. Pairing alone does not grant remote access."}</p></div>
         {actions && <div className="ae-actions aerift-device-actions">{actions}</div>}
       </div>
       {devices.length ? (
@@ -77,9 +85,11 @@ export function DeviceTrust({ snapshot, port = nativeAppPort, actions }: { snaps
                 <div><strong>{device.name}</strong><small>{devicePlatform[device.platform][0]} · {device.paired ? "Paired" : "Unpaired"}</small></div>
               </div>
               <ConnectionStatus state={device.online ? "connected" : "offline"} label={device.online ? "Online" : "Offline"} />
-              {device.paired && visibleSelection !== device.id && <Button variant="quiet" disabled={revoking}
-                ref={node => { if (node) triggers.current.set(device.id, node); else triggers.current.delete(device.id); }}
-                aria-label={`Unpair ${device.name}`} onClick={() => setSelected(device.id)}>Unpair</Button>}
+              {device.paired && visibleSelection !== device.id && (compactActions ?
+                <IconAction icon="unlink" disabled={revoking} label={`Unpair ${device.name}`}
+                  ref={node => trackTrigger(device.id, node)} onClick={() => setSelected(device.id)} /> :
+                <Button variant="quiet" disabled={revoking} aria-label={`Unpair ${device.name}`}
+                  ref={node => trackTrigger(device.id, node)} onClick={() => setSelected(device.id)}>Unpair</Button>)}
               {device.paired && visibleSelection === device.id && <div className="aerift-device-confirm" data-ae-route-enter="neutral"
                 role="group" aria-label={`Unpair ${device.name}?`} onKeyDown={event => {
                   if (event.key === "Escape" && !revoking) {

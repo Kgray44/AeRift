@@ -47,8 +47,8 @@ export function PrivateRemoteFolders({ peers, endpoint }: {
   }
 
   return <section aria-labelledby="remote-folder-heading">
-    <h2 id="remote-folder-heading">Private Remote folders (qualification)</h2>
-    <p>Folder decisions are separate from file decisions. Send only synthetic test folders.</p>
+    <h2 id="remote-folder-heading">Folders</h2>
+    <p>Choose an authorized device. The recipient must approve the folder before it transfers.</p>
     <label>Folder recipient <select value={peerId} onChange={(event) => setPeerId(event.target.value)}>
       <option value="">Select an authorized Remote device</option>
       {peers.map((peer) => <option key={peer.id} value={peer.id}>{peer.name} · {peer.id.slice(0, 12)}</option>)}
