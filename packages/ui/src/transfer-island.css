@@ -1,0 +1,130 @@
+/* The floating window surface stays below top-layer consent sheets and never
+   claims pointer input outside the pill and its scrollable file details. */
+.ae-transfer-island-frame {
+  position: fixed;
+  z-index: var(--ae-layer-feedback);
+  inset: auto max(.75rem, env(safe-area-inset-right)) max(.8rem, env(safe-area-inset-bottom))
+    max(.75rem, env(safe-area-inset-left));
+  display: grid;
+  place-items: end center;
+  color: var(--ae-text);
+  pointer-events: none;
+}
+.ae-transfer-island-frame[data-mobile="true"] {
+  inset-block-end: calc(4.8rem + env(safe-area-inset-bottom));
+}
+.ae-transfer-island-frame[hidden],
+.aerift-ios[data-keyboard="open"] .ae-transfer-island-frame,
+.ae-theme:has(.ae-sheet[open]) .ae-transfer-island-frame {
+  display: none;
+}
+.ae-transfer-island {
+  inline-size: min(100%, 29rem);
+  border-radius: 1.65rem;
+  padding: .35rem .55rem;
+  pointer-events: auto;
+  animation: ae-transfer-island-enter var(--ae-motion-overlay) var(--ae-motion-out) both;
+  transition: inline-size var(--ae-motion-overlay) var(--ae-motion-out);
+}
+.ae-transfer-island-frame[data-collapsed="true"] .ae-transfer-island {
+  inline-size: min(100%, 18rem);
+}
+.ae-transfer-island-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: .55rem;
+}
+.ae-transfer-island-symbol {
+  inline-size: 2.15rem;
+  block-size: 2.15rem;
+  display: grid;
+  place-content: center;
+  background: var(--ae-field);
+  border: 1px solid var(--ae-control-edge);
+  border-radius: 50%;
+  color: var(--ae-accent);
+}
+.ae-transfer-island-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: .45rem;
+}
+.ae-transfer-island-summary-copy { min-inline-size: 0; line-height: 1.3; }
+.ae-transfer-island-overall { font-variant-numeric: tabular-nums; }
+.ae-transfer-island-details {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows var(--ae-motion-overlay) var(--ae-motion-out),
+    opacity var(--ae-motion-overlay) var(--ae-motion-out);
+}
+.ae-transfer-island-details[inert] { grid-template-rows: 0fr; opacity: 0; }
+.ae-transfer-island-details ol {
+  margin: 0;
+  padding: 0 .3rem;
+  min-block-size: 0;
+  max-block-size: min(12rem, 34dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.ae-transfer-island-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: .6rem;
+  padding: .5rem .25rem;
+  border-block-start: 1px solid var(--ae-control-edge);
+}
+.ae-transfer-island-row > svg { margin-block-start: .15rem; color: var(--ae-muted); }
+.ae-transfer-island-file { display: grid; gap: .3rem; min-inline-size: 0; }
+.ae-transfer-island-file-head {
+  display: flex;
+  justify-content: space-between;
+  gap: .45rem;
+  font-variant-numeric: tabular-nums;
+}
+.ae-transfer-island-file-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; }
+.ae-transfer-island-file small { line-height: 1.25; }
+.ae-transfer-island-file .ae-progress > span { background: var(--ae-accent); }
+.ae-transfer-island-file .ae-progress[data-indeterminate] > span { opacity: 0; }
+.ae-theme:has(.ae-transfer-island-frame[data-collapsed="false"] [data-visible="true"]) .ae-main {
+  padding-block-end: max(17rem, env(safe-area-inset-bottom));
+}
+.ae-theme:has(.ae-transfer-island-frame[data-collapsed="true"] [data-visible="true"]) .ae-main {
+  padding-block-end: max(5rem, env(safe-area-inset-bottom));
+}
+.aerift-ios .ae-theme:has(.ae-transfer-island-frame[data-collapsed="false"] [data-visible="true"]) .ae-main {
+  padding-block-end: calc(21rem + env(safe-area-inset-bottom));
+}
+.aerift-ios .ae-theme:has(.ae-transfer-island-frame[data-collapsed="true"] [data-visible="true"]) .ae-main {
+  padding-block-end: calc(10rem + env(safe-area-inset-bottom));
+}
+@keyframes ae-transfer-island-enter {
+  from { opacity: 0; translate: 0 .8rem; scale: .94; }
+}
+@supports (transition-behavior: allow-discrete) {
+  .ae-transfer-island-frame {
+    opacity: 1;
+    translate: none;
+    transition: display var(--ae-motion-overlay) allow-discrete,
+      opacity var(--ae-motion-overlay) var(--ae-motion-in),
+      translate var(--ae-motion-overlay) var(--ae-motion-in);
+  }
+  .ae-transfer-island-frame[hidden] { opacity: 0; translate: 0 .8rem; }
+  .ae-transfer-island-frame[hidden] .ae-transfer-island { pointer-events: none; }
+  .ae-transfer-island-frame .ae-transfer-island { animation: none; }
+  @starting-style {
+    .ae-transfer-island-frame:not([hidden]) { opacity: 0; translate: 0 .8rem; }
+  }
+}
+.ae-theme[data-motion="reduce"] :is(.ae-transfer-island-frame, .ae-transfer-island, .ae-transfer-island-details) {
+  animation: none;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.ae-transfer-island-frame, .ae-transfer-island, .ae-transfer-island-details) { animation: none; transition: none; }
+}
+.aerift-ios[data-keyboard="open"] .ae-transfer-island-frame,
+.ae-theme:has(.ae-sheet[open]) .ae-transfer-island-frame { transition: none; }

@@ -1,7 +1,7 @@
 import { friendsFixture } from "./friends-fixture";
 import { createRoot } from "react-dom/client";
 import type { AppPort, AppSnapshot, Transfer } from "@aerift/app-contract";
-import { installMotionFixture, respondToMotionReceipt } from "./motion-fixture";
+import { installMotionFixture, installTransferIslandFixture, respondToMotionReceipt } from "./motion-fixture";
 import "../../apps/aerift/public/appearance-bootstrap.css";
 import type { ImportedMedia, MobileMediaPort } from "../../apps/aerift/src/ios/mobile-media";
 import { AndroidApp, IosApp } from "../../apps/aerift/src/ios/IosApp";
@@ -15,9 +15,10 @@ const incoming: Transfer = {
   id: "offer", direction: "incoming", deviceId: device.id,
   state: "pending", bytesTransferred: 0, file: photo,
 };
+const islandFixture = new URLSearchParams(location.search).get("islandFixture") === "1";
 const motionFixture = new URLSearchParams(location.search).get("motionFixture") === "1";
 let snapshot: AppSnapshot = { version: 1, devices: [device], pendingPairing: [], transfers: [
-  ...(!motionFixture ? [incoming] : []),
+  ...(!motionFixture && !islandFixture ? [incoming] : []),
   { ...incoming, id: "earlier", state: "completed", file, bytesTransferred: file.sizeBytes },
 ] };
 const watchers = new Set<(snapshot: AppSnapshot) => void>();
@@ -28,6 +29,7 @@ function broadcast(value: AppSnapshot) {
   for (const watch of watchers) watch(snapshot);
 }
 if (motionFixture) installMotionFixture(device.id, () => snapshot, broadcast);
+if (islandFixture) installTransferIslandFixture(device.id, () => snapshot, broadcast);
 
 function publish(transfer: Transfer) {
   broadcast({ ...snapshot, transfers: [transfer, ...snapshot.transfers.filter(item => item.id !== transfer.id)] });

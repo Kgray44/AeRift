@@ -201,7 +201,7 @@ try {
 
   await page.evaluate(() => window.desktopFixture.tray("activity"));
   await destination("Activity").waitFor();
-  assert.equal(await page.getByRole("progressbar", { name: fixture.transfer.file.name }).getAttribute("aria-valuenow"), "43");
+  assert.equal(await page.getByRole("progressbar", { name: fixture.transfer.file.name, exact: true }).getAttribute("aria-valuenow"), "43");
   await page.getByRole("combobox", { name: /^Show/ }).selectOption("finished");
   await page.getByText("No transfers match this view.").waitFor();
   await page.getByRole("combobox", { name: /^Show/ }).selectOption("all");

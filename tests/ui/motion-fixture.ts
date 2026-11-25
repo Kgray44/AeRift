@@ -77,3 +77,21 @@ export function respondToMotionReceipt(request: TransferRequest, snapshot: AppSn
   if (request.action === "respond" && (current.state !== "pending" || current.direction !== "incoming")) return undefined;
   return { ...current, state: request.action === "cancel" ? "cancelled" : request.accept ? "accepted" : "rejected" };
 }
+
+/** Independent send/receive receipts for the transfer island, never compiled into the app. */
+export function installTransferIslandFixture(peer: string, getSnapshot: () => AppSnapshot, broadcast: (snapshot: AppSnapshot) => void) {
+  type IslandState = "pending" | "accepted" | "transferring" | "completed" | "cancelled";
+  const set = (direction: Direction, state: IslandState, bytesTransferred: number) => {
+    if (!["incoming", "outgoing"].includes(direction) ||
+        !["pending", "accepted", "transferring", "completed", "cancelled"].includes(state)) {
+      throw new RangeError("Unknown transfer island fixture state");
+    }
+    const id = `island-${direction}`;
+    const file = { name: direction === "incoming" ? "Tidal charts.pdf" : "Survey recording.wav", sizeBytes: 4_000 };
+    const transfer: Transfer = { id, direction, deviceId: peer, file, state, bytesTransferred };
+    const snapshot = getSnapshot();
+    broadcast({ ...snapshot, transfers: [transfer, ...snapshot.transfers.filter(item => item.id !== id)] });
+  };
+  (window as Window & { aeTransferIslandFixture?: { set: typeof set } }).aeTransferIslandFixture = { set };
+  set("incoming", "pending", 0);
+}
