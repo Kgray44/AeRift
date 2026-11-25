@@ -46,3 +46,7 @@ test("thumbnail commands are mobile-only, opaque, capped and do not call a file 
   assert.match(guard, /compare_exchange/);
   assert.match(guard, /tauri\.localhost/);
 });
+test("Android thumbnail bridge is exported to the platform command", () => {
+  const source = readFileSync(new URL("../../apps/aerift/src-tauri/src/platform/android/src/lib.rs", import.meta.url), "utf8");
+  assert.match(source, /pub use storage::\{[^}]*\bthumbnail_media\b/);
+});
