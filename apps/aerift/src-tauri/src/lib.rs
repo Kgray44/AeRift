@@ -152,7 +152,6 @@ pub fn run() {
             private_remote_app::private_remote_action,
             private_remote_app::windows_redeem_remote,
             private_remote_app::windows_send_remote_file,
-            #[cfg(feature = "private-remote-folder-qualification")]
             private_remote_app::folder_mode::windows_remote_folder_command,
             windows::watch_app,
             windows_friends::friends_setup_view,

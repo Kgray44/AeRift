@@ -9,7 +9,7 @@ type Offer = {
   status: { state: string; bytesTransferred: number };
 };
 type Snapshot = {
-  folderQualification?: boolean; foldersActive?: boolean;
+  foldersAvailable?: boolean; foldersActive?: boolean;
   active: boolean; endpoint: string; identity: string | null;
   peers: Device[]; pairing: { id: string; peer: Device } | null; offers: Offer[];
 };
@@ -76,7 +76,7 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
       {snapshot && <p>Selected private endpoint: <code>{snapshot.endpoint}</code></p>}
       {active && (
       <button type="button" disabled={busy}
-        onClick={() => action({ action: "stop" }, () => { setInvite(""); setPermission(false); })}>
+        onClick={() => action({ action: "stop" }, () => { setInvite(""); setPermission(false); setEnableFolders(false); })}>
         {product ? "Stop Remote" : "Stop private receiver"}
       </button>
       )}
@@ -92,13 +92,13 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
             {product ? "Start listening at this exact address on my private VPN."
               : "This endpoint belongs to an already-authorized private test overlay. I will use synthetic files only."}
           </label>
-          {product && snapshot?.folderQualification && <label>
+          {product && snapshot?.foldersAvailable && <label>
             <input type="checkbox" checked={enableFolders}
               onChange={(event) => setEnableFolders(event.target.checked)} />
-            Enable private folder qualification on this VPN listener for this session.
+            Enable private folder transfers on this VPN listener for this session.
           </label>}
           <p><button type="button" disabled={!permission || !snapshot || busy}
-            onClick={() => void operation(() => invoke("private_remote_start", { confirmed: permission, enableFolders: product && enableFolders }))}>
+            onClick={() => void operation(async () => { await invoke("private_remote_start", { confirmed: permission, enableFolders: product && enableFolders }); setPermission(false); setEnableFolders(false); })}>
             {product ? "Start Remote" : "Start private receiver"}
           </button></p>
         </section>
