@@ -16,6 +16,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
 const assertFloatingNoteTools = async (editor, required) => {
+  assert.equal(await editor.getByRole("combobox").count(), 0, "no always-visible category dropdown");
   const canvas = editor.locator(".aw-note-canvas");
   const tools = canvas.getByRole("group", { name: "Note tools", exact: true });
   for (const name of required) {
@@ -106,8 +107,21 @@ try {
     return field && field.getBoundingClientRect().height >= 350;
   }, null, { timeout: 3000 });
   assert.ok((await largeEditor.boundingBox()).height >= 350, "Notes keeps a large desktop editor");
-  await assertFloatingNoteTools(editor, ["Bold", "Markdown", "Preview", "Save note", "Delete note"]);
+  await assertFloatingNoteTools(editor, ["Bold", "Markdown", "Preview", "Move note to category", "Save note", "Delete note"]);
   await snapped(desktop, "desktop-notes-sidebar-editor");
+  const categoryIcon = button(editor, "Move note to category");
+  const categoryChoices = editor.getByRole("group", { name: "Move note to category", exact: true });
+  await categoryIcon.press("Enter");
+  const currentCategory = button(categoryChoices, "Work projects");
+  assert.equal(await currentCategory.getAttribute("aria-pressed"), "true");
+  await currentCategory.press("Escape");
+  assert.equal(await focused(categoryIcon), true);
+  assert.equal(await categoryChoices.count(), 0);
+  await categoryIcon.click();
+  await button(categoryChoices, "Uncategorized").click();
+  await categoryIcon.click();
+  assert.equal(await button(categoryChoices, "Uncategorized").getAttribute("aria-pressed"), "true");
+  await currentCategory.click();
   await sidebar.getByRole("searchbox", { name: "Search notes" }).fill("unrelated");
   await sidebar.getByText("No notes match this search.").waitFor();
   await desktop.reload();
@@ -251,8 +265,13 @@ try {
     await snapped(page, platform + "-notes-list");
     await mobileNotes.getByRole("button", { name: /Weekend plan/ }).click();
     await mobileEditor.getByRole("textbox", { name: "Note", exact: true }).waitFor();
-    await assertFloatingNoteTools(mobileEditor, ["Bold", "Markdown", "Preview", "Save note", "Delete note"]);
+    await assertFloatingNoteTools(mobileEditor, ["Bold", "Markdown", "Preview", "Move note to category", "Save note", "Delete note"]);
     await snapped(page, platform + "-notes-full-editor");
+    await button(mobileEditor, "Move note to category").click();
+    const categories = mobileEditor.getByRole("group", { name: "Move note to category", exact: true });
+    assert.equal(await button(categories, "Weekend").getAttribute("aria-pressed"), "true");
+    await button(categories, "Weekend").click();
+    assert.equal(await categories.count(), 0);
     await button(mobileEditor, "Back to notes").click();
     await back(page, "Notes");
     assert.equal(await button(page, "Clipboard").count(), 0, "Clipboard is not enabled by default");

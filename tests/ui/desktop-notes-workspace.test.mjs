@@ -25,3 +25,10 @@ test("editing and note actions share the same floating Glass bar above the writi
   assert.match(shared, /className="aw-note-canvas"[^]*<GlassSurface[^>]*aw-note-toolbar[^]*label="Markdown"[^]*\{actions\}[^]*<textarea/);
   assert.match(notes, /<WorkspaceNoteEditor[^]*actions=\{<>[^]*label="Save note"[^]*label="Delete note"/);
 });
+
+test("category assignment is an on-demand toolbar control, not a permanent field", () => {
+  const notes = read("windows/DesktopNotesWorkspace.tsx");
+  assert.doesNotMatch(notes, /aw-note-category-select|<select\b/);
+  assert.match(notes, /<WorkspaceNoteEditor[^]*actions=\{<>[^]*<NoteCategoryPicker/);
+  assert.match(notes, /label="Move note to category"[^]*aria-expanded=\{open\}/);
+});

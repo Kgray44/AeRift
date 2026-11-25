@@ -1,6 +1,6 @@
 import type { DigitalObject } from "@aerift/app-contract/digital-objects";
 import { GlassSurface, IconAction, SpatialIcon } from "@aerift/ui";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { NoteIconButton, WorkspaceNoteEditor } from "../WorkspaceNoteTools";
 import { workspaceNoteLimit } from "../workspace-note-tools";
 import {
@@ -30,6 +30,58 @@ function fromNote(note: Note, category?: string): Draft {
 
 function noteTitle(draft: Draft, titleLimit: number) {
   return (draft.name.trim() || draft.text.split(/\r?\n/u).find(line => line.trim())?.trim() || "").slice(0, titleLimit);
+}
+
+function NoteCategoryPicker({ value, categories, disabled, onChange }: {
+  value: string | null;
+  categories: DesktopNoteLibrary["categories"];
+  disabled: boolean;
+  onChange: (value: string | null) => void;
+}) {
+  const id = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const focusChoice = useRef(false);
+
+  function close(restore: boolean) {
+    setOpen(false);
+    if (restore) root.current?.querySelector<HTMLButtonElement>(".aw-note-category-trigger")?.focus();
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    if (focusChoice.current) {
+      focusChoice.current = false;
+      root.current?.querySelector<HTMLButtonElement>('.aw-note-category-choice[aria-pressed="true"]')?.focus();
+    }
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+
+  return <div className="aw-note-category-anchor" ref={root}
+    onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) close(false); }}
+    onKeyDown={event => {
+      if (!open || event.key !== "Escape") return;
+      event.preventDefault(); event.stopPropagation(); close(true);
+    }}>
+    <NoteIconButton type="button" className="aw-note-category-trigger" label="Move note to category" icon="category"
+      disabled={disabled} aria-expanded={open} aria-controls={open ? id : undefined} onClick={event => {
+        focusChoice.current = event.detail === 0;
+        setOpen(current => !current);
+      }} />
+    {open && <GlassSurface className="aw-note-category-popover" material="control" role="group" id={id} aria-label="Move note to category">
+      <p>Move to category</p>
+      {[{ id: null, name: "Uncategorized" }, ...categories].map(category => (
+        <button key={category.id ?? "uncategorized"} type="button" className="aw-note-category-choice"
+          aria-pressed={category.id === value} disabled={disabled} onClick={() => { onChange(category.id); close(true); }}>
+          <span>{category.name}</span>{category.id === value && <span aria-hidden="true">✓</span>}
+        </button>
+      ))}
+    </GlassSurface>}
+  </div>;
 }
 
 export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBack, heading, collectionSelection = [], onCollectionSelect,
@@ -251,18 +303,14 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
             }
           }}>
           <div className="aw-desktop-note-top">
-            <label className="aw-note-title-field">Title<input ref={title} value={draft.name} maxLength={titleLimit}
+            <label className="aw-note-title-field"><span className="ae-note-sidebar-visually-hidden">Title</span><input ref={title} value={draft.name} maxLength={titleLimit}
               placeholder="Untitled note" disabled={locked} onChange={event => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
           </div>
-          <label className="aw-note-category-select"><SpatialIcon name="folder" size={17} />Category
-            <select value={draft.category ?? ""} disabled={locked} onChange={event => setDraft({ ...draft, category: event.currentTarget.value || null })}>
-              <option value="">Uncategorized</option>
-              {library.categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>
           <WorkspaceNoteEditor value={draft.text} format={draft.format} disabled={locked}
             onChange={text => setDraft(current => current ? { ...current, text } : current)}
             onFormat={format => setDraft(current => current ? { ...current, format } : current)} actions={<>
+              <NoteCategoryPicker value={draft.category} categories={library.categories} disabled={locked}
+                onChange={category => setDraft(current => current ? { ...current, category } : current)} />
               <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !draft.text.trim()} />
               {saved && onCollectionSelect && <NoteIconButton label="Select note for collection" icon="folder" disabled={locked}
                 aria-pressed={collectionSelection.includes(saved.id)}
