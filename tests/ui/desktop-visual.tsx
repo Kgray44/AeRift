@@ -130,9 +130,18 @@ mockIPC((cmd, args) => {
   if (cmd === "select_app_file") return file;
   if (inboxFixture && cmd === "list_ambient_inbox") {
     const { query } = args as { query: string };
-    const entry = { peer: first.id, id: "receipt", name: "Verified survey.pdf", sizeBytes: 14428,
-      requestedDestination: "inbox" };
-    return { entries: !query || entry.name.includes(query) ? [entry] : [], truncated: false };
+    const entries = [
+      { peer: first.id, id: "receipt", name: "Verified survey.pdf", sizeBytes: 14428,
+        receivedAtUnixMs: Date.parse("2026-11-25T14:02:00.000Z"), requestedDestination: "inbox" },
+      { peer: first.id, id: "text-receipt", name: "Received sketch.txt", sizeBytes: 38,
+        receivedAtUnixMs: Date.parse("2026-11-25T14:22:00.000Z"), requestedDestination: "inbox" },
+    ];
+    return { entries: entries.filter(row => row.name.toLowerCase().includes(query.toLowerCase())), truncated: false };
+  }
+  if (inboxFixture && cmd === "preview_ambient_inbox_text") {
+    const { peer, id } = args as { peer: string; id: string };
+    if (peer !== first.id || id !== "text-receipt") throw { code: "invalid_request" };
+    return "<script>preview is inert text</script>";
   }
   if (inboxFixture && cmd === "verify_ambient_inbox_entry") {
     const { peer, id } = args as { peer: string; id: string };
@@ -145,3 +154,4 @@ mockIPC((cmd, args) => {
 
 createRoot(document.getElementById("root")!).render(privateRemoteFixture ?
   <WindowsTransferMode><DesktopApp /></WindowsTransferMode> : <DesktopApp />);
+

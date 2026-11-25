@@ -1,9 +1,11 @@
+import { CompactHeaderMark, CompactHeaderStatus } from "../CompactHeader";
 import { destinationIntent } from "../destination-intent";
 import {
-  AppBrand, AppShell, Button, GestureCameraIndicator, GlassSurface, SettingsPanel, Sheet,
+  AppShell, Button, GlassSurface, SettingsPanel, Sheet,
   SpatialIcon, ThemeProvider, TransferProgress, TransferWorkspace,
   type AppearanceSettings, type DiscoveryState, type GestureCameraStatus, type WorkspaceConnection,
 } from "@aerift/ui";
+import { ordinaryDevices } from "@aerift/app-contract/friends";
 import type { AppPort, AppSnapshot, FileSelection } from "@aerift/app-contract";
 import { createNavigationChange, DESTINATIONS, WORKSPACE_MODULES } from "@aerift/app-contract/experience";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -11,6 +13,7 @@ import { FriendsWorkspace } from "../FriendsWorkspace";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { MobileGestureCamera, mobileCameraPermission, type MobileCameraPermission } from "./IosGestureCamera";
+import { MobileReceivedActivity } from "./MobileReceivedActivity";
 import { MobileNavigation } from "./MobileNavigation";
 import { observeMobileMedia } from "./mobile-media-observer";
 import type { MobileMediaPort } from "./mobile-media";
@@ -118,6 +121,11 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
   const [objectError, setObjectError] = useState("");
   const [history, setHistory] = useState(() => readHistory(keys));
   const [historyError, setHistoryError] = useState(false);
+  const [savedReceipts, setSavedReceipts] = useState(false);
+  const [receiptRevision, setReceiptRevision] = useState(0);
+  const [receiptBusy, setReceiptBusy] = useState(false);
+  const receiptOperation = useRef(false);
+  const receiptReady = connection.state === "ready";
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const clearedReceipts = useRef(new Set<string>());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -174,7 +182,41 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
     if (saved) setHistory(next);
   }, [history, keys.history, liveTransfers, preferences.rememberActivity]);
 
-  function clearSavedActivity() {
+  async function syncNativeReceipts(enabled: boolean, clear = false) {
+    if (!operations.configureReceiptHistory) return true;
+    if (receiptOperation.current || !receiptReady) return false;
+    receiptOperation.current = true;
+    setReceiptBusy(true);
+    if (clear || !enabled) setSavedReceipts(false);
+    try {
+      if (!(await operations.configureReceiptHistory(enabled, clear)).ok) {
+        setHistoryError(true);
+        return false;
+      }
+      setSavedReceipts(enabled);
+      setReceiptRevision(value => value + 1);
+      return true;
+    } catch {
+      setHistoryError(true);
+      return false;
+    } finally {
+      receiptOperation.current = false;
+      setReceiptBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    // Hydrate the native store only under the already-consented preference.
+    if (receiptReady && preferences.rememberActivity && operations.configureReceiptHistory)
+      void syncNativeReceipts(true);
+  }, [receiptReady, operations]);
+
+  async function setRememberActivity(enabled: boolean) {
+    if (await syncNativeReceipts(enabled)) updatePreferences("rememberActivity", enabled);
+  }
+
+  async function clearSavedActivity() {
+    if (!(await syncNativeReceipts(preferences.rememberActivity, true))) return;
     if (!writeSettings(keys.history, [])) {
       setHistoryError(true);
       return;
@@ -314,19 +356,15 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
               <Button variant="quiet" loading={discovering} loadingLabel="Retrying discovery…"
                 onClick={() => void discover()}>Retry discovery</Button>
             </div>}
-          navigationStart={<AppBrand />}
-          navigationEnd={<>
-            <GestureCameraIndicator status={cameraStatus} />
-            <Button className="ae-control-gear" variant="quiet" aria-label="Control Center"
-              aria-haspopup="dialog" title="Control Center" onClick={() => setSettingsOpen(true)}>
-              <SpatialIcon name="settings" />
-            </Button>
-          </>}
+          shellHeader={<header className="ae-experience-nav ae-compact-header" data-mobile-shell="true">
+            <CompactHeaderMark />
+            <CompactHeaderStatus camera={cameraStatus} enabled={preferences.gestures}
+              connections={snapshot ? ordinaryDevices(snapshot.devices, snapshot.friends).filter(device => device.paired && device.online).length : undefined} service={connection.state} />
+          </header>}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
-          activityFooter={<>
-            <p>{copy.receivedTip}</p>
-            {historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
-          </>}
+          activityLibrary={<MobileReceivedActivity transfers={recentTransfers} liveTransfers={liveTransfers ?? []} operations={operations}
+            receivedTip={copy.receivedTip} savedReceipts={savedReceipts && preferences.rememberActivity} receiptRevision={receiptRevision} />}
+          activityFooter={historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
           gesture={controls => <MobileGestureCamera platform={platform} controls={controls} enabled={preferences.gestures}
             actionsBlocked={settingsOpen} retryKey={cameraRetry} onStatus={setCameraStatus} />}
           mobile={{
@@ -388,6 +426,7 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
           }}
         />
         <MobileNavigation destinations={destinations} destination={destination} navigate={navigate}
+          settingsOpen={settingsOpen} openSettings={() => setSettingsOpen(true)}
           attention={{ devices: summary.pairRequests > 0, activity: summary.active.length > 0 }} />
       </AppShell>
       <Sheet open={settingsOpen} title="Control Center" onClose={closeSettings}>
@@ -445,11 +484,12 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
           <fieldset className="ae-settings">
             <legend>Activity history</legend>
             <label><input type="checkbox" checked={preferences.rememberActivity}
-              onChange={event => updatePreferences("rememberActivity", event.currentTarget.checked)} />
+              disabled={receiptBusy || (!!operations.configureReceiptHistory && !receiptReady)}
+              onChange={event => void setRememberActivity(event.currentTarget.checked)} />
               Keep final transfer outcomes after restart</label>
             <p>AeRift can keep the last 60 outcomes on {copy.device}, including file names.</p>
-            {history.length > 0 && (confirmClearHistory ? <div className="ae-actions">
-              <Button variant="danger" onClick={clearSavedActivity}>Clear saved outcomes</Button>
+            {(history.length > 0 || (savedReceipts && preferences.rememberActivity)) && (confirmClearHistory ? <div className="ae-actions">
+              <Button variant="danger" disabled={receiptBusy} onClick={() => void clearSavedActivity()}>Clear saved outcomes</Button>
               <Button variant="quiet" onClick={() => setConfirmClearHistory(false)}>Keep outcomes</Button>
             </div> : <div>
               <Button variant="quiet" onClick={() => setConfirmClearHistory(true)}>Clear saved Activity</Button>

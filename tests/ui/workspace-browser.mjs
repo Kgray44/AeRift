@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyReceivedActivity } from "./received-activity-browser.mjs";
 import { verifyDocumentsGallery } from "./documents-gallery-browser.mjs";
 const module = process.env.AERIFT_PLAYWRIGHT_MODULE;
 const { chromium } = await import(module ? pathToFileURL(module).href : "playwright");
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
 const evidence = process.env.AERIFT_WORKSPACE_EVIDENCE;
 if (evidence) await mkdir(evidence, { recursive: true });
-const browser = await chromium.launch();
+const executablePath = process.env.AERIFT_CHROMIUM_PATH ?? process.env.AERIFT_CHROMIUM;
+const browser = await chromium.launch(executablePath ? { executablePath } : {});
 const snapped = async (page, name) => {
   if (!evidence) return;
   await page.screenshot({ path: join(evidence, name + ".png"), animations: "disabled" });
@@ -16,6 +18,19 @@ const snapped = async (page, name) => {
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
+const verifyHeader = async page => {
+  const header = page.locator("header.ae-compact-header");
+  const logo = header.getByRole("img", { name: "AeRift", exact: true });
+  const status = header.getByRole("group", { name: "App status" });
+  await logo.evaluate(el => el.decode());
+  const [bar, mark] = await Promise.all([header.boundingBox(), logo.boundingBox()]);
+  assert.ok(bar && mark && Math.abs(bar.x + bar.width / 2 - mark.x - mark.width / 2) <= 1);
+  assert.equal(await logo.getAttribute("src"), "/branding/aerift-mark-transparent.png");
+  assert.equal(await status.getByRole("img").count(), 2);
+  assert.equal(await status.getByRole("button").count(), 0);
+  assert.equal(await header.locator(".ae-nav-brand, .ae-nav-tools").count(), 0);
+};
+
 const assertFloatingNoteTools = async (editor, required) => {
   assert.equal(await editor.getByRole("combobox", { name: /category/i }).count(), 0, "no always-visible category dropdown");
   const canvas = editor.locator(".aw-note-canvas");
@@ -41,6 +56,7 @@ const back = async (page, name) => {
 try {
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
+  await verifyHeader(desktop);
   await snapped(desktop, "desktop-workspace-dark");
   await open(desktop, "File Browser");
   const importButton = button(desktop, "Import files");
@@ -232,8 +248,28 @@ try {
   await button(inbox, "Search Inbox").click();
   await verify.waitFor();
   assert.equal(await activity.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await verifyReceivedActivity(activity, { expectedTime: "2026-11-25T14:02:00.000Z" });
+  const timeline = inbox.getByRole("region", { name: "Receipt timeline" });
+  const newest = timeline.getByRole("button").first();
+  assert.equal(await newest.getAttribute("aria-label"), "View timeline entry for Received sketch.txt");
+  await newest.press("Enter");
+  const receiptPreview = inbox.getByRole("region", { name: "File preview", exact: true });
+  await button(receiptPreview, "Preview file").click();
+  await receiptPreview.getByText("<script>preview is inert text</script>", { exact: true }).waitFor();
+  assert.equal(await receiptPreview.locator("script").count(), 0);
   await snapped(activity, "desktop-activity-inbox-polished");
   await activity.close();
+
+  const receivedAndroid = await browser.newPage({ viewport: { width: 360, height: 800 } });
+  await receivedAndroid.goto(root + "/mobile.html?platform=android&receivedFixture=1");
+  await receivedAndroid.getByRole("button", { name: /^Activity(?:\s*Transfers active)?$/ }).click();
+  const androidFiles = receivedAndroid.getByRole("region", { name: "Received files", exact: true });
+  await androidFiles.getByRole("searchbox", { name: "Find a file", exact: true }).fill("chart");
+  await button(androidFiles, "View received Received chart.pdf").click();
+  await button(androidFiles, "Open file").click();
+  await androidFiles.getByText("Opened received copy.", { exact: true }).waitFor();
+  await snapped(receivedAndroid, "android-activity-received-library");
+  await receivedAndroid.close();
 
   for (const platform of ["ios", "android"]) {
     const page = await browser.newPage({ viewport: { width: platform === "ios" ? 390 : 320, height: 844 },
@@ -247,6 +283,10 @@ try {
     assert.ok(bounds.every((b, i) => i === 0 || b.left >= bounds[i - 1].right - 1));
     assert.equal(await dock.locator(".af-label-compact").filter({ hasText: /^Space$/ }).isVisible(), true);
     assert.ok(await dock.locator(".af-dock-label").evaluateAll(labels => labels.every(label => label.scrollWidth <= label.clientWidth + 1)));
+    await verifyHeader(page);
+    assert.equal(await page.locator("header.ae-compact-header").getByRole("button").count(), 0);
+    const dockSettings = button(dock, "Settings");
+    assert.equal(await dockSettings.count(), 1);
     await snapped(page, platform + "-workspace");
     await open(page, "File Browser");
     await button(page, "Import files").click();
@@ -295,7 +335,7 @@ try {
     await button(mobileEditor, "Back to notes").click();
     await back(page, "Notes");
     assert.equal(await button(page, "Clipboard").count(), 0, "Clipboard is not enabled by default");
-    await button(page, "Control Center").click();
+    await button(dock, "Settings").click();
     const controls = page.getByRole("dialog", { name: "Control Center" });
     await controls.getByRole("checkbox", { name: "Clipboard", exact: true }).check();
     await button(controls, "Close").click();
