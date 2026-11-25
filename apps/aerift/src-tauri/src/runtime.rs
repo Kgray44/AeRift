@@ -336,6 +336,8 @@ pub(crate) struct Session {
     #[cfg(all(test, windows))]
     root: PathBuf,
     destination: PathBuf,
+    #[cfg(target_os = "ios")]
+    completion_receipts: tauri_plugin_aerift_ios::CompletionReceipts,
     #[cfg(windows)]
     _profile_lock: File,
     #[cfg(windows)]

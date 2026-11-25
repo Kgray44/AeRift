@@ -5,25 +5,29 @@ import { ReceivedActivity } from "../ReceivedActivity";
 import { mobileReceivedRows } from "./mobile-received-activity";
 import type { MobileOperations, ReceivedCopy } from "./mobile-platform";
 
-export function MobileReceivedActivity({ transfers, liveTransfers, operations, receivedTip }: {
+export function MobileReceivedActivity({ transfers, liveTransfers, operations, receivedTip, savedReceipts = false, receiptRevision = 0 }: {
   transfers: readonly Transfer[];
   liveTransfers: readonly Transfer[];
-  operations: Pick<MobileOperations, "listReceived" | "presentReceived" | "previewReceivedText">;
+  operations: Pick<MobileOperations, "listReceived" | "listSavedReceipts" | "presentReceived" | "previewReceivedText">;
   receivedTip: string;
+  savedReceipts?: boolean;
+  receiptRevision?: number;
 }) {
-  const [catalog, setCatalog] = useState<readonly ReceivedCopy[]>();
-  const [loading, setLoading] = useState(!!operations.listReceived);
+  const isIos = !!operations.previewReceivedText;
+  const readCatalog = isIos ? (savedReceipts ? operations.listSavedReceipts : undefined) : operations.listReceived;
+  const [catalog, setCatalog] = useState<{ revision: number; rows: readonly ReceivedCopy[] }>();
+  const [loading, setLoading] = useState(!!readCatalog);
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
   const latestArrival = JSON.stringify(transfers.filter(item => item.direction === "incoming" && item.state === "completed").map(item => item.id).sort());
   useEffect(() => {
-    if (!operations.listReceived) return;
+    if (!readCatalog) { setCatalog(undefined); setLoading(false); return; }
     let disposed = false;
     setLoading(true);
     setError(undefined);
-    void operations.listReceived().then(result => {
+    void readCatalog().then(result => {
       if (disposed) return;
-      if (result.ok && Array.isArray(result.value)) setCatalog(result.value);
+      if (result.ok && Array.isArray(result.value)) setCatalog({ revision: receiptRevision, rows: result.value });
       else setError("Could not refresh files on this device.");
       setLoading(false);
     }).catch(() => {
@@ -32,22 +36,24 @@ export function MobileReceivedActivity({ transfers, liveTransfers, operations, r
       setError("Could not refresh files on this device.");
     });
     return () => { disposed = true; };
-  }, [latestArrival, operations, refresh]);
+  }, [latestArrival, readCatalog, receiptRevision, refresh]);
 
-  const open = catalog && operations.presentReceived
+  const open = catalog?.rows && operations.presentReceived
     ? async (item: {id: string}) => (await operations.presentReceived?.(item.id, "preview"))?.ok === true
     : undefined;
   const textPreview = operations.previewReceivedText;
   const liveCompleted = new Set(liveTransfers.filter(item => item.direction === "incoming" && item.state === "completed")
     .map(item => item.id));
-  return <ReceivedActivity rows={mobileReceivedRows(transfers, catalog)} loading={loading} error={error}
-    renderPreview={textPreview ? item => liveCompleted.has(item.id) && item.sizeBytes <= 64 * 1024 &&
+  const activeCatalog = readCatalog && catalog?.revision === receiptRevision ? catalog.rows : undefined;
+  const nativePreviewable = isIos ? new Set(mobileReceivedRows([], activeCatalog, true).map(item => item.id)) : undefined;
+  return <ReceivedActivity rows={mobileReceivedRows(transfers, activeCatalog, isIos)} loading={loading} error={error}
+    renderPreview={textPreview ? item => (liveCompleted.has(item.id) || nativePreviewable?.has(item.id)) && item.sizeBytes <= 64 * 1024 &&
       /\.(?:txt|md|csv|json|log)$/iu.test(item.name)
       ? <IosReceivedTextPreview key={item.id} receiptId={item.id} preview={textPreview} />
       : undefined : undefined}
-    onOpen={open} onRefresh={operations.listReceived ? () => setRefresh(value => value + 1) : undefined}>
+    onOpen={open} onRefresh={readCatalog ? () => setRefresh(value => value + 1) : undefined}>
     <p>{receivedTip}</p>
-    {textPreview && <p>In-app text preview is available for eligible verified receipts from this app session only.</p>}
+    {textPreview && <p>In-app text preview rechecks eligible received bytes. Saved receipts are retained only when Activity history is enabled.</p>}
   </ReceivedActivity>;
 }
 

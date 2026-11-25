@@ -77,6 +77,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ios::watch_app,
             ios::preview_ios_received_text,
+            ios::list_ios_received_receipts,
+            ios::configure_ios_receipt_history,
             ios::unwatch_app,
             ios::select_app_file,
             ios::import_ios_media,

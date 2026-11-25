@@ -43,6 +43,62 @@ try {
     ["preview_ios_received_text", { receiptId: "a".repeat(64) + ":c6991e6c-ecd2-4f10-905c-0f254040dda7" }],
     ["preview_ios_received_text", { receiptId: "a".repeat(64) + ":c6991e6c-ecd2-4f10-905c-0f254040dda8" }],
   ]);
+  const reopened = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const saved = { id: "a".repeat(64) + ":f6ee6d8d-8d96-4972-8e0a-0eb538067fa6", name: "Saved verified.txt", sizeBytes: 14 };
+  await reopened.addInitScript(row => {
+    let authorized = false;
+    window.savedReceiptCalls = [];
+    window.__TAURI_INTERNALS__ = { invoke: async (name, args) => {
+      window.savedReceiptCalls.push([name, args]);
+      if (name === "configure_ios_receipt_history") {
+        authorized = args.enabled;
+        if (!authorized || args.clear) localStorage.removeItem("fixture-native-receipt");
+        else if (!localStorage.getItem("fixture-receipt-seeded")) {
+          localStorage.setItem("fixture-native-receipt", JSON.stringify(row));
+          localStorage.setItem("fixture-receipt-seeded", "yes");
+        }
+        return null;
+      }
+      if (name === "list_ios_received_receipts" && authorized) {
+        const text = localStorage.getItem("fixture-native-receipt");
+        return text ? [JSON.parse(text)] : [];
+      }
+      if (name === "preview_ios_received_text" && authorized && args.receiptId === row.id &&
+        localStorage.getItem("fixture-native-receipt")) return "Protected text";
+      return Promise.reject({ code: "invalid_request" });
+    } };
+  }, saved);
+  const openActivity = () => reopened.getByRole("navigation", { name: "AeRift destinations" })
+    .getByRole("button", { name: /^Activity/ }).click();
+  const openSettings = async () => {
+    await reopened.getByRole("button", { name: "Control Center", exact: true }).click();
+    return reopened.getByRole("dialog", { name: "Control Center" });
+  };
+  const restored = reopened.getByRole("button", { name: "View received Saved verified.txt", exact: true });
+  await reopened.goto(origin + "/mobile.html");
+  await openActivity();
+  assert.equal(await restored.count(), 0, "no protected history is read by default");
+  assert.deepEqual(await reopened.evaluate(() => window.savedReceiptCalls), []);
+  let settings = await openSettings();
+  await settings.getByLabel("Keep final transfer outcomes after restart").check();
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await restored.waitFor();
+  await reopened.reload();
+  await openActivity();
+  await restored.click();
+  const reopenedDetails = reopened.getByRole("region", { name: "File preview" });
+  await reopenedDetails.getByRole("button", { name: "Preview verified text" }).click();
+  await reopenedDetails.getByText("Protected text", { exact: true }).waitFor();
+  settings = await openSettings();
+  await settings.getByRole("button", { name: "Clear saved Activity", exact: true }).click();
+  await settings.getByRole("button", { name: "Clear saved outcomes", exact: true }).click();
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await restored.waitFor({ state: "detached" });
+  await reopened.reload();
+  await openActivity();
+  await reopened.waitForFunction(() => window.savedReceiptCalls.some(([name]) => name === "list_ios_received_receipts"));
+  assert.equal(await restored.count(), 0, "cleared receipt does not reappear after restart");
+  await reopened.close();
   console.log("iOS received Activity fixture: selection-only native request, inert text, stale result discarded.");
 } finally {
   await browser.close();

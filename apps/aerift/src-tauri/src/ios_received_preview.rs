@@ -1,4 +1,4 @@
-//! read-only preview of a live completed iOS receipt.
+//! Read-only preview of a verified completed iOS receipt.
 //! Never bind a caller-provided path or feed Documents/Received to Quick Look.
 use std::{
     ffi::CString,
@@ -48,7 +48,23 @@ pub(crate) fn text(
         return Err(ErrorCode::InvalidRequest.into());
     }
     let name = path.file_name().ok_or(ErrorCode::InvalidRequest)?;
-    let allowed = Path::new(&receipt.offer.name)
+    verified_text(
+        published,
+        &receipt.offer.name,
+        Path::new(name),
+        receipt.offer.size_bytes,
+        &receipt.offer.sha256,
+    )
+}
+
+pub(crate) fn verified_text(
+    published: &Path,
+    name: &str,
+    leaf: &Path,
+    size: u64,
+    digest: &str,
+) -> Result<Option<String>, TransferError> {
+    let allowed = Path::new(name)
         .extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
@@ -56,20 +72,19 @@ pub(crate) fn text(
                 .iter()
                 .any(|known| ext.eq_ignore_ascii_case(known))
         });
-    if !allowed || receipt.offer.size_bytes > MAX_TEXT {
+    if !allowed || size > MAX_TEXT {
         return Ok(None);
     }
-    let bytes = read_verified(
-        published,
-        Path::new(name),
-        receipt.offer.size_bytes,
-        &receipt.offer.sha256,
-    )?;
+    let bytes = read_verified(published, leaf, size, digest)?;
     Ok(String::from_utf8(bytes).ok().filter(|text| {
         !text
             .chars()
             .any(|ch| ch.is_control() && !matches!(ch, '\t' | '\r' | '\n'))
     }))
+}
+
+pub(crate) fn exists_at_size(published: &Path, leaf: &Path, size: u64) -> bool {
+    open_owned(published, leaf, size).is_ok()
 }
 
 fn read_verified(
@@ -81,6 +96,18 @@ fn read_verified(
     if size > MAX_TEXT {
         return Err(ErrorCode::InvalidRequest.into());
     }
+    let file = open_owned(published, leaf, size)?;
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take(size + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ErrorCode::StorageFailed)?;
+    if bytes.len() as u64 != size || format!("{:x}", Sha256::digest(&bytes)) != digest {
+        return Err(ErrorCode::IntegrityFailed.into());
+    }
+    Ok(bytes)
+}
+
+fn open_owned(published: &Path, leaf: &Path, size: u64) -> Result<File, TransferError> {
     let mut components = leaf.components();
     let Some(Component::Normal(leaf)) = components.next() else {
         return Err(ErrorCode::InvalidRequest.into());
@@ -115,14 +142,7 @@ fn read_verified(
     if !meta.is_file() || meta.len() != size {
         return Err(ErrorCode::IntegrityFailed.into());
     }
-    let mut bytes = Vec::with_capacity(size as usize);
-    file.take(size + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| ErrorCode::StorageFailed)?;
-    if bytes.len() as u64 != size || format!("{:x}", Sha256::digest(&bytes)) != digest {
-        return Err(ErrorCode::IntegrityFailed.into());
-    }
-    Ok(bytes)
+    Ok(file)
 }
 
 #[cfg(test)]

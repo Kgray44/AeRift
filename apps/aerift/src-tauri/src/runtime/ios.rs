@@ -21,11 +21,95 @@ impl Session {
         &self,
         key: aerift_transfer::TransferKey,
     ) -> Result<Option<String>, TransferError> {
+        if let Some(receipt) = self.receiver.completed_receipt(key) {
+            return crate::ios_received_preview::text(&self.destination, &receipt);
+        }
+        let id = format!("{}:{}", key.peer, key.id);
         let receipt = self
-            .receiver
-            .completed_receipt(key)
+            .completion_receipts
+            .snapshot()?
+            .into_iter()
+            .find(|row| row.id == id)
             .ok_or(ErrorCode::InvalidRequest)?;
-        crate::ios_received_preview::text(&self.destination, &receipt)
+        crate::ios_received_preview::verified_text(
+            &self.destination,
+            &receipt.name,
+            Path::new(&receipt.leaf),
+            receipt.size_bytes,
+            &receipt.sha256,
+        )
+    }
+
+    pub(crate) fn configure_completion_receipts(
+        &self,
+        enabled: bool,
+        clear: bool,
+    ) -> Result<(), TransferError> {
+        let current = self.receiver.snapshot();
+        self.completion_receipts
+            .configure(enabled, clear, &current)?;
+        if enabled && !clear {
+            self.completion_receipts
+                .capture(&self.destination, &current)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn list_completion_receipts(
+        &self,
+    ) -> Result<Vec<crate::ios::SavedReceiptRow>, TransferError> {
+        if self.completion_receipts.is_enabled() {
+            self.completion_receipts
+                .capture(&self.destination, &self.receiver.snapshot())?;
+        }
+        Ok(self
+            .completion_receipts
+            .snapshot()?
+            .into_iter()
+            .filter(|row| {
+                crate::ios_received_preview::exists_at_size(
+                    &self.destination,
+                    Path::new(&row.leaf),
+                    row.size_bytes,
+                )
+            })
+            .map(|row| crate::ios::SavedReceiptRow {
+                id: row.id,
+                name: row.name,
+                size_bytes: row.size_bytes,
+            })
+            .collect())
+    }
+
+    fn observe_completion_receipts(self: &Arc<Self>) {
+        let mut receiver = self.receiver.subscribe();
+        let stop = self.stop.clone();
+        let weak = Arc::downgrade(self);
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    result = receiver.changed() => if result.is_err() { break; },
+                }
+                // One bounded enumeration per burst, not per streamed chunk.
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(160)) => {},
+                }
+                let _ = *receiver.borrow_and_update();
+                let Some(active) = weak.upgrade() else {
+                    break;
+                };
+                if active.completion_receipts.is_enabled() {
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        active
+                            .completion_receipts
+                            .capture(&active.destination, &active.receiver.snapshot())
+                    })
+                    .await;
+                }
+            }
+        });
     }
 
     pub(super) async fn open_ios(
@@ -38,15 +122,34 @@ impl Session {
                 tauri_plugin_aerift_ios::receive_directories(&handle).map_err(storage_failed)?;
             clear_interrupted_receives(&directories.partials)?;
             disk_free(&directories.partials)?;
+            // Resolve the OS-established parent (including Darwin's /var alias)
+            // without following a replaced user-visible Received leaf.
+            let parent = directories
+                .published
+                .parent()
+                .ok_or(ErrorCode::StorageFailed)?;
+            let name = directories
+                .published
+                .file_name()
+                .ok_or(ErrorCode::StorageFailed)?;
+            let destination = parent.canonicalize().map_err(storage_failed)?.join(name);
+            if !destination
+                .symlink_metadata()
+                .map_err(storage_failed)?
+                .file_type()
+                .is_dir()
+            {
+                return Err(ErrorCode::StorageFailed.into());
+            }
             let receiver = Arc::new(Receiver::with_staging_directory(
-                &directories.published,
+                &destination,
                 &directories.partials,
                 RECEIVE_LIMITS,
             )?);
             let peer = Arc::new(tauri_plugin_aerift_ios::open_peer_node(Arc::clone(
                 &receiver,
             ))?);
-            Ok::<_, TransferError>((directories.published, peer, receiver))
+            Ok::<_, TransferError>((destination, peer, receiver))
         })
         .await
         .map_err(|_| ErrorCode::InternalError)??;
@@ -62,6 +165,7 @@ impl Session {
         let session = Arc::new(Self {
             port,
             destination,
+            completion_receipts: Default::default(),
             discovery_start: tokio::sync::Mutex::new(()),
             discovery_events: std::sync::OnceLock::new(),
             peer,
@@ -72,6 +176,7 @@ impl Session {
             changes: watch::channel(0).0,
             stop,
         });
+        session.observe_completion_receipts();
         let active = Arc::clone(&session);
         tauri::async_runtime::spawn(async move {
             let discovery_scope = Arc::downgrade(&active);
