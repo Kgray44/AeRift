@@ -37,3 +37,13 @@
 }
 
 .aw-photos-next > svg { transform: rotate(180deg); }
+
+/* On a phone the album strip doesn't push the imported grid below the fold. */
+@media (max-width: 660px) {
+  .ios-imported-photo-library .aw-photos-sidebar nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: .3rem;
+  }
+  .ios-imported-photo-library .aw-photos-sidebar nav button { min-block-size: 2.75rem; }
+}

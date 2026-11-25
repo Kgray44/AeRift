@@ -52,12 +52,14 @@ function Thumbnail({ row, asset }: { row: PhotoRow; asset?: (id: string) => Prom
   </span>;
 }
 
-export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, disabled, readAsset, onImport, onRemove, viewer, emptyText }: {
+export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, disabled, readAsset, onImport, onNativeImport, importDisabled, onRemove, viewer, emptyText }: {
   catalog: readonly T[];
   scope: PhotoAlbumScope;
   disabled?: boolean;
   readAsset?: (id: string) => Promise<Blob | undefined>;
   onImport?: (files: File[]) => Promise<readonly string[]>;
+  onNativeImport?: () => Promise<readonly string[]>;
+  importDisabled?: boolean;
   onRemove?: (id: string) => Promise<boolean>;
   viewer: (photo: T) => ReactNode;
   emptyText: string;
@@ -87,6 +89,10 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
 
   function edit(change: PhotoAlbumChange) {
     return store(changePhotoAlbums(loadPhotoAlbumIndex(albumStorage(), scope), change, new Set(catalog.map(row => row.id))));
+  }
+
+  function recordImports(ids: readonly string[]) {
+    if (ids.length) store(recordPhotoImports(loadPhotoAlbumIndex(albumStorage(), scope), ids, Date.now()));
   }
 
   function selectAlbum(id?: string) { setAlbumId(id); setPage(0); setEditing(undefined); setRemoveAlbum(false); }
@@ -140,16 +146,17 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
     </GlassSurface>
     <GlassSurface className="aw-photos-main" material="content" role="region" aria-label="Photo gallery">
       <header><h4>{current?.name ?? "Recents"}</h4>
-        {onImport && <GlassSurface className="aw-photos-icons" material="raised">
+        {onNativeImport ? <GlassSurface className="aw-photos-icons" material="raised">
+          <IconAction icon="add" label="Import photos and videos" disabled={disabled || importDisabled}
+            onClick={() => void onNativeImport().then(recordImports).catch(() => setIssue("Could not import these photos."))} />
+        </GlassSurface> : onImport && <GlassSurface className="aw-photos-icons" material="raised">
           <IconAction icon="add" label="Import photos and videos" disabled={disabled} onClick={() => picker.current?.click()} />
           <input ref={picker} type="file" accept="image/*,video/*" aria-label="Import photos and videos" hidden multiple disabled={disabled}
             onChange={event => {
               const files = Array.from(event.currentTarget.files ?? []);
               event.currentTarget.value = "";
               if (!files.length) return;
-              void onImport(files).then(ids => {
-                if (ids.length) store(recordPhotoImports(loadPhotoAlbumIndex(albumStorage(), scope), ids, Date.now()));
-              }).catch(() => setIssue("Could not import these photos."));
+              void onImport(files).then(recordImports).catch(() => setIssue("Could not import these photos."));
             }} />
         </GlassSurface>}</header>
       {issue && !active && <p role="alert">{issue}</p>}

@@ -49,6 +49,7 @@ export type MobileOperations = ReturnType<typeof createMobileOperations>;
 
 export const mobilePlatformCopy = {
   ios: {
+    photoAlbumScope: "ios",
     device: "this iPhone",
     discoveryMessage: "Allow Local Network access in iOS Settings to find AeRift devices nearby.",
     cameraDenied: "Allow camera access for AeRift in iOS Settings, then return to Rift.",
@@ -60,6 +61,7 @@ export const mobilePlatformCopy = {
     browserTip: "In the in-app browser, choose Share → Collect in AeRift, then Done. You can also enter an address here.",
   },
   android: {
+    photoAlbumScope: "android",
     device: "this Android device",
     discoveryMessage: "Check Wi-Fi or nearby access for AeRift in Android Settings, then retry discovery.",
     cameraDenied: "Allow camera access for AeRift in Android app settings, then return to Rift.",

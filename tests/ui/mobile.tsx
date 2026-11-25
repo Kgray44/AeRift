@@ -83,22 +83,28 @@ function saveImports(items: ImportedMedia[]) {
   localStorage.setItem(fixtureLibraryKey, JSON.stringify(items));
   return { ok: true, value: imports } as const;
 }
+// Expose only action names and synthetic fixture IDs in this fixture, never the app.
+const mediaTrace: string[] | undefined = new URLSearchParams(location.search).get("photoGalleryFixture") === "1"
+  ? ((window as Window & { aePhotoGalleryFixture?: string[] }).aePhotoGalleryFixture = []) : undefined;
 const media: MobileMediaPort = {
   async list() { return { ok: true, value: imports }; },
   async import(source) {
+    mediaTrace?.push(`import:${source}`);
     return saveImports([...imports, ...fixtureMedia[source].filter(item => !imports.some(value => value.id === item.id))
       .map(item => ({ ...item, assetId: item.id, schemaVersion: 1, ownership: "local" } as const))]);
   },
   async remove(id) {
+    mediaTrace?.push(`remove:${id}`);
     return saveImports(imports.filter(item => item.id !== id));
   },
   async select(id) {
+    mediaTrace?.push(`select:${id}`);
     const item = imports.find(asset => asset.id === id);
     if (!item) return { ok: false, error: { code: "invalid_request" } };
     selection = { selectionId: id, sizeBytes: item.sizeBytes, name: item.name };
     return { ok: true, value: selection };
   },
-  async present() { return { ok: true, value: undefined }; },
+  async present(id, action) { mediaTrace?.push(`${action}:${id}`); return { ok: true, value: undefined }; },
 };
 
 const App = new URLSearchParams(location.search).get("platform") === "android" ? AndroidApp : IosApp;

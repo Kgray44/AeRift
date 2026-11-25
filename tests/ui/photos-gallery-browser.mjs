@@ -59,6 +59,52 @@ try {
   await button(albums, "Remove album").click();
   await button(albums, "Confirm remove album").click();
   assert.equal(await gallery.locator(".aw-photos-grid li").count(), 2, "removing the album does not remove media");
+  for (const platform of ["ios", "android"]) {
+    const mobile = await browser.newPage({ viewport: { width: 390, height: 844 },
+      isMobile: true, hasTouch: true, colorScheme: platform === "ios" ? "light" : "dark" });
+    await mobile.goto(root + "/mobile.html?platform=" + platform + "&photoGalleryFixture=1");
+    await button(mobile, "Workspace").tap();
+    await button(mobile, "Images & Videos").tap();
+    const photos = mobile.getByRole("region", { name: "Photo gallery" });
+    const albumBar = mobile.getByRole("complementary", { name: "Photo albums" });
+    assert.equal(await photos.locator('input[type="file"]').count(), 0, "mobile cannot invoke DOM imports");
+    await button(photos, "Import photos and videos").tap();
+    const harbor = button(photos, "Open Harbor aerial.heic");
+    const video = button(photos, "Open Harbor approach.mov");
+    await harbor.waitFor(); await video.waitFor();
+    assert.deepEqual(await mobile.evaluate(() => window.aePhotoGalleryFixture), ["import:photos"]);
+    assert.equal(await harbor.locator("img").count(), 0, "thumbnail capability is not fabricated");
+    await button(albumBar, "New album").tap();
+    await albumBar.getByRole("textbox", { name: "Album name" }).fill("Harbor");
+    await button(albumBar, "Save album").tap();
+    await button(albumBar, "Recents").tap();
+    await video.tap();
+    const viewer = mobile.getByRole("dialog", { name: "Viewing Harbor approach.mov" });
+    await button(viewer, platform === "ios" ? "Open in Quick Look" : "Open in file viewer").tap();
+    await button(viewer, "Export copy").tap();
+    await button(viewer, "Select for Rift").tap();
+    await button(viewer, "Add to album").tap();
+    await button(viewer, "Harbor").tap();
+    await button(viewer, "Close photo").tap();
+    await viewer.waitFor({ state: "hidden" });
+    await mobile.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open Harbor approach.mov");
+    assert.deepEqual(await mobile.evaluate(() => window.aePhotoGalleryFixture),
+      ["import:photos", "preview:import-video", "export:import-video", "select:import-video"]);
+    await harbor.tap();
+    const remover = mobile.getByRole("dialog", { name: "Viewing Harbor aerial.heic" });
+    await button(remover, "Remove imported copy").tap();
+    assert.equal((await mobile.evaluate(() => window.aePhotoGalleryFixture)).includes("remove:import-photo"), false);
+    await button(remover, "Confirm remove imported copy").tap();
+    await harbor.waitFor({ state: "detached" });
+    assert.equal((await mobile.evaluate(() => window.aePhotoGalleryFixture)).at(-1), "remove:import-photo");
+    await mobile.reload();
+    await button(mobile, "Workspace").tap();
+    await button(mobile, "Images & Videos").tap();
+    await button(albumBar, "Harbor").tap();
+    await video.waitFor();
+    assert.equal(await harbor.count(), 0);
+    await mobile.close();
+  }
 } finally {
   await browser.close();
 }
