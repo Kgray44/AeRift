@@ -74,7 +74,7 @@ function NoteCategoryPicker({ value, categories, disabled, onChange }: {
         focusChoice.current = event.detail === 0;
         setOpen(current => !current);
       }} />
-    {open && <GlassSurface className="aw-note-category-popover" material="control" role="group" id={id} aria-label="Move note to category">
+    {open && <GlassSurface className="aw-note-category-popover" material="overlay" role="group" id={id} aria-label="Move note to category">
       <p>Move to category</p>
       {[{ id: null, name: "Uncategorized", appearance: undefined }, ...categories].map(category => (
         <button key={category.id ?? "uncategorized"} type="button" className="aw-note-category-choice"
@@ -261,7 +261,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
         <DesktopNotesSidebar notes={rows} categories={library.categories} scope={scope} selectedNoteId={draft?.id ?? null}
           onScopeChange={next => { setScope(next); setCategoryForm(undefined); setRemoveCategory(false); }}
           onSelectNote={chooseNote} onNewNote={newNote} onNewCategory={() => { setRemoveCategory(false); setCategoryForm({ name: "", appearance: defaultCategoryStyle }); }} />
-        {category && !categoryForm && <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="control" aria-label="Category tools" role="group">
+        {category && !categoryForm && <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="raised" aria-label="Category tools" role="group">
           <NoteIconButton label="Edit category" icon="edit" disabled={locked}
             onClick={() => setCategoryForm({ id: category.id, name: category.name, appearance: category.appearance ?? defaultCategoryStyle })} />
           <NoteIconButton label="Remove category" icon="trash" disabled={locked} onClick={() => setRemoveCategory(true)} />
@@ -271,7 +271,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
             onChange={event => setCategoryForm({ ...categoryForm, name: event.currentTarget.value })} /></label>
           <CategoryStyleFields appearance={categoryForm.appearance} disabled={locked}
             onChange={appearance => setCategoryForm(current => current ? { ...current, appearance } : current)} />
-          <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="control" role="group" aria-label="Save category changes">
+          <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="raised" role="group" aria-label="Save category changes">
             <NoteIconButton type="submit" label="Save category" icon="save" disabled={locked || !categoryForm.name.trim()} />
             <NoteIconButton label="Cancel category edit" icon="close" onClick={() => setCategoryForm(undefined)} />
           </GlassSurface>

@@ -24,14 +24,14 @@ export function CategoryStyleFields({ appearance, onChange, disabled }: {
   disabled?: boolean;
 }) {
   return <div className="aw-category-style-fields">
-    <GlassSurface className="aw-category-style-options" material="control" role="group" aria-label="Category colors">
+    <GlassSurface className="aw-category-style-options" material="raised" role="group" aria-label="Category colors">
       {categoryColors.map(color => <button key={color} type="button" disabled={disabled}
         className="aw-category-style-option" aria-label={title(color) + " color"} title={title(color) + " color"}
         aria-pressed={appearance.color === color} onClick={() => onChange({ ...appearance, color })}>
         <span className="aw-category-swatch" data-category-color={color} aria-hidden="true" />
       </button>)}
     </GlassSurface>
-    <GlassSurface className="aw-category-style-options" material="control" role="group" aria-label="Category icons">
+    <GlassSurface className="aw-category-style-options" material="raised" role="group" aria-label="Category icons">
       {categoryIcons.map(icon => <button key={icon} type="button" disabled={disabled}
         className="aw-category-style-option" aria-label={title(icon) + " icon"} title={title(icon) + " icon"}
         aria-pressed={appearance.icon === icon} onClick={() => onChange({ ...appearance, icon })}>

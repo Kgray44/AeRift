@@ -40,7 +40,7 @@ export function NoteIconButton({ label, icon, ...props }: Omit<React.ComponentPr
 export function WorkspaceNoteSearch({ filter, onChange, count }: {
   filter: NoteFilter; onChange: (next: NoteFilter) => void; count: number;
 }) {
-  return <section className="ae-surface aw-note-search" data-material="control" aria-label="Find notes">
+  return <section className="ae-surface aw-note-search" data-material="raised" aria-label="Find notes">
     <label>Search notes<input type="search" value={filter.query} maxLength={180} placeholder="Title or note content"
       onChange={event => onChange({ ...filter, query: event.currentTarget.value })} /></label>
     <label>Format<select value={filter.format}
@@ -87,7 +87,7 @@ export function WorkspaceNoteEditor({ value, format, disabled, onChange, onForma
 
   return <div className="aw-note-editor">
     <div className="aw-note-canvas">
-      <GlassSurface className="ae-actions aw-note-toolbar aw-note-palette" material="control" role="group" aria-label="Note tools">
+      <GlassSurface className="ae-actions aw-note-toolbar aw-note-palette" material="raised" role="group" aria-label="Note tools">
         {tools.map(([id, label]) => <NoteIconButton key={id} type="button" icon={id} label={label} disabled={disabled || preview}
           onPointerDown={event => event.preventDefault()} onClick={() => apply(id)} />)}
         <NoteIconButton type="button" icon={preview ? "edit" : "preview"} label={preview ? "Return to editor" : "Preview"}
