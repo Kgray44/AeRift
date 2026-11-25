@@ -5,6 +5,30 @@ privately, choose a file, and wait for their explicit acceptance. The UI does no
 ask for a VPN, address, port, or router change. The private-VPN route remains an
 optional separate fallback and is not evidence of this outcome.
 
+## Current pilot: direct only
+
+The opt-in Windows preview accepts no relay configuration. Its trusted build
+inputs select one local UDP bind address and one peer endpoint key and UDP
+address. Those values must be exchanged privately and supplied to separate
+test builds by the operator; never attach the artifacts publicly or put
+addresses in an invitation, public directory, CLI, or webview. Missing or
+invalid inputs fail before opening the preview profile. Existing offline
+device-card mode still works with those inputs absent. The preview uses a
+separate protected profile; no VPN, automatic port mapping, or router
+reconfiguration is part of the pilot.
+
+The transport authenticates the one configured endpoint key and separately
+requires the existing signed invitation, pinned inner TLS, explicit approvals,
+and integrity checks. An independently reachable UDP route in each direction
+is required by this bidirectional test build; it does not yet negotiate
+addresses, cross arbitrary NATs, or fall back to another transport. Never
+change a user or work network's firewall to turn a blocked test into a pass.
+An automated direct UDP loopback test covers the transfer contract only;
+separate-uplink evidence still requires actual permitted reachable endpoints.
+
+The historical relay design and tests below describe earlier candidates.
+They do not authorize relay provisioning or apply to current live preview startup.
+
 ## What this slice supplies
 
 The existing standalone Iroh transport already carries opaque pinned Remote TLS

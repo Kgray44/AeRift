@@ -83,8 +83,8 @@ fn windows_wan_preview_smoke_without_transport() {
         Ok("1")
     );
     assert!(
-        OPERATOR_RELAY.is_none(),
-        "compile the smoke without any relay input"
+        DIRECT_BIND.is_none() && DIRECT_PEER_KEY.is_none() && DIRECT_PEER_ADDR.is_none(),
+        "compile the smoke without any direct route input"
     );
 
     let temp = tempfile::tempdir().unwrap();

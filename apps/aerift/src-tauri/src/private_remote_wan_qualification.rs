@@ -10,7 +10,7 @@ use std::{
 
 use aerift_peers::{Platform, RemotePeerNode};
 use aerift_remote_wan::{
-    OperatorRelay, QualificationAction, QualificationController, QualificationReply, WanSession,
+    OperatorDirect, QualificationAction, QualificationController, QualificationReply, WanSession,
 };
 use aerift_transfer::{ErrorCode, ReceiveLimits, TransferError};
 use tauri::{
@@ -33,9 +33,11 @@ use crate::{
     wan_qualification_gate::{admitted_mode, ExitAction, ExitGate, LaunchMode},
 };
 
-// One trusted build input. No runtime environment, files, URLs, or relay
-// addresses from the CLI or a webview are accepted. Never print this value.
-const OPERATOR_RELAY: Option<&str> = option_env!("AERIFT_TRUSTED_QUALIFICATION_RELAY");
+// Operator-supplied build inputs for this one direct-only pilot. No runtime
+// address inputs, logging, public directory, or relay configuration.
+const DIRECT_BIND: Option<&str> = option_env!("AERIFT_TRUSTED_DIRECT_BIND");
+const DIRECT_PEER_KEY: Option<&str> = option_env!("AERIFT_TRUSTED_DIRECT_PEER_KEY");
+const DIRECT_PEER_ADDR: Option<&str> = option_env!("AERIFT_TRUSTED_DIRECT_PEER_ADDR");
 // Never share the regular installation’s profile, keys, or WebView data.
 const APPLICATION_ID: &str = "com.kgamazing44.aerift.wanpreview";
 const RECEIVE_DIRECTORY: &str = "RemoteWanQualificationReceived";
@@ -240,7 +242,7 @@ fn show_offline_device_card() -> i32 {
     2
 }
 
-fn start_in_profile(root: &Path, relay: OperatorRelay) -> Result<WanSession, ()> {
+fn start_in_profile(root: &Path, direct: OperatorDirect) -> Result<WanSession, ()> {
     normal_local_directory(root).map_err(|_| ())?;
     // Lock the dedicated preview profile before creating the receive directory.
     let profile = PrivateRemoteProfile::open(root).map_err(|_| ())?;
@@ -264,7 +266,7 @@ fn start_in_profile(root: &Path, relay: OperatorRelay) -> Result<WanSession, ()>
         },
     )
     .map_err(|_| ())?;
-    tauri::async_runtime::block_on(WanSession::start(node, seed, relay, profile_lock))
+    tauri::async_runtime::block_on(WanSession::start_direct(node, seed, direct, profile_lock))
         .map_err(|_| ())
 }
 
@@ -343,10 +345,13 @@ pub(crate) fn run() -> i32 {
             return 2;
         }
     }
-    let Some(relay) =
-        OPERATOR_RELAY.and_then(|value| OperatorRelay::from_operator_config(value).ok())
+    let (Some(bind), Some(peer), Some(address)) = (DIRECT_BIND, DIRECT_PEER_KEY, DIRECT_PEER_ADDR)
     else {
-        eprintln!("No approved HTTPS relay was set for this qualification build.");
+        eprintln!("No approved direct route was set for this qualification build.");
+        return 2;
+    };
+    let Ok(direct) = OperatorDirect::from_operator_config(bind, peer, address) else {
+        eprintln!("Invalid direct route configuration.");
         return 2;
     };
 
@@ -362,7 +367,7 @@ pub(crate) fn run() -> i32 {
         eprintln!("WAN qualification could not open its dedicated preview profile.");
         return 2;
     };
-    let Ok(session) = start_in_profile(&root, relay) else {
+    let Ok(session) = start_in_profile(&root, direct) else {
         eprintln!("WAN qualification could not open the protected profile or start the endpoint.");
         return 2;
     };

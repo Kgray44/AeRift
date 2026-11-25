@@ -114,12 +114,12 @@ test("offline card diverts before relay or app construction and exposes no rende
   const native = readFileSync(new URL("../private_remote_wan_qualification.rs", assets), "utf8");
   const run = native.slice(native.indexOf("pub(crate) fn run()"));
   const branch = run.indexOf("Some(LaunchMode::OfflineCard) => return show_offline_device_card()");
-  assert.ok(branch >= 0 && branch < run.indexOf("OPERATOR_RELAY") && branch < run.indexOf("tauri::Builder"));
+  assert.ok(branch >= 0 && branch < run.indexOf("DIRECT_BIND") && branch < run.indexOf("tauri::Builder"));
   const offline = native.slice(native.indexOf("fn show_offline_device_card()"), native.indexOf("fn start_in_profile"));
   assert.match(offline, /open_qualification_root\(\)/);
   assert.match(offline, /derive_offline_in_profile\(&root\)/);
   assert.match(offline, /writeln!\(io::stdout\(\)\.lock\(\), "\{public_card\}"\)/);
-  assert.doesNotMatch(offline, /OperatorRelay|WanSession|RECEIVE_DIRECTORY|\.trust|tauri::Builder/);
+  assert.doesNotMatch(offline, /OperatorDirect|WanSession|RECEIVE_DIRECTORY|\.trust|tauri::Builder/);
   assert.doesNotMatch(read("remote-wan.js"), /show_offline_device_card|show-wan-device-card-offline/);
 });
 
@@ -136,7 +136,7 @@ test("the native WebView smoke is ignored, test-only, and has no online fixture"
   }
   assert.doesNotMatch(native, /private_wan_smoke_report|AERIFT_DISPOSABLE_WINDOWS_WAN_SMOKE/);
   assert.match(smoke, /#\[ignore = /);
-  assert.match(smoke, /OPERATOR_RELAY\.is_none\(\)/);
+  assert.match(smoke, /DIRECT_BIND\.is_none\(\) && DIRECT_PEER_KEY\.is_none\(\) && DIRECT_PEER_ADDR\.is_none\(\)/);
   assert.match(smoke, /AppDirectoriesOverride::Root/);
   assert.match(smoke, /\.data_directory\(temp\.path\(\)\.join\("webview-data"\)\)/);
   assert.match(smoke, /run_qualification_app/);
@@ -157,4 +157,17 @@ test("WAN endpoint never requests router port mappings", () => {
   const builder = transport.slice(transport.indexOf("fn make_builder("), transport.indexOf("fn valid_relay("));
   assert.match(builder, /\.portmapper_config\(PortmapperConfig::Disabled\)/);
   assert.match(builder, /\.relay_mode\(mode\)/);
+});
+
+test("the opt-in Windows preview cannot start a relay or take a route from UI input", () => {
+  const native = readFileSync(new URL("../private_remote_wan_qualification.rs", assets), "utf8");
+  const host = readFileSync(new URL("../../crates/remote-wan/src/native_host.rs", import.meta.url), "utf8");
+  const bridge = read("remote-wan.js");
+  assert.match(native, /WanSession::start_direct\(node, seed, direct, profile_lock\)/);
+  for (const input of ["BIND", "PEER_KEY", "PEER_ADDR"]) {
+    assert.ok(native.includes('option_env!("AERIFT_TRUSTED_DIRECT_' + input + '")'));
+    assert.ok(!bridge.includes("AERIFT_TRUSTED_DIRECT_" + input));
+  }
+  assert.doesNotMatch(native, /OperatorRelay|AERIFT_TRUSTED_QUALIFICATION_RELAY/);
+  assert.match(host, /WanEndpoint::bind\([\s\S]*?Some\(direct\.bind\),\s*None,?\s*\)/);
 });

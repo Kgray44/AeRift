@@ -412,7 +412,16 @@ fn synthetic_picker_fixture_root_is_normalized_without_relaxing_capture() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn qualification_commands_pair_pick_accept_and_decline_over_private_relay() {
-    use crate::{QualificationController, QualificationReply};
+    qualification_journey(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn qualification_commands_pair_pick_accept_and_decline_over_direct_udp_only() {
+    qualification_journey(false).await;
+}
+
+async fn qualification_journey(use_relay: bool) {
+    use crate::{OperatorDirect, QualificationController, QualificationReply};
     use serde_json::{Value, json};
     use tokio::time::{Instant, timeout_at};
 
@@ -447,26 +456,67 @@ async fn qualification_commands_pair_pick_accept_and_decline_over_private_relay(
     }
 
     let end = Instant::now() + Duration::from_secs(15);
-    let (relay, _url, a_wan, b_wan) = within(
-        end,
-        "relay and endpoint readiness",
-        tests::private_relay_fixture(),
-    )
-    .await;
+    let (relay, a_wan, b_wan) = if use_relay {
+        let (relay, _, a, b) = within(
+            end,
+            "relay and endpoint readiness",
+            tests::private_relay_fixture(),
+        )
+        .await;
+        (Some(relay), a, b)
+    } else {
+        let bind = "127.0.0.1:0".parse().unwrap();
+        let a = WanEndpoint::bind(SecretKey::from_bytes(&[39; 32]), Some(bind), None)
+            .await
+            .unwrap();
+        let b = WanEndpoint::bind(SecretKey::from_bytes(&[40; 32]), Some(bind), None)
+            .await
+            .unwrap();
+        (None, a, b)
+    };
     let temp = tempfile::tempdir().unwrap();
     let root = fixture_root(&temp);
     let a_dir = root.join("a");
     let b_dir = root.join("b");
-    let a = QualificationController::new(WanSession::from_bound(
-        node("A", &a_dir),
-        a_wan,
-        tempfile::tempfile().unwrap(),
-    ));
-    let b = QualificationController::new(WanSession::from_bound(
-        node("B", &b_dir),
-        b_wan,
-        tempfile::tempfile().unwrap(),
-    ));
+    let (a, b) = if use_relay {
+        (
+            WanSession::from_bound(node("A", &a_dir), a_wan, tempfile::tempfile().unwrap()),
+            WanSession::from_bound(node("B", &b_dir), b_wan, tempfile::tempfile().unwrap()),
+        )
+    } else {
+        let a_addr = a_wan.bound_addresses()[0].to_string();
+        let b_addr = b_wan.bound_addresses()[0].to_string();
+        let a_route =
+            OperatorDirect::from_operator_config(&a_addr, &b_wan.id().to_string(), &b_addr)
+                .unwrap();
+        let b_route =
+            OperatorDirect::from_operator_config(&b_addr, &a_wan.id().to_string(), &a_addr)
+                .unwrap();
+        let a = WanSession::from_bound_direct(
+            node("A", &a_dir),
+            a_wan,
+            tempfile::tempfile().unwrap(),
+            a_route,
+        );
+        let b = WanSession::from_bound_direct(
+            node("B", &b_dir),
+            b_wan,
+            tempfile::tempfile().unwrap(),
+            b_route,
+        );
+        assert!(matches!(
+            a.invite(crate::DeviceCard {
+                identity: b.card().identity,
+                endpoint: a.card().endpoint,
+            }),
+            Err(TransferError {
+                code: ErrorCode::PeerUntrusted
+            }),
+        ));
+        (a, b)
+    };
+    let a = QualificationController::new(a);
+    let b = QualificationController::new(b);
     let a_card = snapshot(&a).await["card"].clone();
     let b_card = snapshot(&b).await["card"].clone();
     assert!(
@@ -603,7 +653,9 @@ async fn qualification_commands_pair_pick_accept_and_decline_over_private_relay(
         .await
         .unwrap();
     within(end, "stop and join sender", b.stop()).await.unwrap();
-    within(end, "stop loopback relay", relay.shutdown())
-        .await
-        .unwrap();
+    if let Some(relay) = relay {
+        within(end, "stop loopback relay", relay.shutdown())
+            .await
+            .unwrap();
+    }
 }
