@@ -3,7 +3,7 @@ use std::{cell::Cell, rc::Rc};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use windows::{Win32::UI::Shell::SHCreateMemStream, core::{Error, HSTRING}};
-use wry::WebView;
+use wry::{WebView, WebViewExtWindows};
 
 pub(crate) const ORIGIN: &str = "https://workspace.fixture.invalid";
 pub(crate) const START: &str = "https://workspace.fixture.invalid/index.html";
