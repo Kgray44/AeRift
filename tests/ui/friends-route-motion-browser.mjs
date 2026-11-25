@@ -48,7 +48,8 @@ try {
     await exit.waitFor({ state: "detached", timeout: 750 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
     assert.equal(await live.evaluate(el => getComputedStyle(el).transform), "none");
-    const settingsButton = page.getByRole("button", { name: "Control Center", exact: true });
+    const dock = page.getByRole("navigation", { name: "AeRift destinations" });
+    const settingsButton = dock.getByRole("button", { name: "Settings", exact: true });
     await settingsButton.tap();
     const settings = page.getByRole("dialog", { name: "Control Center" });
     await settings.getByLabel("Reduce motion", { exact: true }).check();
