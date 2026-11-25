@@ -162,3 +162,94 @@ mod tests {
         assert!(indicator.show().is_err());
     }
 }
+
+// Intentional opt-in: default test runs do not create any native windows.
+#[cfg(test)]
+mod hosted_window_tests {
+    use super::*;
+    use crate::ambient_media_foundation::NativeIndicator;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowLongPtrW, IsWindow, SendMessageW, ShowWindow,
+        GWL_EXSTYLE, SW_HIDE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_CLOSE,
+    };
+
+    fn require_disposable_desktop() -> HWND {
+        for (key, value) in [
+            ("GITHUB_ACTIONS", "true"),
+            ("RUNNER_ENVIRONMENT", "github-hosted"),
+            ("RUNNER_OS", "Windows"),
+            ("AERIFT_HOSTED_INDICATOR_WINDOW_TEST", "1"),
+        ] {
+            assert_eq!(std::env::var(key).ok().as_deref(), Some(value),
+                "native indicator fixtures are reserved for explicitly opted-in GitHub-hosted Windows");
+        }
+        let foreground = unsafe { GetForegroundWindow() };
+        assert!(!foreground.is_null(),
+            "qualification unavailable: hosted session has no foreground window to preserve");
+        foreground
+    }
+
+    fn show_on_hosted_desktop() -> Surface {
+        let foreground = require_disposable_desktop();
+        let surface = Surface::display().expect("native indicator window could not be shown");
+        assert!(surface.check());
+        assert_ne!(unsafe { IsWindowVisible(surface.window) }, 0);
+        let style = unsafe { GetWindowLongPtrW(surface.window, GWL_EXSTYLE) } as u32;
+        assert_eq!(style & (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW),
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+        assert_eq!(unsafe { GetForegroundWindow() }, foreground,
+            "the indicator changed the foreground window or the hosted desktop was unstable");
+        surface
+    }
+
+    #[test]
+    #[ignore = "requires disposable explicitly opted-in GitHub Windows desktop"]
+    fn hide_revokes_even_if_indicator_style_is_restored() {
+        let surface = show_on_hosted_desktop();
+        let window = surface.window;
+        let state = surface.occupancy();
+        let mut provider = ProviderIndicator(state.clone());
+        let probe = provider.occupancy_probe();
+        assert!(!probe(), "a displayed surface alone must not grant a lease");
+        let lease = provider.show().expect("synthetic occupancy lease");
+        assert!(probe());
+        unsafe { ShowWindow(window, SW_HIDE); }
+        assert_eq!(unsafe { IsWindowVisible(window) }, 0);
+        assert!(!surface.check());
+        assert!(!probe());
+
+        assert_ne!(unsafe { SetWindowPos(
+            window, null_mut(), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_SHOWWINDOW |
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+        ) }, 0, "failed to restore the test window's style");
+        assert_ne!(unsafe { IsWindowVisible(window) }, 0);
+        assert!(!surface.check(), "re-showing a revoked indicator must not revive it");
+        assert!(!probe());
+        drop(lease);
+        assert!(provider.show().is_err());
+        drop(surface);
+        assert_eq!(unsafe { IsWindow(window) }, 0);
+        assert!(!state.visible());
+    }
+
+    #[test]
+    #[ignore = "requires disposable explicitly opted-in GitHub Windows desktop"]
+    fn closing_indicator_revokes_and_tears_down() {
+        let surface = show_on_hosted_desktop();
+        let window = surface.window;
+        let state = surface.occupancy();
+        let mut provider = ProviderIndicator(state.clone());
+        let probe = provider.occupancy_probe();
+        let lease = provider.show().expect("synthetic occupancy lease");
+        assert!(probe());
+        // Send to the exact fixture-owned HWND on its creating thread.
+        unsafe { SendMessageW(window, WM_CLOSE, 0, 0); }
+        assert_eq!(unsafe { IsWindow(window) }, 0);
+        assert!(!surface.check());
+        assert!(!probe());
+        drop(lease);
+        assert!(provider.show().is_err());
+        drop(surface);
+        assert!(!state.visible());
+    }
+}
