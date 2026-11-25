@@ -7,7 +7,7 @@ type FolderItem = {
   status: { state: string; bytesTransferred: number };
   destinationRetained: boolean; publishedTitle: string | null;
 };
-type Reply = { incoming: FolderItem[]; outgoingReceipt: { state: string } | null };
+type Reply = { incoming: FolderItem[]; outgoingReceipt: { state: string } | null; differentDestinationVolume?: boolean };
 
 export function PrivateRemoteFolders({ peers, endpoint }: {
   peers: readonly { id: string; name: string }[];
@@ -33,7 +33,9 @@ export function PrivateRemoteFolders({ peers, endpoint }: {
     void command(action).then((reply) => {
       // A mutation result never races an earlier Inspect onto the screen.
       refresh();
-      if (reply.outgoingReceipt) {
+      if (reply.differentDestinationVolume) {
+        setMessage("The offer is still pending. Choose a folder on the same drive as your AeRift profile (usually C:) so AeRift can save it without copying a partial folder.");
+      } else if (reply.outgoingReceipt) {
         setMessage(reply.outgoingReceipt.state === "completed"
           ? "The recipient verified the folder data. This is not confirmation that it was saved to their chosen location."
           : "Remote folder offer ended: " + reply.outgoingReceipt.state + ".");

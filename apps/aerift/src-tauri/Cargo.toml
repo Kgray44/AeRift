@@ -20,7 +20,6 @@ ambient-native-model-qualification = ["dep:sha2", "windows-sys/Win32_System_Libr
 ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "dep:windows-core"]
 private-remote-host = []
 private-remote-app = ["tauri/custom-protocol"]
-private-remote-folder-qualification = ["aerift-transfer/windows-folder-qualification"]
 
 [[example]]
 name = "private_remote_host"
