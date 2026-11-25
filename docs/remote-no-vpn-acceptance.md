@@ -138,7 +138,7 @@ preserving native invoke and UI flow with the immutable approved relay,
 and verify deployment, and the direct and relay tests above. No default,
 relay deployment or feature toggle is registered by this seam.
 
-### Windows Tauri qualification entry (source candidate, not live)
+### Initial Windows Tauri qualification entry (startup-only evidence)
 
 The separate Windows `private_remote_wan_host` example requires Cargo feature
 `private-remote-wan-host`, exactly one qualified-start flag, and an immutable
@@ -195,3 +195,43 @@ Verify wrong flag and active existing profile fail before networking, no WebView
 exists, native DPAPI and exclusive lock gates pass, and an explicit normal
 exit joins and permits the profile to reopen. Separate the eventual installed
 transfer, independent uplink and operator deployment acceptance.
+
+### Windows private preview transfer flow (next exact candidate)
+
+The previous #103 gate proved compilation of the startup-only optional
+example without starting it. This successor gives that same opt-in example
+a separate local document and one typed, exact-origin, window-scoped
+command. It does not change normal React startup or package assets. Qualification
+assets replace the context's ordinary assets only inside the example; the
+document loads only its embedded CSS and script. There is no external browser
+navigation, relay override, global discovery, account signup or exported UI state.
+
+Both participants share a device card privately and verify it using a trusted
+channel. One creates an invitation targeted to the recipient's two identities.
+The recipient pastes the original sender’s verified card and invitation text;
+the endpoint key as well as the device fingerprint must match the signed
+invitation. The sender separately approves the pending device, then either
+side may use **Choose & send file**. The receiving side must explicitly
+accept or decline. No token file is required. Code is transient, cleared
+from fields after submission, cancellation, expiry or document close; users
+who choose Copy are responsible for any Windows clipboard history.
+
+The command receives only typed card/control metadata: no pathname, address,
+or relay config fields. The attached native picker supplies one local regular
+file, frozen under the shared transport's source-integrity path, with a 64 MiB
+qualification cap. Publication remains receiver-verified. Incoming file
+paths stay native. Use the
+`%LOCALAPPDATA%\com.kgamazing44.aerift\RemoteWanQualificationReceived`
+folder in File Explorer after verified delivery. Peer grants use a separate
+current-user DPAPI file and discriminant from VPN Remote. Reopening the
+preview requires fresh pairing to re-establish the in-memory routes.
+
+The automated wire journey runs real pinned Iroh/HTTPS relay connections on
+loopback, with synthetic native pickup and explicit recipient decisions. It
+moves a file in each direction, rejects a mismatching card before pairing,
+tests a decline that leaves no published file, and checks no invitations or
+native paths leak into snapshots. The JS component contract test drives
+the same command shapes with a DOM/IPC fixture. The new WebView,
+Windows picker and DPAPI scope test still require fresh exact-revision
+Windows qualification; #103 does not certify these changes. No operator
+service has been configured or qualified, and this is not real WAN evidence.

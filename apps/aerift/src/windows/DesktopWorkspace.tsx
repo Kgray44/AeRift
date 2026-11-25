@@ -1,6 +1,6 @@
 import type { DigitalObject } from "@aerift/app-contract/digital-objects";
 import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@aerift/app-contract/experience";
-import { Button, Popover, SpatialIcon } from "@aerift/ui";
+import { Button, IconAction, Popover, SpatialIcon } from "@aerift/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { useDesktopContentEnter } from "./desktopContentMotion";
@@ -60,6 +60,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const section = workspace.section;
   const current = section ? { id: section.module, label: section.label } : undefined;
   const itemsRef = useRef<HTMLElement>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   useDesktopContentEnter(section?.id, itemsRef);
   const [entries, setEntries] = useState<WorkspaceMetadata[]>();
   const [pageIndex, setPageIndex] = useState(0);
@@ -205,49 +206,53 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const pages = Math.max(1, Math.ceil(visible.length / pageSize));
   const page = Math.min(pageIndex, pages - 1);
   const visiblePage = visible.slice(page * pageSize, (page + 1) * pageSize);
+  const importLabel = current?.id === "photos" ? "Import photos and videos" :
+    section?.id === "documents" ? "Import documents" : "Import files";
   const selectedVisible = visible.filter(({ object }) => selected.includes(object.id)).map(({ object }) => object.id);
 
   return <div className="aerift-workspace">
-    {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} counts={counts} />}
-    {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={workspace.back} />}
+    {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} counts={counts} desktop />}
+    {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={workspace.back} desktop />}
     {!entries && !error && <p>Opening Workspace…</p>}
     {error && <p role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
     {current && <div className="aerift-workspace-content">
       <div className="aerift-workspace-controls">
         {(current?.id === "files" || current?.id === "photos") &&
-          <label>Import {current.id === "photos" ? "photos and videos" : section?.id === "documents" ? "documents" : "files"}
-            <input type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
+          <div className="aerift-workspace-import">
+            <IconAction variant="secondary" icon="add" label={importLabel} disabled={disabled}
+              onClick={() => importInput.current?.click()} />
+            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
               onChange={event => {
                 importFiles(Array.from(event.currentTarget.files ?? []), current.id === "photos");
                 event.currentTarget.value = "";
               }} />
-          </label>}
-        {current?.id === "notes" && <details className="aerift-workspace-create" ref={noteEditor}><summary>{editing ? "Edit note" : "Create a note"}</summary><form key={editing ?? "new"} onSubmit={event => void submit(event, "note")}>
+          </div>}
+        {current?.id === "notes" && <details className="aerift-workspace-create" ref={noteEditor}><summary><SpatialIcon name="add" size={18} />{editing ? "Edit note" : "New note"}</summary><form key={editing ?? "new"} onSubmit={event => void submit(event, "note")}>
           <label>Title<input name="name" required maxLength={180} defaultValue={note?.name} /></label>
           <label>Note<textarea name="text" defaultValue={note?.kind === "note" ? note.text : undefined} /></label>
           <div className="ae-actions"><Button type="submit" disabled={disabled}>{editing ? "Save changes" : "Add note"}</Button>
             {editing && <Button onClick={() => setEditing(undefined)}>Cancel editing</Button>}</div>
         </form></details>}
-        {current?.id === "browser" && <details className="aerift-workspace-create"><summary>Save a link</summary><form onSubmit={event => void submit(event, "url")}>
+        {current?.id === "browser" && <details className="aerift-workspace-create"><summary><SpatialIcon name="pair" size={18} />Save a link</summary><form onSubmit={event => void submit(event, "url")}>
           <label>Title<input name="name" required maxLength={180} /></label>
           <label>Web address<input name="url" type="url" required /></label>
           <div><Button type="submit" disabled={disabled}>Save link</Button></div>
         </form></details>}
         {current?.id === "clipboard" && <div>
-          {clipboardAllowed ? <Button disabled={disabled} onClick={() => void captureClipboard()}>Capture clipboard text</Button>
+          {clipboardAllowed ? <IconAction variant="secondary" label="Capture clipboard text" icon="clipboard" disabled={disabled} onClick={() => void captureClipboard()} />
             : <p>Enable manual capture in Settings to save clipboard text.</p>}
         </div>}
-        {current?.id === "collections" && <details className="aerift-workspace-create" open={selected.length ? true : undefined}><summary>Create a collection{selected.length > 0 ? ` (${selected.length} selected)` : ""}</summary><form onSubmit={event => void submit(event, "collection")}>
+        {current?.id === "collections" && <details className="aerift-workspace-create" open={selected.length ? true : undefined}><summary><SpatialIcon name="collection" size={18} />Create a collection{selected.length > 0 ? ` (${selected.length} selected)` : ""}</summary><form onSubmit={event => void submit(event, "collection")}>
           <label>Name<input name="name" required maxLength={180} /></label>
           <p>Select files, notes, media, links, or clipboard entries in their modules to group them here.</p>
           {!!selected.length && <ol>{selected.map(id => <li key={id}>{label(id)}
-            <Button variant="quiet" onClick={() => select(id, false)}>Remove from selection</Button></li>)}</ol>}
+            <IconAction label={`Remove ${label(id)} from selection`} icon="close" onClick={() => select(id, false)} /></li>)}</ol>}
           <div><Button type="submit" disabled={disabled || !selected.length}>Create collection</Button></div>
         </form></details>}
       </div>
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
-        {entries && current && visible.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>A space for your {current.id === "photos" ? "media" : current.label.toLowerCase()}</h4><p>No saved {current.id === "photos" ? "media" : "items"} here yet. Add an object to keep it on this device.</p></div>}
+        {entries && current && visible.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved {current.id === "photos" ? "media" : "items"} yet</h4>{(current.id === "files" || current.id === "photos") && <p>Use the add button above to import.</p>}</div>}
         {selectedVisible.length > 0 && <div>
           <Button variant="quiet" disabled={disabled} onClick={() => removeObjects(selectedVisible)}>
             Remove selected ({selectedVisible.length})
@@ -283,9 +288,9 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
           </div></li>;
         })}</ol>}
         {pages > 1 && <nav aria-label="Workspace pages" className="ae-actions">
-          <Button variant="quiet" disabled={page === 0} onClick={() => setPageIndex(page - 1)}>Previous page</Button>
+          <IconAction label="Previous page" icon="back" disabled={page === 0} onClick={() => setPageIndex(page - 1)} />
           <span role="status">Page {page + 1} of {pages}</span>
-          <Button variant="quiet" disabled={page >= pages - 1} onClick={() => setPageIndex(page + 1)}>Next page</Button>
+          <IconAction label="Next page" icon="chevron" disabled={page >= pages - 1} onClick={() => setPageIndex(page + 1)} />
         </nav>}
       </section>
     </div>}

@@ -1,16 +1,22 @@
-//! Native Windows qualification executable only. No windows, IPC, or public listener.
+//! Native Windows qualification window, unreachable from normal app startup.
 use std::{
-    env, fs,
-    io::{self, Read},
+    borrow::Cow,
+    env, fs, io,
     os::windows::fs::MetadataExt,
     path::Path,
     sync::{Arc, Mutex},
 };
 
 use aerift_peers::{Platform, RemotePeerNode};
-use aerift_remote_wan::{OperatorRelay, WanSession};
-use aerift_transfer::ReceiveLimits;
-use tauri::{AppHandle, Manager, RunEvent, Wry};
+use aerift_remote_wan::{
+    OperatorRelay, QualificationAction, QualificationController, QualificationReply, WanSession,
+};
+use aerift_transfer::{ErrorCode, ReceiveLimits, TransferError};
+use tauri::{
+    utils::assets::{AssetKey, AssetsIter, CspHash},
+    AppHandle, Assets, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry,
+};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     private_remote_profile::PrivateRemoteProfile,
@@ -21,6 +27,89 @@ use crate::{
 // addresses from the CLI or a webview are accepted. Never print this value.
 const OPERATOR_RELAY: Option<&str> = option_env!("AERIFT_TRUSTED_QUALIFICATION_RELAY");
 const RECEIVE_DIRECTORY: &str = "RemoteWanQualificationReceived";
+
+const WINDOW: &str = "private-wan-qualification";
+const DOCUMENT: &str = "remote-wan.html";
+const DOCUMENT_PATH: &str = "/remote-wan.html";
+const ASSETS: &[(&str, &[u8])] = &[
+    (
+        DOCUMENT_PATH,
+        include_bytes!("wan_qualification_assets/remote-wan.html"),
+    ),
+    (
+        "/remote-wan.css",
+        include_bytes!("wan_qualification_assets/remote-wan.css"),
+    ),
+    (
+        "/remote-wan.js",
+        include_bytes!("wan_qualification_assets/remote-wan.js"),
+    ),
+];
+
+struct QualificationAssets;
+impl Assets<Wry> for QualificationAssets {
+    fn get(&self, key: &AssetKey) -> Option<Cow<'_, [u8]>> {
+        ASSETS
+            .iter()
+            .find(|(path, _)| *path == key.as_ref())
+            .map(|(_, bytes)| Cow::Borrowed(*bytes))
+    }
+    fn iter(&self) -> Box<AssetsIter<'_>> {
+        Box::new(
+            ASSETS
+                .iter()
+                .map(|(key, bytes)| (Cow::Borrowed(*key), Cow::Borrowed(*bytes))),
+        )
+    }
+    fn csp_hashes(&self, _path: &AssetKey) -> Box<dyn Iterator<Item = CspHash<'_>> + '_> {
+        Box::new(std::iter::empty())
+    }
+}
+
+fn allowed_document(url: &tauri::Url) -> bool {
+    matches!(
+        (url.scheme(), url.host_str()),
+        ("http" | "https", Some("tauri.localhost")) | ("tauri", Some("localhost"))
+    ) && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path() == DOCUMENT_PATH
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+#[tauri::command]
+async fn private_wan_action(
+    window: WebviewWindow,
+    action: QualificationAction,
+) -> Result<QualificationReply, TransferError> {
+    if window.label() != WINDOW || !window.url().is_ok_and(|value| allowed_document(&value)) {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    let controller = window
+        .state::<Arc<QualificationController>>()
+        .inner()
+        .clone();
+    controller
+        .execute(action, || async move {
+            let display = window.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                display
+                    .dialog()
+                    .file()
+                    .set_parent(&display)
+                    .blocking_pick_file()
+                    .map(|file| {
+                        file.into_path()
+                            .map_err(|_| TransferError::from(ErrorCode::InvalidRequest))
+                    })
+                    .transpose()
+            })
+            .await
+            .map_err(|_| TransferError::from(ErrorCode::InternalError))?
+        })
+        .await
+}
 
 fn normal_local_directory(path: &Path) -> io::Result<()> {
     const REPARSE_POINT: u32 = 0x400;
@@ -60,7 +149,7 @@ fn start_in_profile(root: &Path, relay: OperatorRelay) -> Result<WanSession, ()>
         .map_err(|_| ())
 }
 
-type ActiveSession = Arc<Mutex<Option<WanSession>>>;
+type ActiveSession = Arc<Mutex<Option<Arc<QualificationController>>>>;
 
 fn shutdown_after_join(
     handle: AppHandle<Wry>,
@@ -85,17 +174,6 @@ fn shutdown_after_join(
     });
 }
 
-fn request_shutdown(
-    handle: AppHandle<Wry>,
-    gate: Arc<ExitGate>,
-    session: &ActiveSession,
-    code: i32,
-) {
-    if gate.requested() == ExitAction::StartShutdown {
-        shutdown_after_join(handle, gate, session, code);
-    }
-}
-
 /// Direct example entry; the ordinary app launcher does not call it.
 pub(crate) fn run() -> i32 {
     if !admitted_args(env::args_os().skip(1)) {
@@ -112,7 +190,12 @@ pub(crate) fn run() -> i32 {
     let mut context = tauri::generate_context!();
     context.config_mut().app.windows.clear();
     context.config_mut().build.dev_url = None;
-    let Ok(app) = tauri::Builder::<Wry>::default().build(context) else {
+    context.set_assets(Box::new(QualificationAssets));
+    let Ok(app) = tauri::Builder::<Wry>::default()
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![private_wan_action])
+        .build(context)
+    else {
         eprintln!("WAN qualification application could not start.");
         return 2;
     };
@@ -125,26 +208,23 @@ pub(crate) fn run() -> i32 {
         return 2;
     };
 
-    let session = Arc::new(Mutex::new(Some(session)));
+    let controller = Arc::new(QualificationController::new(session));
+    app.manage(Arc::clone(&controller));
+    if WebviewWindowBuilder::new(&app, WINDOW, WebviewUrl::App(DOCUMENT.into()))
+        .title("AeRift Remote · Private Preview")
+        .inner_size(720.0, 720.0)
+        .min_inner_size(420.0, 460.0)
+        .on_navigation(allowed_document)
+        .build()
+        .is_err()
+    {
+        let _ = tauri::async_runtime::block_on(controller.stop());
+        eprintln!("WAN qualification window could not open.");
+        return 2;
+    }
+    let session = Arc::new(Mutex::new(Some(controller)));
     let gate = Arc::new(ExitGate::default());
     app.run_return(move |app, event| match event {
-        RunEvent::Ready => {
-            // No commands, codes, or addresses are read from or sent to the
-            // console. An input byte or EOF is only a local stop request.
-            let handle = app.clone();
-            let reader_gate = Arc::clone(&gate);
-            let reader_session = Arc::clone(&session);
-            if std::thread::Builder::new()
-                .name("ae-wan-qualification-stop".into())
-                .spawn(move || {
-                    let _ = io::stdin().read(&mut [0_u8; 1]);
-                    request_shutdown(handle, reader_gate, &reader_session, 0);
-                })
-                .is_err()
-            {
-                request_shutdown(app.clone(), Arc::clone(&gate), &session, 2);
-            }
-        }
         RunEvent::ExitRequested { api, code, .. } => match gate.requested() {
             ExitAction::Allow => {}
             ExitAction::WaitForShutdown => api.prevent_exit(),
@@ -160,4 +240,27 @@ pub(crate) fn run() -> i32 {
         },
         _ => {}
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn qualification_command_accepts_only_its_exact_embedded_document() {
+        for allowed in [
+            "http://tauri.localhost/remote-wan.html",
+            "tauri://localhost/remote-wan.html",
+        ] {
+            assert!(allowed_document(&tauri::Url::parse(allowed).unwrap()));
+        }
+        for denied in [
+            "http://tauri.localhost/index.html",
+            "http://tauri.localhost/remote-wan.html?x=1",
+            "http://tauri.localhost/remote-wan.html#token",
+            "https://wrong.invalid/remote-wan.html",
+            "http://tauri.localhost:1420/remote-wan.html",
+        ] {
+            assert!(!allowed_document(&tauri::Url::parse(denied).unwrap()));
+        }
+    }
 }

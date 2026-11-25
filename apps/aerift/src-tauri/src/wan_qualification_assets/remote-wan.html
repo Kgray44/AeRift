@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AeRift Remote</title>
+  <link rel="stylesheet" href="remote-wan.css">
+  <script src="remote-wan.js" defer></script>
+</head>
+<body>
+<main>
+  <header><span class="tag">PRIVATE PREVIEW</span><h1>AeRift Remote</h1>
+    <p>Connect to a device you know, then send a file. No VPN or network settings required.</p>
+  </header>
+  <p id="notice" role="status" aria-live="polite"></p>
+  <section aria-labelledby="connect-title">
+    <h2 id="connect-title">Connect a device</h2>
+    <details>
+      <summary>Share my device card</summary>
+      <p>Share it privately. Confirm it belongs to you using a separate trusted channel.</p>
+      <label for="my-card">My device card</label><input id="my-card" readonly spellcheck="false" autocomplete="off">
+      <button id="copy-card" type="button">Copy device card</button>
+    </details>
+    <details>
+      <summary>Create an invitation</summary>
+      <form id="create">
+        <label for="their-card">Recipient’s device card</label>
+        <input id="their-card" required maxlength="160" spellcheck="false" autocomplete="off">
+        <label class="check"><input id="recipient-verified" type="checkbox" required> I verified this card belongs to the intended device.</label>
+        <button type="submit">Create private invitation</button>
+      </form>
+      <div id="new-invite" hidden>
+        <p>Share privately with this recipient. The invitation expires after five minutes.</p>
+        <label for="my-invite">Private invitation</label>
+        <textarea id="my-invite" readonly rows="2" autocomplete="off" spellcheck="false"></textarea>
+        <button id="copy-invite" type="button">Copy invitation</button>
+        <button id="cancel-invite" type="button">Cancel invitation</button>
+      </div>
+    </details>
+    <details>
+      <summary>Accept an invitation</summary>
+      <form id="redeem">
+        <label for="issuer-card">Sender’s verified device card</label>
+        <input id="issuer-card" required maxlength="160" spellcheck="false" autocomplete="off">
+        <label for="their-invite">Private invitation</label>
+        <textarea id="their-invite" required maxlength="8192" rows="2" autocomplete="off" spellcheck="false"></textarea>
+        <label class="check"><input id="issuer-verified" type="checkbox" required> I verified the sender’s card separately.</label>
+        <button type="submit">Request connection</button>
+      </form>
+    </details>
+    <div id="pairing"></div>
+  </section>
+  <section aria-labelledby="devices-title"><h2 id="devices-title">Connected devices</h2><div id="devices"></div></section>
+  <section aria-labelledby="offers-title"><h2 id="offers-title">Incoming files</h2><div id="offers"></div></section>
+  <footer>Received files are saved in RemoteWanQualificationReceived under AeRift’s local app data. Closing the window stops this session.</footer>
+</main>
+</body>
+</html>

@@ -78,8 +78,10 @@ dependencies = [
  "aerift-peers",
  "aerift-transfer",
  "iroh",
+ "serde",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]

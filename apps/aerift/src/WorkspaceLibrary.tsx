@@ -1,4 +1,4 @@
-import { Button, GlassSurface, SpatialIcon } from "@aerift/ui";
+import { Button, GlassSurface, IconAction, SpatialIcon } from "@aerift/ui";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { ModuleId } from "@aerift/app-contract/experience";
 import { workspaceSections, type WorkspaceSection, type WorkspaceSectionId } from "./workspace-categories";
@@ -30,19 +30,20 @@ export function useWorkspaceLibrary(enabled: (module: ModuleId) => boolean) {
   };
 }
 
-export function WorkspaceLibrary({ sections, open, cardRef, counts }: {
+export function WorkspaceLibrary({ sections, open, cardRef, counts, desktop = false }: {
   sections: readonly WorkspaceSection[];
   open: (id: WorkspaceSectionId) => void;
   cardRef: (id: WorkspaceSectionId, node: HTMLButtonElement | null) => void;
   counts?: Partial<Record<WorkspaceSectionId, number>>;
+  desktop?: boolean;
 }) {
   const introId = useId();
   return <section className="aw-library" aria-labelledby={introId}>
-    <div className="aw-intro">
+    {desktop ? <h3 id={introId} className="aw-desktop-library-title">Your library</h3> : <div className="aw-intro">
       <span className="aw-kicker">Your library</span>
       <h3 id={introId}>Everything in its place.</h3>
       <p>Open a workspace to collect, organize, or get something ready for Rift.</p>
-    </div>
+    </div>}
     {sections.length ? <ul className="aw-grid" aria-label="Workspace categories">
       {sections.map(section => <li key={section.id}>
         <GlassSurface material="raised" className="aw-card" data-ae-lens-role="control" data-aw-tint={section.tint}>
@@ -62,13 +63,15 @@ export function WorkspaceLibrary({ sections, open, cardRef, counts }: {
   </section>;
 }
 
-export function WorkspaceCategoryHeading({ section, heading, onBack }: {
+export function WorkspaceCategoryHeading({ section, heading, onBack, desktop = false }: {
   section: WorkspaceSection;
   heading: React.RefObject<HTMLHeadingElement | null>;
   onBack: () => void;
+  desktop?: boolean;
 }) {
-  return <header className="aw-category-heading" data-aw-tint={section.tint}>
-    <Button variant="quiet" className="aw-back" onClick={onBack}><span aria-hidden="true">‹</span> Back to Workspace</Button>
+  return <header className="aw-category-heading" data-aw-desktop={desktop || undefined} data-aw-tint={section.tint}>
+    {desktop ? <IconAction className="aw-back" label="Back to Workspace" icon="back" onClick={onBack} /> :
+      <Button variant="quiet" className="aw-back" onClick={onBack}><span aria-hidden="true">‹</span> Back to Workspace</Button>}
     <div className="aw-category-title">
       <span className="aw-symbol" aria-hidden="true"><SpatialIcon name={section.icon} size={28} /></span>
       <div><h3 ref={heading} tabIndex={-1}>{section.label}</h3><p>{section.description}</p></div>

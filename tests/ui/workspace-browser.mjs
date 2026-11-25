@@ -28,7 +28,12 @@ try {
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
   await snapped(desktop, "desktop-workspace-dark");
   await open(desktop, "File Browser");
-  await desktop.getByLabel("Import files", { exact: true }).setInputFiles([
+  const importButton = button(desktop, "Import files");
+  assert.equal(await importButton.innerText(), "", "Desktop import is an icon shortcut");
+  assert.equal(await importButton.getAttribute("title"), "Import files");
+  const filePicker = desktop.waitForEvent("filechooser");
+  await importButton.press("Enter");
+  await (await filePicker).setFiles([
     { name: "Report.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7") },
     { name: "Sketch.png", mimeType: "image/png", buffer: Buffer.from("synthetic image bytes") },
   ]);
@@ -46,7 +51,7 @@ try {
   const large = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await large.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
   await open(large, "File Browser");
-  await large.getByLabel("Import files", { exact: true }).setInputFiles(Array.from({ length: 52 }, (_, index) => ({
+  await large.locator('input[type="file"][aria-label="Import files"]').setInputFiles(Array.from({ length: 52 }, (_, index) => ({
     name: `Large-${index}.pdf`, mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7"),
   })));
   const saved = large.getByRole("region", { name: "Saved file browser", exact: true });
@@ -90,6 +95,47 @@ try {
   await button(updated, "Next page").click();
   assert.equal(await updated.getByRole("checkbox").count(), 3);
   await large.close();
+
+  const home = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await home.goto(root + "/desktop-visual.html?route=home");
+  const manage = button(home, "Manage devices");
+  await manage.waitFor();
+  assert.equal(await manage.innerText(), "");
+  assert.equal(await manage.getAttribute("title"), "Manage devices");
+  await snapped(home, "desktop-home-polished");
+  await manage.press("Enter");
+  const unpair = button(home, "Unpair Mira’s iPhone");
+  await unpair.waitFor();
+  assert.equal(await unpair.innerText(), "");
+  await unpair.press("Enter");
+  const confirmation = home.getByRole("group", { name: "Unpair Mira’s iPhone?", exact: true });
+  await button(confirmation, "Confirm unpair").waitFor();
+  await button(confirmation, "Keep paired").press("Escape");
+  assert.equal(await focused(unpair), true);
+  await snapped(home, "desktop-devices-polished");
+  await home.close();
+
+  const activity = await browser.newPage({ viewport: { width: 510, height: 780 }, colorScheme: "light" });
+  await activity.goto(root + "/desktop-visual.html?route=activity&inboxFixture=1&scheme=light");
+  const inbox = activity.getByRole("region", { name: "Inbox", exact: true });
+  const verify = button(inbox, "Check integrity for Verified survey.pdf");
+  await verify.waitFor();
+  assert.equal(await verify.innerText(), "");
+  await verify.press("Enter");
+  await inbox.getByText("File integrity verified.", { exact: true }).waitFor();
+  assert.equal(await focused(verify), true);
+  const search = inbox.getByRole("searchbox", { name: "Find a file", exact: true });
+  await search.fill("not listed");
+  await search.press("Enter");
+  await inbox.getByText("No matching files.", { exact: true }).waitFor();
+  await button(inbox, "Refresh Inbox").press("Enter");
+  await inbox.getByText("No matching files.", { exact: true }).waitFor();
+  await search.fill("");
+  await button(inbox, "Search Inbox").click();
+  await verify.waitFor();
+  assert.equal(await activity.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await snapped(activity, "desktop-activity-inbox-polished");
+  await activity.close();
 
   for (const platform of ["ios", "android"]) {
     const page = await browser.newPage({ viewport: { width: platform === "ios" ? 390 : 320, height: 844 },
@@ -161,6 +207,102 @@ try {
     await dock.getByRole("button", { name: "Home", exact: true }).click();
     assert.equal(await dock.locator(".af-dock-fluid").evaluate(node => getComputedStyle(node).transitionDuration), "0s");
     assert.equal(await dock.locator(".af-dock-bead").evaluate(node => node.getAnimations().length), 0);
+    await page.close();
+  }
+  for (const platform of ["windows", "ios", "android"]) {
+    const desktop = platform === "windows";
+    const page = await browser.newPage({ viewport: { width: desktop ? 1280 : 390, height: 846 },
+      colorScheme: desktop ? "dark" : "light", isMobile: !desktop, hasTouch: !desktop });
+    const base = desktop ? "/desktop-visual.html?route=home" : "/mobile.html?platform=" + platform;
+    await page.goto(root + base + "&islandFixture=1");
+    const setReceipt = (direction, state, bytes) => page.evaluate(([d, s, b]) => window.aeTransferIslandFixture.set(d, s, b),
+      [direction, state, bytes]);
+    const island = page.getByRole("complementary", { name: "Active transfers", exact: true });
+    assert.equal(await island.count(), 0, "pending offers never show the island");
+    await setReceipt("incoming", "accepted", 0);
+    assert.equal(await island.count(), 0, "acceptance without data still does not show the island");
+    await setReceipt("incoming", "transferring", 400);
+    const down = island.getByRole("progressbar", { name: "Receiving Tidal charts.pdf", exact: true });
+    await down.waitFor();
+    assert.equal(await down.getAttribute("aria-valuenow"), "10");
+    await island.getByText("Download speed and time not yet available", { exact: true }).waitFor();
+    await setReceipt("outgoing", "transferring", 800);
+    const up = island.getByRole("progressbar", { name: "Sending Survey recording.wav", exact: true });
+    await up.waitFor();
+    assert.equal(await up.getAttribute("aria-valuenow"), "20");
+    // The estimator deliberately requires at least a quarter second between positive samples.
+    await page.waitForTimeout(300);
+    await setReceipt("incoming", "transferring", 1_600);
+    await setReceipt("outgoing", "transferring", 2_000);
+    await island.getByText(/^Download .+\/s · .+ left$/).waitFor();
+    await island.getByText(/^Upload .+\/s · .+ left$/).waitFor();
+    assert.equal(await island.getByRole("progressbar").count(), 2);
+    const surface = island.locator(".ae-transfer-island");
+    const sampled = () => surface.locator("xpath=self::*[@data-ae-lens='sampled']");
+    await sampled().waitFor();
+    assert.equal(await surface.getAttribute("data-material"), "chrome");
+    const optical = await surface.evaluate(node => {
+      const shell = node.closest(".ae-shell");
+      const crop = node.querySelector(".ae-transfer-island-optical");
+      const source = shell.querySelector(".ae-glass-optics");
+      const at = node.getBoundingClientRect(), sky = source.getBoundingClientRect();
+      const x = Math.floor((at.x - sky.x) * source.width / sky.width);
+      const y = Math.floor((at.y - sky.y) * source.height / sky.height);
+      const cx = Math.floor(crop.width / 2), cy = Math.floor(crop.height / 2);
+      const pixel = (canvas, col, row) => Array.from(canvas.getContext("2d").getImageData(col, row, 1, 1).data);
+      return { usable: crop.width > 2 && crop.height > 2 && getComputedStyle(crop).display === "block" &&
+          source.width >= crop.width && shell.dataset.aeOptics === "ready",
+        sameShell: node.closest(".ae-shell").contains(source),
+        retainedCssFill: getComputedStyle(node).backgroundColor,
+        scheme: node.closest(".ae-theme").dataset.appearance,
+        center: pixel(crop, cx, cy),
+        field: pixel(source, x + cx, y + cy) };
+    });
+    assert.equal(optical.usable && optical.sameShell, true);
+    assert.equal(optical.retainedCssFill, "rgba(0, 0, 0, 0)", "sampled surface is not painted over by a second material");
+    assert.equal(optical.scheme, desktop ? "dark" : "light");
+    assert.equal(optical.center[3], 255);
+    assert.ok(Math.max(...optical.center.slice(0, 3)) > 0);
+    assert.notDeepEqual(optical.center, optical.field, "the active island canvas is refracted, not a flat copy of the scene");
+    await snapped(page, platform + "-transfer-island-sampled-" + optical.scheme);
+    const expandedHeight = await surface.evaluate(node => node.querySelector("canvas").height);
+    const lensHandle = await surface.elementHandle();
+    const minimize = button(island, "Minimize transfer island");
+    await minimize.press("Enter");
+    const expand = button(island, "Expand transfer island");
+    await expand.waitFor();
+    assert.equal(await focused(expand), true);
+    assert.equal(await expand.getAttribute("aria-expanded"), "false");
+    assert.equal(await island.getByRole("progressbar").count(), 0);
+    await page.waitForFunction(({ node, height }) => node.dataset.aeLens === "sampled" &&
+      node.querySelector("canvas").height < height, { node: lensHandle, height: expandedHeight });
+    const minimizedHeight = await surface.evaluate(node => node.querySelector("canvas").height);
+    await expand.press("Enter");
+    await down.waitFor();
+    await page.waitForFunction(({ node, height }) => node.dataset.aeLens === "sampled" &&
+      node.querySelector("canvas").height > height, { node: lensHandle, height: minimizedHeight });
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    assert.equal(await island.evaluate(node => getComputedStyle(node).transitionDuration), "0s");
+    await sampled().waitFor(); // reduced motion does not disable the real glass recipe
+    const bounds = await island.locator(".ae-transfer-island").boundingBox();
+    assert.ok(Math.abs(bounds.x + bounds.width / 2 - page.viewportSize().width / 2) <= 1);
+    if (!desktop) {
+      const mobileDock = page.getByRole("navigation", { name: "AeRift destinations" });
+      const dockBox = await mobileDock.boundingBox();
+      assert.ok(bounds.y + bounds.height <= dockBox.y, "island and navigation do not overlap");
+      await button(mobileDock, "Devices").click();
+      await down.waitFor();
+    }
+    await snapped(page, platform + "-transfer-island");
+    await setReceipt("incoming", "transferring", 4_000);
+    await island.getByText("Awaiting verification", { exact: true }).waitFor();
+    assert.equal(await down.getAttribute("aria-valuenow"), "100");
+    await setReceipt("incoming", "completed", 4_000);
+    await down.waitFor({ state: "hidden" });
+    await setReceipt("outgoing", "cancelled", 2_000);
+    await island.waitFor({ state: "hidden" });
+    await page.locator(".ae-transfer-island[data-ae-lens='sampled']").waitFor({ state: "detached" });
     await page.close();
   }
   console.log("Workspace browser journeys passed: desktop documents; iOS and narrow Android library, focus and dock");

@@ -4,7 +4,7 @@ use std::{fs::File, io, path::Path, sync::Arc, time::Duration};
 use aerift_peers::{Device, PendingPairing, RemotePeerNode, RemoteRoute};
 use aerift_transfer::{ErrorCode, IncomingTransfer, PeerId, Status, TransferError, TransferKey};
 use tokio::{
-    sync::watch,
+    sync::{Mutex, watch},
     task::{JoinHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
@@ -88,7 +88,7 @@ impl Session {
 /// Neither resource may concurrently be shared with the Nearby or VPN host.
 pub struct WanSession {
     session: Arc<Session>,
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WanSession {
@@ -119,7 +119,7 @@ impl WanSession {
         let worker = tokio::spawn(serve(session.clone(), profile_lock));
         Self {
             session,
-            worker: Some(worker),
+            worker: Mutex::new(Some(worker)),
         }
     }
 
@@ -154,6 +154,84 @@ impl WanSession {
     ) -> Result<(), TransferError> {
         self.session.check_running()?;
         self.session.node.confirm_pairing(request.id, approve)
+    }
+
+    pub fn connected_devices(&self) -> Vec<Device> {
+        self.session
+            .node
+            .trusted_devices()
+            .into_iter()
+            .filter(|device| self.session.node.wan_active_endpoint(device.id).is_ok())
+            .collect()
+    }
+
+    pub async fn redeem_verified_card(
+        &self,
+        code: &str,
+        verified: DeviceCard,
+    ) -> Result<Device, TransferError> {
+        self.session.check_running()?;
+        let issuer = *verified.endpoint.as_bytes();
+        self.session
+            .node
+            .redeem_wan_invitation(
+                code,
+                verified.identity,
+                *self.card().endpoint.as_bytes(),
+                |binding| {
+                    if binding.issuer_endpoint_key() != issuer {
+                        return Err(ErrorCode::PeerUntrusted.into());
+                    }
+                    self.session.route(issuer)
+                },
+            )
+            .await
+    }
+
+    pub async fn send_selected_file(
+        &self,
+        peer: PeerId,
+        selected: std::path::PathBuf,
+    ) -> Result<Status, TransferError> {
+        use aerift_transfer::ambient::{Candidate, CaptureContext, CaptureLimits, freeze_guarded};
+        self.session.check_running()?;
+        let key = self.session.node.wan_active_endpoint(peer)?;
+        let route = self.session.route(key)?;
+        let sender =
+            self.session
+                .node
+                .sender_wan(route, peer, key, DECISION_TIMEOUT, UPLOAD_TIMEOUT)?;
+        let stop = self.session.stop.clone();
+        let capture = tokio::task::spawn_blocking(move || {
+            if !ordinary_file(&selected) {
+                return Err(ErrorCode::InvalidRequest.into());
+            }
+            freeze_guarded(
+                CaptureContext {
+                    explicit_selection: vec![Candidate::path(selected)],
+                    ..Default::default()
+                },
+                CaptureLimits {
+                    entries: 1,
+                    depth: 1,
+                    inline_bytes: 0,
+                    total_bytes: 64 * 1024 * 1024,
+                },
+                || !stop.is_cancelled(),
+            )
+            .map(Arc::new)
+            .map_err(|_| TransferError::from(ErrorCode::InvalidRequest))
+        })
+        .await
+        .map_err(|_| ErrorCode::InternalError)??;
+        sender
+            .send_frozen_file_with_id(
+                uuid::Uuid::new_v4(),
+                capture,
+                self.session.stop.clone(),
+                |_, _| {},
+            )
+            .await
     }
 
     pub async fn redeem(
@@ -215,10 +293,13 @@ impl WanSession {
     }
 
     /// An explicit awaited stop is required before starting another host.
-    pub async fn stop(mut self) -> io::Result<()> {
+    pub async fn stop(&self) -> io::Result<()> {
         self.session.close_authority();
-        if let Some(worker) = self.worker.take() {
-            worker.await.map_err(io::Error::other)?;
+        let mut lock = self.worker.lock().await;
+        if let Some(worker) = lock.as_mut() {
+            let result = worker.await.map_err(io::Error::other);
+            *lock = None;
+            result?;
         }
         Ok(())
     }
@@ -228,6 +309,30 @@ impl Drop for WanSession {
     fn drop(&mut self) {
         self.session.close_authority();
     }
+}
+
+fn ordinary_file(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if !path.is_absolute()
+            || !matches!(path.components().next(), Some(Component::Prefix(prefix))
+                if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+        {
+            return false;
+        }
+    }
+    std::fs::symlink_metadata(path).is_ok_and(|meta| {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const REPARSE_POINT: u32 = 0x400;
+            if meta.file_attributes() & REPARSE_POINT != 0 {
+                return false;
+            }
+        }
+        meta.is_file() && !meta.file_type().is_symlink()
+    })
 }
 
 async fn serve(session: Arc<Session>, _profile_lock: File) {

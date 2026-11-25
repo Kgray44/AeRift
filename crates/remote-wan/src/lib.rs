@@ -19,6 +19,8 @@ use iroh::{
 };
 pub use iroh::{EndpointId, RelayUrl, SecretKey};
 mod native_host;
+mod qualification;
+pub use qualification::{QualificationAction, QualificationController, QualificationReply};
 pub use native_host::{DeviceCard, OperatorRelay, WanSession};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
