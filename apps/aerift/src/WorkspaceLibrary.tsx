@@ -1,4 +1,4 @@
-import { Button, GlassSurface, IconAction, SpatialIcon } from "@aerift/ui";
+import { Button, GlassSurface, IconAction, MotionCardButton, MotionCardAccent, SpatialIcon } from "@aerift/ui";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { ModuleId } from "@aerift/app-contract/experience";
 import { workspaceSections, type WorkspaceSection, type WorkspaceSectionId } from "./workspace-categories";
@@ -47,16 +47,16 @@ export function WorkspaceLibrary({ sections, open, cardRef, counts, desktop = fa
     {sections.length ? <ul className="aw-grid" aria-label="Workspace categories">
       {sections.map(section => <li key={section.id}>
         <GlassSurface material="raised" className="aw-card" data-ae-lens-role="control" data-aw-tint={section.tint}>
-          <button type="button" className="aw-card-button" ref={node => { cardRef(section.id, node); }}
-            aria-label={section.label} onClick={() => open(section.id)}>
+          <MotionCardButton className="aw-card-button" ref={node => { cardRef(section.id, node); }}
+            label={section.label} onClick={() => open(section.id)}>
             <span className="aw-card-top" aria-hidden="true">
-              <span className="aw-symbol"><SpatialIcon name={section.icon} size={25} /></span>
-              <span className="aw-chevron">›</span>
+              <MotionCardAccent role="symbol" className="aw-symbol" layoutId={section.id}><SpatialIcon name={section.icon} size={25} /></MotionCardAccent>
+              <MotionCardAccent role="chevron" className="aw-chevron">›</MotionCardAccent>
             </span>
             <span className="aw-card-title">{section.label}</span>
             <span className="aw-card-description">{section.description}</span>
             {typeof counts?.[section.id] === "number" && <span className="aw-count">{counts[section.id]} {counts[section.id] === 1 ? "item" : "items"}</span>}
-          </button>
+          </MotionCardButton>
         </GlassSurface>
       </li>)}
     </ul> : <p>Enable at least one Workspace category in Settings.</p>}
@@ -73,7 +73,9 @@ export function WorkspaceCategoryHeading({ section, heading, onBack, desktop = f
     {desktop ? <IconAction className="aw-back" label="Back to Workspace" icon="back" onClick={onBack} /> :
       <Button variant="quiet" className="aw-back" onClick={onBack}><span aria-hidden="true">‹</span> Back to Workspace</Button>}
     <div className="aw-category-title">
-      <span className="aw-symbol" aria-hidden="true"><SpatialIcon name={section.icon} size={28} /></span>
+      <div className="aw-heading-symbol" aria-hidden="true"><MotionCardAccent role="symbol" className="aw-symbol" layoutId={section.id}>
+        <SpatialIcon name={section.icon} size={28} />
+      </MotionCardAccent></div>
       <div><h3 ref={heading} tabIndex={-1}>{section.label}</h3><p>{section.description}</p></div>
     </div>
   </header>;

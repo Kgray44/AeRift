@@ -347,8 +347,9 @@
   animation: ae-overlay-enter var(--ae-motion-overlay) var(--ae-motion-out) both;
 }
 .ae-sheet { --ae-overlay-y: .7rem; --ae-overlay-start-scale: .986; }
-.ae-popover { --ae-overlay-y: .22rem; --ae-overlay-start-scale: .96; }
-.ae-popover[data-anchor-side="above"] { --ae-overlay-y: -.22rem; }
+/* Start toward the anchor (up for a panel below it, down for one above). */
+.ae-popover { --ae-overlay-y: -.22rem; --ae-overlay-start-scale: .96; }
+.ae-popover[data-anchor-side="above"] { --ae-overlay-y: .22rem; }
 @media (max-width: 42rem) {
   .ae-theme .ae-sheet { --ae-overlay-y: 1.4rem; --ae-overlay-start-scale: 1; transition: translate var(--ae-motion-content) var(--ae-motion-out); }
 }

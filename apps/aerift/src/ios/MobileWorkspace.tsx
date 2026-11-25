@@ -9,7 +9,7 @@ import type { MobileObject } from "./local-objects";
 import type { MobileOperations, MobilePlatformCopy, ReceivedCopy } from "./mobile-platform";
 import type { AppPort, Transfer } from "@aerift/app-contract";
 import { observeMobileMotionSuppression, type MobileMotionDirection } from "./mobile-motion";
-import { Button, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
+import { Button, MotionFeedbackProvider, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
 
 export type PickerSource = MediaSource;
 export type ModuleVisibility = Record<PickerSource | LocalModule, boolean>;
@@ -97,7 +97,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
     if (!result.ok) setPresentationError(action === "preview" ? `${copy.previewer} couldn't preview this item.` : "AeRift couldn't open sharing for this item.");
   }
 
-  return <>
+  return <MotionFeedbackProvider group="mobile-workspace">
     {regions.selection && <section key={regions.selection.selectionId} className="ios-section" aria-label="Selected object"
       data-ae-route-enter={regions.selection.selectionId !== initialSelection.current ? "neutral" : undefined}>
       <h3>Ready for Rift</h3>
@@ -158,5 +158,5 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
       : <p role="alert">AeRift couldn't read the saved workspace. Files and Photos are still available.</p>)}
     </div>
     {regions.selecting && <p role="status">Opening picker or preparing item…</p>}
-  </>;
+  </MotionFeedbackProvider>;
 }

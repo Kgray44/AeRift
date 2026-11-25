@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyWorkspaceReactMotion } from "./workspace-motion-browser.mjs";
 const module = process.env.AERIFT_PLAYWRIGHT_MODULE;
 const { chromium } = await import(module ? pathToFileURL(module).href : "playwright");
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
@@ -24,6 +25,7 @@ const back = async (page, name) => {
   assert.equal(await focused(button(page, name)), true, "focus returns to originating card");
 };
 try {
+  await verifyWorkspaceReactMotion(browser, root, evidence);
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
   await snapped(desktop, "desktop-workspace-dark");
