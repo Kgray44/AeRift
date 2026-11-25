@@ -26,6 +26,8 @@ mod desktop_explorer;
 mod explorer_receive;
 #[cfg(target_os = "ios")]
 mod ios;
+#[cfg(target_os = "ios")]
+mod ios_received_preview;
 #[cfg(windows)]
 mod private_remote_app;
 #[cfg(windows)]
@@ -74,6 +76,9 @@ pub fn run() {
         .manage(selection::SelectionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             ios::watch_app,
+            ios::preview_ios_received_text,
+            ios::list_ios_received_receipts,
+            ios::configure_ios_receipt_history,
             ios::unwatch_app,
             ios::select_app_file,
             ios::import_ios_media,
@@ -178,6 +183,7 @@ pub fn run() {
             windows::transfer_app_file,
             windows::list_ambient_inbox,
             windows::verify_ambient_inbox_entry,
+            windows::preview_ambient_inbox_text,
             windows::save_ambient_inbox_entry,
             explorer_receive::arm_explorer_receive,
             explorer_receive::view_explorer_receive,
@@ -244,3 +250,4 @@ pub fn run() {
             }
         });
 }
+

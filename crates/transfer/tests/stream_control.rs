@@ -1,6 +1,9 @@
 use std::{
     convert::Infallible,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -24,12 +27,14 @@ struct Harness {
     disconnected_puts: Arc<Mutex<Vec<String>>>,
     trusted: bool,
     old_receiver: bool,
+    connections: Arc<AtomicUsize>,
 }
 
 impl Connector for Harness {
     type Stream = DuplexStream;
 
     async fn connect(&self) -> Result<Self::Stream, TransferError> {
+        self.connections.fetch_add(1, Ordering::SeqCst);
         let (client, server) = duplex(4096);
         let test = self.clone();
         tokio::spawn(async move {
@@ -105,6 +110,7 @@ fn setup() -> (tempfile::TempDir, Harness) {
             disconnected_puts: Arc::default(),
             trusted: true,
             old_receiver: false,
+            connections: Arc::default(),
         },
     )
 }
@@ -225,6 +231,55 @@ async fn a_preassigned_id_reaches_the_receiver_but_readiness_cannot_accept_an_of
     assert!(!dir.path().join("received/sample.txt").exists());
     cancel.cancel();
     assert_eq!(sender.await.unwrap().unwrap().state, State::Cancelled);
+}
+
+#[tokio::test]
+async fn guarded_cancellation_from_accepted_progress_does_not_start_upload() {
+    let (dir, harness) = setup();
+    let source = dir.path().join("source.bin");
+    std::fs::write(&source, vec![0x8d; 130_891]).unwrap();
+    let receiver = harness.receiver.clone();
+    let connections = harness.connections.clone();
+    let at_acceptance = Arc::new(AtomicUsize::new(0));
+    let snapshot = at_acceptance.clone();
+    let seen_connections = connections.clone();
+    let id = Uuid::new_v4();
+    let cancel = CancellationToken::new();
+    let trigger = cancel.clone();
+    let decision = tokio::spawn(approve(receiver.clone()));
+
+    let result = Sender::new(harness, Duration::from_secs(4), Duration::from_secs(5))
+        .send_file_guarded(
+            id,
+            &source,
+            "not-published.bin",
+            cancel,
+            move |_, status| {
+                if status.state == State::Accepted {
+                    snapshot.store(seen_connections.load(Ordering::SeqCst), Ordering::SeqCst);
+                    trigger.cancel();
+                }
+            },
+            || Ok(()),
+        )
+        .await
+        .unwrap();
+    decision.await.unwrap();
+
+    let before_cancel = at_acceptance.load(Ordering::SeqCst);
+    assert!(before_cancel > 0);
+    // Exactly one further connection: DELETE, never a PUT connection.
+    assert_eq!(connections.load(Ordering::SeqCst), before_cancel + 1);
+    assert_eq!(result.state, State::Cancelled);
+    assert_eq!(result.bytes_transferred, 0);
+    let cancelled = receiver
+        .snapshot()
+        .into_iter()
+        .find(|item| item.key.id == id)
+        .unwrap();
+    assert_eq!(cancelled.status.state, State::Cancelled);
+    assert_eq!(cancelled.status.bytes_transferred, 0);
+    assert!(!dir.path().join("received/not-published.bin").exists());
 }
 
 #[tokio::test]

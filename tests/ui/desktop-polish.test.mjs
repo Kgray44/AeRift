@@ -21,9 +21,11 @@ test("desktop Workspace uses a named picker trigger instead of browser input chr
 
 test("desktop Inbox actions distinguish search, refresh, integrity and saving", () => {
   const inbox = read("apps/aerift/src/windows/DesktopInbox.tsx");
-  assert.match(inbox, /<input type="search" aria-label="Find a file"/);
-  assert.match(inbox, /<IconAction[^>]+type="submit"[^>]+label="Search Inbox"/);
-  assert.match(inbox, /<IconAction[^>]+label="Refresh Inbox"/);
+  const library = read("apps/aerift/src/ReceivedActivity.tsx");
+  assert.match(inbox, /<ReceivedActivity title="Inbox"/);
+  assert.match(library, /Find a file\s+<input type="search"/);
+  assert.match(library, /<IconAction[^>]+type="submit"[^>]+label=\{title === "Inbox" \? "Search Inbox"/);
+  assert.match(library, /<IconAction[^>]+label=\{title === "Inbox" \? "Refresh Inbox"/);
   assert.match(inbox, /<IconAction[^>]+label=\{\x60Check integrity for \$\{entry\.name\}\x60\}/s);
   assert.match(inbox, /<IconAction[^>]+label=\{\x60Save a copy of \$\{entry\.name\}\x60\}/s);
   assert.match(inbox, /<Button disabled=\{explorerBusy\} onClick=\{\(\) => void confirmExplorer\(explorerView\.id\)\}>Save to this folder/);
@@ -35,3 +37,4 @@ test("the hosted desktop Rift hides secondary file-button text without changing 
   assert.match(transfer, /\}>\{allowInbox \? "Accept to receive folder" : "Accept"\}/);
   assert.match(transfer, />\s*Accept to Inbox/);
 });
+

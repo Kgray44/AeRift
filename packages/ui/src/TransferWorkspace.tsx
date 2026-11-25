@@ -76,17 +76,19 @@ export interface MobileTransferPresentation {
   render: (regions: TransferWorkspaceRegions) => ReactNode;
 }
 
-export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection, allowInbox = false,
-  navigationStart = "AeRift", navigationEnd, pairRequest, onPairingOpenChange,
+export function TransferWorkspace({ port, gesture, activityFooter, activityLibrary, watchSelection, connection, allowInbox = false,
+  navigationStart = "AeRift", navigationEnd, shellHeader, pairRequest, onPairingOpenChange,
   platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift, mobile, friendsRoster }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
+  activityLibrary?: ReactNode;
   activityFooter?: ReactNode;
   allowInbox?: boolean;
   watchSelection?: (listener: (selection: FileSelection | null) => void) => () => void;
   connection?: { generation: number; retry: () => void; onChange: (value: WorkspaceConnection) => void };
   navigationStart?: ReactNode;
   navigationEnd?: ReactNode;
+  shellHeader?: ReactNode;
   pairRequest?: number;
   onPairingOpenChange?: (open: boolean) => void;
   platform?: Platform;
@@ -602,8 +604,10 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   }
 
   const activitySection = <section key="activity" id={activityId} hidden={destination !== "activity"}
-    aria-label={mobile ? "Transfer history" : undefined}
-    aria-labelledby={mobile ? undefined : `${activityId}-heading`} className="ae-activity">
+    aria-label={mobile || hosted ? "Activity" : undefined} className="ae-activity">
+    {destination === "activity" && activityLibrary}
+    <section aria-label={mobile ? "Transfer history" : undefined}
+      aria-labelledby={mobile ? undefined : `${activityId}-heading`}>
     <div className="ae-activity-header">
       {mobile ? <h3>Transfer history</h3> : hosted ? <h3 id={`${activityId}-heading`}>Transfer history</h3> :
         <h2 id={`${activityId}-heading`}>Activity</h2>}
@@ -629,6 +633,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     </div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
       <p>{canFilterActivity && activityFilter !== "all" ? "No transfers match this view." :
         channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
+    </section>
     {activityFooter}
   </section>;
 
@@ -642,7 +647,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   </section>;
 
   return <>
-    {!hosted && <><header className="ae-experience-nav" data-destination={destination} data-mobile-shell={!!mobile}>
+    {!hosted && <>{shellHeader ?? <header className="ae-experience-nav" data-destination={destination} data-mobile-shell={!!mobile}>
       <GlassSurface material="chrome" className="ae-nav-brand">{navigationStart}</GlassSurface>
       {!mobile && <GlassSurface material="chrome" className="ae-nav-destinations">
         <nav aria-label="AeRift destinations">
@@ -654,7 +659,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
         </nav>
       </GlassSurface>}
       {navigationEnd && <GlassSurface material="chrome" className="ae-nav-tools">{navigationEnd}</GlassSurface>}
-    </header>
+    </header>}
     <div className="ae-offer-notice">
       <span role="status">{!!incoming.length && <Button variant="quiet"
         aria-controls={transferRegionId}
@@ -758,3 +763,4 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     <Toast message={toast?.message} kind={toast?.kind} onDismiss={() => setToast(undefined)} />
   </>;
 }
+

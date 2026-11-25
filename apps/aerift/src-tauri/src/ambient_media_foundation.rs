@@ -10,18 +10,18 @@ use std::{
     os::windows::ffi::OsStrExt,
     ptr::null_mut,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
     },
     time::{Duration, Instant},
 };
 use windows::{
-    core::{implement, Ref, HRESULT, PCWSTR},
     Win32::{
         Media::MediaFoundation::*,
-        System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
+        System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
     },
+    core::{HRESULT, PCWSTR, Ref, implement},
 };
 
 const VIDEO_STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
@@ -80,7 +80,11 @@ impl<M: RgbLandmarker, I: NativeIndicator> WindowsCameraProvider<M, I> {
     }
 
     pub(crate) fn with_shared_grant(model: M, indicator: I, grant: Arc<NativeCameraGrant>) -> Self {
-        Self { model: Arc::new(Mutex::new(model)), indicator, grant }
+        Self {
+            model: Arc::new(Mutex::new(model)),
+            indicator,
+            grant,
+        }
     }
 }
 
@@ -167,9 +171,9 @@ impl<M: RgbLandmarker> LocalLandmarkSource for WindowsLandmarkLease<M> {
     }
 }
 
-struct Com;
+pub(crate) struct Com;
 impl Com {
-    fn start() -> Result<Self, CameraIssue> {
+    pub(crate) fn start() -> Result<Self, CameraIssue> {
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }.map_err(mf_error)?;
         Ok(Self)
     }
@@ -180,9 +184,9 @@ impl Drop for Com {
     }
 }
 
-struct Mf;
+pub(crate) struct Mf;
 impl Mf {
-    fn start() -> Result<Self, CameraIssue> {
+    pub(crate) fn start() -> Result<Self, CameraIssue> {
         unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.map_err(mf_error)?;
         Ok(Self)
     }

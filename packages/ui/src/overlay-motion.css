@@ -1,0 +1,28 @@
+/* The native surface retains its existing Glass material and hit geometry.
+ * Only the fine, theme-colored rim above the controls catches the light. */
+.ae-overlay-accents {
+  display: none;
+}
+.ae-theme:where([data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"]))
+  .ae-overlay-accents {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 9%;
+  block-size: 2px;
+  display: block;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ae-overlay-glint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 22%, var(--ae-optical-sheen, var(--ae-highlight)) 43%,
+    var(--ae-optical-rim, var(--ae-focus)) 50%, var(--ae-optical-sheen, var(--ae-highlight)) 62%, transparent 77%);
+}
+.ae-popover[data-anchor-side="above"] .ae-overlay-accents { inset-block-start: auto; inset-block-end: 0; }
+
+.ae-theme[data-motion="reduce"] .ae-overlay-accents { display: none; }
+@media (prefers-reduced-motion: reduce), (forced-colors: active), (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .ae-theme[data-ae-theme="glass"] .ae-overlay-accents { display: none; }
+}

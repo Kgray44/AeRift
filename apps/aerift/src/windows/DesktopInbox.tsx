@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, GlassSurface, IconAction, SpatialIcon } from "@aerift/ui";
+import { Button, IconAction } from "@aerift/ui";
+import { ReceivedActivity } from "../ReceivedActivity";
 import { command } from "../nativeAppPort";
 
 type Candidate = {
@@ -8,27 +9,36 @@ type Candidate = {
   name: string;
   sizeBytes: number;
   requestedDestination: "inbox" | "external_requires_authorization";
+  receivedAtUnixMs?: number;
 };
 type Page = { entries: Candidate[]; truncated: boolean };
 const keyOf = (entry: Candidate) => `${entry.peer}:${entry.id}`;
+// Descriptive availability only; the native command performs all security checks.
+const canReadText = (entry: Candidate) => /\.(txt|text|md|csv|tsv|log)$/iu.test(entry.name) &&
+  Number.isSafeInteger(entry.sizeBytes) && entry.sizeBytes >= 0 && entry.sizeBytes <= 65_536;
 
 type ExplorerDelivery = { state: "idle" | "armed" | "resolving" | "saving" } |
   { state: "review"; id: string; name: string; folder: string };
 
-export function DesktopInbox({ contextualEnabled = false }: { contextualEnabled?: boolean }) {
+export function DesktopInbox({ contextualEnabled = false, openVerified, previewVerified }: {
+  contextualEnabled?: boolean;
+  openVerified?: (entry: Pick<Candidate, "peer" | "id">) => boolean | Promise<boolean>;
+  previewVerified?: (entry: Pick<Candidate, "peer" | "id">) => boolean | Promise<boolean>;
+}) {
   const [explorerBusy, setExplorerBusy] = useState(false);
   const [explorerView, setExplorerView] = useState<ExplorerDelivery>();
   const [explorerNotice, setExplorerNotice] = useState("");
-  const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [list, setList] = useState<Page>();
+  const [timelineEntries, setTimelineEntries] = useState<readonly Candidate[]>([]);
   const [listing, setListing] = useState(true);
   const [listError, setListError] = useState(false);
   const [checking, setChecking] = useState<string>();
   const [saving, setSaving] = useState<string>();
   const [saved, setSaved] = useState<{ key: string; ok: boolean }>();
   const [result, setResult] = useState<{ key: string; ok: boolean }>();
+  const [textPreview, setTextPreview] = useState<{ key: string; text: string }>();
   const live = useRef(false);
   useEffect(() => {
     live.current = true;
@@ -41,10 +51,14 @@ export function DesktopInbox({ contextualEnabled = false }: { contextualEnabled?
     setListError(false);
     setResult(undefined);
     setSaved(undefined);
+    setTextPreview(undefined);
     void command<Page>("list_ambient_inbox", { query: filter }).then(response => {
       if (stale) return;
       setListing(false);
-      if (response.ok) setList(response.value);
+      if (response.ok) {
+        setList(response.value);
+        if (!filter) setTimelineEntries(response.value.entries);
+      }
       else setListError(true);
     });
     return () => { stale = true; };
@@ -116,23 +130,55 @@ export function DesktopInbox({ contextualEnabled = false }: { contextualEnabled?
     if (!response.ok || response.value) setSaved({ key, ok: response.ok });
   }
 
-  function searchInbox() {
-    setFilter(query.trim());
-    setRefresh(next => next + 1);
+  async function preview(entry: Candidate) {
+    setTextPreview(undefined);
+    if (previewVerified) return previewVerified({ peer: entry.peer, id: entry.id });
+    if (!canReadText(entry)) return false;
+    const response = await command<string | null>("preview_ambient_inbox_text", { peer: entry.peer, id: entry.id });
+    if (!live.current || !response.ok || typeof response.value !== "string") return false;
+    setTextPreview({ key: keyOf(entry), text: response.value });
+    return true;
   }
 
-  return <GlassSurface material="content" className="aerift-desktop-inbox">
-    <section aria-labelledby="desktop-inbox-title">
-      <div className="aerift-inbox-heading">
-        <h3 id="desktop-inbox-title"><SpatialIcon name="drop" />Inbox</h3>
-        <form role="search" aria-label="Inbox files" onSubmit={event => { event.preventDefault(); searchInbox(); }}>
-          <input type="search" aria-label="Find a file" placeholder="Find a file" value={query} maxLength={64}
-            onChange={event => setQuery(event.target.value)} />
-          <IconAction type="submit" label="Search Inbox" icon="search" disabled={!!checking || !!saving} />
-          <IconAction label="Refresh Inbox" icon="retry" disabled={!!checking || !!saving}
-            onClick={() => setRefresh(next => next + 1)} />
-        </form>
-      </div>
+  function toRow(entry: Candidate) {
+    const time = entry.receivedAtUnixMs;
+    const receivedAt = typeof time === "number" && Number.isSafeInteger(time) && time > 0 &&
+      time <= 8_640_000_000_000_000 ? new Date(time).toISOString() : undefined;
+    return {
+      id: keyOf(entry),
+      name: entry.name,
+      sizeBytes: entry.sizeBytes,
+      receivedAt,
+      note: entry.requestedDestination === "external_requires_authorization" ?
+        "External delivery needs approval." : undefined,
+      receipt: entry,
+    };
+  }
+  return <ReceivedActivity title="Inbox" rows={(list?.entries ?? []).map(toRow)} timelineRows={timelineEntries.map(toRow)} loading={listing} truncated={list?.truncated}
+    disabled={!!checking || !!saving}
+    error={listError ? "Could not read the Inbox. Your regular receive folder is unaffected." : undefined}
+    onSearch={query => { setFilter(query.trim()); setRefresh(next => next + 1); }}
+    onRefresh={() => setRefresh(next => next + 1)}
+    onOpen={openVerified ? ({ receipt }) => openVerified({ peer: receipt.peer, id: receipt.id }) : undefined}
+    canPreview={({ receipt }) => !!previewVerified || canReadText(receipt)}
+    onPreview={({ receipt }) => preview(receipt)}
+    renderPreview={row => textPreview?.key === row.id && <pre className="aw-received-text"><code>{textPreview.text}</code></pre>}
+    renderActions={row => {
+      const entry = row.receipt;
+      const key = row.id;
+      return <>
+          <div className="aerift-inbox-tools">
+            <IconAction icon="check" label={`Check integrity for ${entry.name}`} disabled={(!!checking && checking !== key) || !!saving}
+              loading={checking === key} onClick={() => void verify(entry)} />
+            <IconAction icon="drop" label={`Save a copy of ${entry.name}`} disabled={!!checking || (!!saving && saving !== key)}
+              loading={saving === key} onClick={() => void save(entry)} />
+            {contextualEnabled && <IconAction icon="folder" label={`Choose Explorer folder for ${entry.name}`}
+              disabled={explorerBusy || !!explorerView} onClick={() => void armExplorer(entry)} />}
+          </div>
+          {saved?.key === key && <p role="status">{saved.ok ? "Verified copy saved." : "No copy was saved. Choose a new filename and check the file’s integrity."}</p>}
+          {result?.key === key && <p role="status">{result.ok ? "File integrity verified." : "Could not verify this file. It was not opened or moved."}</p>}
+      </>;
+    }}>
       {contextualEnabled && explorerView && <div className="aerift-inbox-review" aria-label="Explorer destination confirmation">
         {explorerView.state === "armed" && <p>Open the destination in File Explorer and press Ctrl + Alt + Shift + F within 30 seconds. Then return here to confirm.</p>}
         {explorerView.state === "resolving" && <p>Checking the focused Explorer folder…</p>}
@@ -145,31 +191,5 @@ export function DesktopInbox({ contextualEnabled = false }: { contextualEnabled?
         <Button variant="quiet" onClick={() => void cancelExplorer()}>Cancel Explorer save</Button>
       </div>}
       {explorerNotice && <p role="status">{explorerNotice}</p>}
-      {listing && <p role="status">Loading Inbox…</p>}
-      {listError && <p role="alert">Could not read the Inbox. Your regular receive folder is unaffected.</p>}
-      {!!list?.truncated && <p>Some files aren’t shown. Search by name to narrow the list.</p>}
-      {list?.entries.length === 0 && <p>{filter ? "No matching files." : "No files saved to Inbox yet."}</p>}
-      {!!list?.entries.length && <ul className="aerift-inbox-list">{list.entries.map(entry => {
-        const key = keyOf(entry);
-        return <li key={key}>
-          <div className="aerift-inbox-file">
-            <SpatialIcon name="file" size={20} />
-            <div><strong>{entry.name}</strong><small>{entry.sizeBytes.toLocaleString()} bytes
-              {entry.requestedDestination === "external_requires_authorization" && " · External delivery needs approval"}</small>
-            </div>
-          </div>
-          <div className="aerift-inbox-tools">
-            <IconAction icon="check" label={`Check integrity for ${entry.name}`} disabled={(!!checking && checking !== key) || !!saving}
-              loading={checking === key} onClick={() => void verify(entry)} />
-            <IconAction icon="drop" label={`Save a copy of ${entry.name}`} disabled={!!checking || (!!saving && saving !== key)}
-              loading={saving === key} onClick={() => void save(entry)} />
-            {contextualEnabled && <IconAction icon="folder" label={`Choose Explorer folder for ${entry.name}`}
-              disabled={explorerBusy || !!explorerView} onClick={() => void armExplorer(entry)} />}
-          </div>
-          {saved?.key === key && <p role="status">{saved.ok ? "Verified copy saved." : "No copy was saved. Choose a new filename and check the file’s integrity."}</p>}
-          {result?.key === key && <p role="status">{result.ok ? "File integrity verified." : "Could not verify this file. It was not opened or moved."}</p>}
-        </li>;
-      })}</ul>}
-    </section>
-  </GlassSurface>;
+  </ReceivedActivity>;
 }
