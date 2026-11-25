@@ -41,6 +41,11 @@ use windows_sys::{
 
 use crate::model::safe_name;
 
+// Prototype discovery only. Not a production capability or IPC surface.
+#[cfg(test)]
+#[path = "windows_directory_page.rs"]
+mod directory_page;
+
 const DIRECTORY_ACCESS: u32 = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES;
 
 pub struct PinnedDirectory(File, Vec<File>);
