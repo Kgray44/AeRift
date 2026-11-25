@@ -5,7 +5,7 @@ const read = path => readFileSync(new URL("../../" + path, import.meta.url), "ut
 test("desktop and mobile library cards share production React Motion gestures without moving the target", () => {
   const library = read("apps/aerift/src/WorkspaceLibrary.tsx");
   const motion = read("packages/ui/src/MotionAffordance.tsx");
-  assert.match(library, /<MotionCardAccent[^>]*layoutId=\{section\.id\}/);
+  assert.match(library, /<WorkspacePanelMotion/);
   assert.match(read("apps/aerift/src/windows/DesktopWorkspace.tsx"), /<MotionFeedbackProvider group="desktop-workspace">/);
   assert.match(read("apps/aerift/src/ios/MobileWorkspace.tsx"), /<MotionFeedbackProvider group="mobile-workspace">/);
   assert.match(library, /<MotionCardButton/);
@@ -21,9 +21,10 @@ test("the prebuilt Motion features share both AeRift and OS reduced-motion polic
   assert.match(motion, /reducedMotion=\{reduction === "reduce" \? "always" : "user"\}/);
 });
 
-test("the chosen Workspace card keeps the same glass medallion across root and detail", () => {
+test("the chosen Workspace card expands a Glass panel rather than a detached medallion", () => {
   const library = read("apps/aerift/src/WorkspaceLibrary.tsx");
-  assert.equal((library.match(/layoutId=\{section\.id\}/g) ?? []).length, 2);
+  assert.doesNotMatch(library, /layoutId=\{section\.id\}/);
+  assert.match(library, /workspacePanelBox\(cards.current.get\(id\)/);
   const motion = read("packages/ui/src/MotionAffordance.tsx");
   assert.match(motion, /<LayoutGroup id=\{group\}>\{children\}<\/LayoutGroup>/);
   assert.match(motion, /layoutId=\{quiet \? undefined : layoutId\}/);

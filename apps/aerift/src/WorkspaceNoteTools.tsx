@@ -1,5 +1,5 @@
-import { Button } from "@aerift/ui";
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { Button, GlassSurface } from "@aerift/ui";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { insertNoteMarkup, noteInlineParts, notePreviewLines, noteWordCount, workspaceNoteLimit,
   type NoteFilter, type NoteFormat, type NoteMarkup } from "./workspace-note-tools";
 
@@ -22,6 +22,7 @@ const noteIcons = {
   trash: <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   send: <path d="m3 10 18-7-7 18-3-8Zm8 3L21 3" />,
+  category: <path d="M3 7h6l2 2h10v11H3V7Zm6 7h6m-2-2 2 2-2 2" />,
   folder: <path d="M3 7h6l2 2h10v11H3V7Z" />,
 } as const;
 
@@ -39,7 +40,7 @@ export function NoteIconButton({ label, icon, ...props }: Omit<React.ComponentPr
 export function WorkspaceNoteSearch({ filter, onChange, count }: {
   filter: NoteFilter; onChange: (next: NoteFilter) => void; count: number;
 }) {
-  return <section className="ae-surface aw-note-search" data-material="control" aria-label="Find notes">
+  return <section className="ae-surface aw-note-search" data-material="raised" aria-label="Find notes">
     <label>Search notes<input type="search" value={filter.query} maxLength={180} placeholder="Title or note content"
       onChange={event => onChange({ ...filter, query: event.currentTarget.value })} /></label>
     <label>Format<select value={filter.format}
@@ -57,8 +58,8 @@ function InlineNote({ text, markdown }: { text: string; markdown: boolean }) {
     part.kind === "code" ? <code key={index}>{part.text}</code> : part.text) : text}</>;
 }
 
-export function WorkspaceNoteEditor({ value, format, disabled, onChange, onFormat }: {
-  value: string; format: NoteFormat; disabled?: boolean;
+export function WorkspaceNoteEditor({ value, format, disabled, onChange, onFormat, actions }: {
+  value: string; format: NoteFormat; disabled?: boolean; actions?: ReactNode;
   onChange: (value: string) => void; onFormat: (format: NoteFormat) => void;
 }) {
   const field = useId();
@@ -85,26 +86,29 @@ export function WorkspaceNoteEditor({ value, format, disabled, onChange, onForma
   }
 
   return <div className="aw-note-editor">
-    <div className="ae-actions aw-note-toolbar" role="group" aria-label="Note formatting">
-      {tools.map(([id, label]) => <NoteIconButton key={id} type="button" icon={id} label={label} disabled={disabled || preview}
-        onPointerDown={event => event.preventDefault()} onClick={() => apply(id)} />)}
-      <NoteIconButton type="button" icon={preview ? "edit" : "preview"} label={preview ? "Return to editor" : "Preview"}
-        aria-pressed={preview} onClick={() => setPreview(current => !current)} />
+    <div className="aw-note-canvas">
+      <GlassSurface className="ae-actions aw-note-toolbar aw-note-palette" material="raised" role="group" aria-label="Note tools">
+        {tools.map(([id, label]) => <NoteIconButton key={id} type="button" icon={id} label={label} disabled={disabled || preview}
+          onPointerDown={event => event.preventDefault()} onClick={() => apply(id)} />)}
+        <NoteIconButton type="button" icon={preview ? "edit" : "preview"} label={preview ? "Return to editor" : "Preview"}
+          aria-pressed={preview} onClick={() => setPreview(current => !current)} />
+        <NoteIconButton type="button" icon="markdown" label="Markdown" disabled={disabled} aria-pressed={format === "markdown"}
+          onClick={() => onFormat(format === "markdown" ? "plain" : "markdown")} />
+        {actions}
+      </GlassSurface>
+      <label htmlFor={field} className="ae-note-sidebar-visually-hidden" hidden={preview}>Note</label>
+      <textarea ref={input} id={field} name="text" value={value} rows={8} required={!preview} aria-label="Note"
+        maxLength={workspaceNoteLimit} hidden={preview} disabled={disabled}
+        onChange={event => onChange(event.currentTarget.value)} />
+      {preview && <section className="ae-surface aw-note-preview" data-material="content" aria-label="Note preview">
+        {value ? notePreviewLines(value, format === "markdown").map(({ kind, text }, index) =>
+          kind === "heading" ? <h4 key={index}>{text}</h4> : kind === "code" ? <code key={index}>{text}</code> :
+          <p key={index} data-note-line={kind}>{kind === "done" ? "✓ " : kind === "task" ? "☐ " : kind === "bullet" ? "• " : ""}<InlineNote text={text || "\u00a0"} markdown={format === "markdown"} /></p>)
+          : <p>Nothing to preview yet.</p>}
+      </section>}
     </div>
-    <label htmlFor={field} hidden={preview}>Note</label>
-    <textarea ref={input} id={field} name="text" value={value} rows={8} required={!preview} aria-label="Note"
-      maxLength={workspaceNoteLimit} hidden={preview} disabled={disabled}
-      onChange={event => onChange(event.currentTarget.value)} />
-    {preview && <section className="ae-surface aw-note-preview" data-material="content" aria-label="Note preview">
-      {value ? notePreviewLines(value, format === "markdown").map(({ kind, text }, index) =>
-        kind === "heading" ? <h4 key={index}>{text}</h4> : kind === "code" ? <code key={index}>{text}</code> :
-        <p key={index} data-note-line={kind}>{kind === "done" ? "✓ " : kind === "task" ? "☐ " : kind === "bullet" ? "• " : ""}<InlineNote text={text || "\u00a0"} markdown={format === "markdown"} /></p>)
-        : <p>Nothing to preview yet.</p>}
-    </section>}
     <div className="aw-note-footer">
       {format === "markdown" && <input type="hidden" name="noteMarkdown" value="yes" />}
-      <NoteIconButton type="button" icon="markdown" label="Markdown" disabled={disabled} aria-pressed={format === "markdown"}
-        onClick={() => onFormat(format === "markdown" ? "plain" : "markdown")} />
       <small>{noteWordCount(value)} words · {value.length.toLocaleString()} / {workspaceNoteLimit.toLocaleString()} characters</small>
     </div>
   </div>;

@@ -274,6 +274,8 @@
 
 /* Same production Glass surface; one traveling raised optical bead, not a second theme. */
 .aerift-ios .af-liquid-dock {
+  inline-size: min(29rem, calc(100% - max(.625rem, env(safe-area-inset-left)) - max(.625rem, env(safe-area-inset-right))));
+  box-sizing: border-box;
   padding: .3rem;
   border-radius: 2rem;
 }
@@ -283,15 +285,16 @@
   inset-block: 0;
   inset-inline-start: 0;
   width: calc(100% / var(--ios-route-count, 5));
-  translate: calc(100% * var(--ios-route)) 0;
-  transition: translate var(--ae-motion-route) var(--ae-motion-out);
+  translate: calc(100% * var(--af-dock-offset, var(--ios-route))) 0;
   pointer-events: none;
   z-index: -1;
   display: grid;
   padding: .11rem .17rem;
   box-sizing: border-box;
 }
-.af-liquid-dock:dir(rtl) .af-dock-fluid { translate: calc(-100% * var(--ios-route)) 0; }
+.af-liquid-dock:dir(rtl) .af-dock-fluid { translate: calc(-100% * var(--af-dock-offset, var(--ios-route))) 0; }
+.af-dock-fluid[data-dock-quiet] { --af-dock-offset: var(--ios-route) !important; }
+.af-dock-fluid[data-dock-quiet] .af-dock-bead { transform: none !important; }
 .af-dock-bead {
   border-radius: 1.45rem;
   border: 1px solid color-mix(in srgb, var(--ae-control-edge) 76%, var(--ae-accent));
@@ -300,6 +303,7 @@
   box-shadow: inset 0 1px 1px #fff4, inset 0 -1px 1px #132a5440, 0 3px 12px #101a3b2b;
 }
 .aerift-ios .af-liquid-dock nav button.ae-button[data-variant] {
+  --ae-press-scale: 1; /* Lens and icon animate; the tab target never shrinks. */
   min-block-size: 3.2rem;
   padding-inline: .08rem;
   gap: .22rem;
@@ -310,11 +314,9 @@
 }
 .aerift-ios .af-liquid-dock nav button > span:first-of-type { overflow-wrap: anywhere; }
 .aerift-ios .af-liquid-dock nav button[aria-current] > svg { translate: 0 -2px; color: var(--ae-accent); }
-.aerift-ios [data-motion="reduce"] .af-dock-fluid,
 .aerift-ios [data-motion="reduce"] .af-liquid-dock nav button.ae-button[data-variant] { transition: none; }
 .aerift-ios [data-motion="reduce"] .af-liquid-dock nav button[aria-current] > svg { translate: none; }
 @media (prefers-reduced-motion: reduce) {
-  .aerift-ios .af-dock-fluid,
   .aerift-ios .af-liquid-dock nav button.ae-button[data-variant] { transition: none; }
   .aerift-ios .af-liquid-dock nav button[aria-current] > svg { translate: none; }
 }
