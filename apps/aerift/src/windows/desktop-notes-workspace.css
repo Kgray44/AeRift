@@ -1,0 +1,60 @@
+.aw-desktop-notes{
+  display:grid;grid-template-columns:minmax(15rem, .72fr) minmax(0, 2.1fr);
+  align-items:stretch;gap:clamp(.75rem,2vw,1.35rem);min-inline-size:0;
+  min-block-size:min(72vh,45rem);
+}
+.aw-desktop-notes-index{display:flex;flex-direction:column;gap:.62rem;min-inline-size:0}
+.aw-desktop-note-sheet{min-inline-size:0;min-block-size:100%;padding:clamp(1rem,2.65vw,2.2rem)}
+.aw-desktop-note-form{display:flex;flex-direction:column;gap:.9rem;min-block-size:100%}
+.aw-desktop-note-top{display:flex;align-items:end;gap:.8rem;justify-content:space-between;flex-wrap:wrap}
+.aw-note-title-field{display:grid;gap:.22rem;flex:1 1 13rem;font-size:.8rem;color:var(--ae-muted)}
+.aw-note-title-field input{
+  color:var(--ae-text);font:inherit;font-size:clamp(1.35rem,3.6vw,2.4rem);font-weight:680;
+  letter-spacing:-.04em;min-inline-size:0;inline-size:100%;background:transparent;
+  border:0;border-block-end:1px solid var(--ae-control-edge);padding:.3rem .1rem;
+}
+.aw-note-category-select{display:flex;align-items:center;gap:.38rem;flex-wrap:wrap;color:var(--ae-muted);font-size:.85rem}
+.aw-note-category-select select,.aw-note-category-form input{
+  color:var(--ae-text);background:var(--ae-field);border:1px solid var(--ae-control-edge);
+  min-block-size:2.5rem;border-radius:.8rem;padding:.38rem .55rem;max-inline-size:100%;
+}
+.aw-note-category-form,.aw-note-confirm{
+  min-inline-size:0;padding:.64rem;border:1px solid var(--ae-control-edge);border-radius:.85rem;
+}
+.aw-note-category-form label{display:grid;gap:.34rem}
+.aw-note-category-actions,.aw-note-confirm{display:flex;gap:.42rem;flex-wrap:wrap;align-items:center}
+.aw-note-category-form .aw-note-category-actions{margin-block-start:.4rem}
+.aw-note-confirm p{flex:1 0 100%;margin:0}
+.aw-desktop-note-empty{min-block-size:min(58vh,32rem);display:grid;place-content:center;justify-items:center;text-align:center;gap:.3rem}
+.aw-desktop-note-empty h4,.aw-desktop-note-empty p{margin:0}
+.aw-desktop-note-feedback{margin:.15rem 0 .55rem}
+.aw-desktop-note-form .aw-note-editor{flex:1;grid-template-rows:auto auto minmax(18rem,1fr) auto;gap:.44rem}
+.ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea,.aw-desktop-note-form .aw-note-preview{min-block-size:clamp(22rem,44vh,42rem)}
+.ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea{padding:1.05rem 1.16rem;line-height:1.62;resize:vertical}
+.aw-desktop-note-form .aw-note-toolbar{gap:.3rem;padding:.35rem .08rem}
+.ae-theme .aw-note-tool{transition:transform var(--ae-fast,160ms) ease,background-color var(--ae-fast,160ms) ease,border-color var(--ae-fast,160ms) ease}
+@media(hover:hover){.ae-theme .aw-note-tool:not(:disabled):hover{transform:translateY(-2px);border-color:var(--ae-accent)}}
+.ae-theme .aw-note-tool:not(:disabled):active{transform:scale(var(--ae-press-scale,.96))}
+@media(max-width:780px){
+  .aw-desktop-notes{grid-template-columns:minmax(11rem,.8fr) minmax(0,1.6fr);gap:.64rem}
+  .aw-desktop-note-sheet{padding:.78rem}
+}
+@media(max-width:560px){
+  .aw-desktop-notes{grid-template-columns:1fr}
+  .aw-desktop-notes-index{max-block-size:18rem;overflow:auto}
+}
+@media(prefers-reduced-motion:reduce){.ae-theme .aw-note-tool{transition:none;transform:none!important}}
+.ae-theme[data-motion="reduce"] .aw-note-tool{transition:none;transform:none!important}
+.aw-mobile-notes{display:block;min-block-size:0}
+.aw-desktop-notes [hidden]{display:none}
+.aw-mobile-notes:not([data-view="editor"]) .aw-desktop-notes-index{max-block-size:none;overflow:visible}
+.aw-mobile-notes .ae-notes-sidebar{min-block-size:min(62vh,32rem)}
+.aw-mobile-notes[data-view="editor"] .aw-desktop-note-sheet{
+  min-block-size:calc(100dvh - 6.5rem);padding:.72rem .85rem 1.1rem
+}
+.ios-module-moment:has(.aw-mobile-notes[data-view="editor"])>.aw-category-heading{display:none}
+.ae-shell:has(.aw-mobile-notes[data-view="editor"]) .ios-dock{display:none}
+.aw-mobile-note-back{display:flex;align-items:center;gap:.4rem;margin-block-end:.45rem;color:var(--ae-muted)}
+.aw-mobile-notes .aw-desktop-note-top{align-items:center;gap:.3rem}
+.aw-mobile-notes .aw-note-title-field{flex:1 1 8rem}
+.ae-theme .aw-desktop-notes.aw-mobile-notes .aw-desktop-note-form .aw-note-editor textarea{min-block-size:45dvh;min-inline-size:0}

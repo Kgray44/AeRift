@@ -3,13 +3,12 @@ import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@a
 import { Button, IconAction, Popover, SpatialIcon } from "@aerift/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
-import { DesktopNoteEditor, WorkspaceNoteSearch } from "../WorkspaceNoteTools";
+import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
 import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
 import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
-import { matchesWorkspaceNote, workspaceNoteLimit, type NoteFilter } from "../workspace-note-tools";
 import { useDesktopContentEnter } from "./desktopContentMotion";
 import { WorkspaceCategoryHeading, WorkspaceLibrary, useWorkspaceLibrary } from "../WorkspaceLibrary";
 import { isWorkspaceDocument, workspaceSections, type WorkspaceSectionId } from "../workspace-categories";
@@ -78,10 +77,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const [status, setStatus] = useState<string>();
   const [error, setError] = useState<string>();
   const [preview, setPreview] = useState<string>();
-  const [editing, setEditing] = useState<string>();
-  const noteEditor = useRef<HTMLDetailsElement>(null);
-  const [noteFilter, setNoteFilter] = useState<NoteFilter>({ query: "", format: "any" });
-  const [noteRevision, setNoteRevision] = useState(0);
   const [editingCollection, setEditingCollection] = useState<string>();
   const clipboardTools = useWorkspaceClipboardTools({ copyAllowed: clipboardAllowed });
   const [selected, setSelected] = useState<readonly string[]>([]);
@@ -92,9 +87,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const inCategory = (object: DigitalObject, id: WorkspaceSectionId, module: ModuleId) =>
     belongsTo(object, module) && (id !== "documents" || (object.kind === "file" && isWorkspaceDocument(object.name, object.mediaType)));
   const categoryItems = section ? items.filter(({ object }) => inCategory(object, section.id, section.module)) : [];
-  const visible = section?.id === "notes"
-    ? categoryItems.filter(({ object }) => object.kind === "note" && matchesWorkspaceNote(object, noteFilter))
-    : fileCategory ? fileTools.browse(categoryItems, ({ object }) => ({
+  const visible = fileCategory ? fileTools.browse(categoryItems, ({ object }) => ({
       name: object.name,
       ...(object.kind === "file" || object.kind === "photo" || object.kind === "video" ? {
         mediaType: object.mediaType, sizeBytes: object.sizeBytes,
@@ -107,7 +100,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const counts = entries && Object.fromEntries(workspaceSections.map(({ id, module }) =>
     [id, entries.filter(({ object }) => inCategory(object, id, module)).length]));
   function openSection(id: WorkspaceSectionId) {
-    setError(undefined); setStatus(undefined); setPreview(undefined); setEditing(undefined); setEditingCollection(undefined);
+    setError(undefined); setStatus(undefined); setPreview(undefined); setEditingCollection(undefined);
     setPageIndex(0); clipboardTools.reset(); workspace.open(id);
   }
 
@@ -157,13 +150,13 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     else if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>, kind: "note" | "url" | "collection") {
+  async function submit(event: FormEvent<HTMLFormElement>, kind: "url" | "collection") {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
     const name = String(data.get("name") ?? "").trim();
     if (!name) return;
-    const base = editing && kind === "note" ? { ...newObject(name), id: editing } : newObject(name);
+    const base = newObject(name);
     let object: DigitalObject;
     if (kind === "url") {
       try {
@@ -174,20 +167,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         setError("Enter an HTTP or HTTPS address without sign-in credentials.");
         return;
       }
-    } else if (kind === "note") {
-      const text = String(data.get("text") ?? "");
-      if (!text.trim() || text.length > workspaceNoteLimit) return;
-      const prior = items.find(item => item.object.id === editing)?.object;
-      object = { ...base, kind, format: data.has("noteMarkdown") ? "markdown" : "plain", text,
-        ...(prior?.kind === "note" && prior.attachmentIds?.length ? { attachmentIds: prior.attachmentIds } : {}) };
     } else {
       if (selected.length === 0) return;
       object = { ...base, kind, itemIds: selected };
     }
     if (await change(() => [{ object }], "Saved to Workspace.")) {
       form.reset();
-      setEditing(undefined);
-      if (kind === "note") setNoteRevision(revision => revision + 1);
       if (kind === "collection") { setSelected([]); setEditingCollection(object.id); }
     }
   }
@@ -240,13 +225,13 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       return object.kind === "collection" && !deleted.has(object.id) && object.itemIds.some(id => deleted.has(id))
         ? [{ object: { ...object, itemIds: object.itemIds.filter(id => !deleted.has(id)) } }] : [];
     });
-    void change(() => updated, "Removed from Workspace.", [...deleted]).then(result => {
+    return change(() => updated, "Removed from Workspace.", [...deleted]).then(result => {
       if (result) {
         setSelected(current => current.filter(id => !deleted.has(id)));
         if (preview && deleted.has(preview)) setPreview(undefined);
-        if (editing && deleted.has(editing)) setEditing(undefined);
         if (editingCollection && deleted.has(editingCollection)) setEditingCollection(undefined);
       }
+      return result;
     });
   }
 
@@ -258,7 +243,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     return items.find(({ object }) => object.id === id)?.object.name ?? "Unavailable object";
   }
 
-  const note = items.find(({ object }) => object.id === editing)?.object;
   const disabled = busy || !entries;
   const pages = Math.max(1, Math.ceil(visible.length / pageSize));
   const page = Math.min(pageIndex, pages - 1);
@@ -269,11 +253,15 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
 
   return <div className="aerift-workspace">
     {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} counts={counts} desktop />}
-    {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={() => { clipboardTools.reset(); workspace.back(); }} desktop />}
+    {section && section.id !== "notes" && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={() => { clipboardTools.reset(); workspace.back(); }} desktop />}
     {!entries && !error && <p>Opening Workspace…</p>}
     {error && <p role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
-    {current && <div className="aerift-workspace-content">
+    {section?.id === "notes" && <DesktopNotesWorkspace notes={items.flatMap(({ object }) => object.kind === "note" ? [object] : [])}
+      disabled={disabled} onSave={object => change(() => [{ object }], "")} onRemove={id => removeObjects([id])}
+      onBack={workspace.back} heading={back => <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} desktop />}
+      collectionSelection={selected} onCollectionSelect={select} />}
+    {current && section?.id !== "notes" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
         onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
@@ -287,15 +275,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
                 event.currentTarget.value = "";
               }} />
           </div>}
-        {current.id === "notes" && <WorkspaceNoteSearch filter={noteFilter} count={visible.length}
-          onChange={filter => { setNoteFilter(filter); setPageIndex(0); }} />}
-        {current?.id === "notes" && <details className="aerift-workspace-create" ref={noteEditor}><summary><SpatialIcon name="add" size={18} />{editing ? "Edit note" : "New note"}</summary><form key={`${editing ?? "new"}:${noteRevision}`} onSubmit={event => void submit(event, "note")}>
-          <label>Title<input name="name" required maxLength={180} defaultValue={note?.name} /></label>
-          <DesktopNoteEditor text={note?.kind === "note" ? note.text : undefined}
-            format={note?.kind === "note" ? note.format : undefined} disabled={disabled} />
-          <div className="ae-actions"><Button type="submit" disabled={disabled}>{editing ? "Save changes" : "Add note"}</Button>
-            {editing && <Button onClick={() => setEditing(undefined)}>Cancel editing</Button>}</div>
-        </form></details>}
         {current?.id === "browser" && <details className="aerift-workspace-create"><summary><SpatialIcon name="pair" size={18} />Save a link</summary><form onSubmit={event => void submit(event, "url")}>
           <label>Title<input name="name" required maxLength={180} /></label>
           <label>Web address<input name="url" type="url" required /></label>
@@ -327,7 +306,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
         {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}
-        {entries && current.id === "notes" && !visible.length && categoryItems.length > 0 && <p>No notes match your search.</p>}
         {entries && current && categoryItems.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved {current.id === "photos" ? "media" : "items"} yet</h4>{(current.id === "files" || current.id === "photos") && <p>Use the add button above to import.</p>}</div>}
         {selectedVisible.length > 0 && <div>
           <Button variant="quiet" disabled={disabled} onClick={() => removeObjects(selectedVisible)}>
@@ -343,7 +321,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
             {object.kind === "collection" ? <strong>{object.name}</strong> :
               <label className="aerift-check"><input type="checkbox" checked={selected.includes(object.id)}
                 onChange={event => select(object.id, event.currentTarget.checked)} />{object.name}</label>}
-            {object.kind === "note" && <p className="aerift-note-text">{object.text}</p>}
             {captured?.kind === "text" && <>
               <p className="aerift-note-text">{captured.text}</p>
               <WorkspaceClipboardDetails text={captured.text} format={captured.format} />
@@ -356,8 +333,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
                 onSelect: () => setPreview(preview === object.id ? undefined : object.id) }] : []),
               ...(object.kind === "collection" ? [{ id: "members", label: "Manage collection",
                 onSelect: () => setEditingCollection(object.id) }] : []),
-              ...(object.kind === "note" ? [{ id: "edit", label: "Edit note",
-                onSelect: () => { setEditing(object.id); if (noteEditor.current) noteEditor.current.open = true; } }] : []),
               ...(object.kind === "url" ? [{ id: "open-link", label: "Open in browser", onSelect: () =>
                 void openWorkspaceLink(object.url, true) }] : []),
               { id: "remove", label: "Remove", disabled, onSelect: () => removeObjects([object.id]) },

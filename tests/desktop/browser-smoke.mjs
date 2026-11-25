@@ -199,15 +199,16 @@ try {
     await page.getByRole("button", { name, exact: true }).click();
     assert.equal(await page.getByRole("heading", { name, exact: true, level: 3 }).evaluate(el => el === document.activeElement), true);
     const disclosure = page.locator(".aerift-workspace-create:not([open]) summary").first();
-    if (["Notes","Web Browser"].includes(name) && await disclosure.isVisible()) await disclosure.click();
+    if (name === "Web Browser" && await disclosure.isVisible()) await disclosure.click();
   }
   await capture(page, "dark-workspace-library");
   await openCategory('Notes');
+  await page.getByRole("button", { name: "New note", exact: true }).click();
   await page.getByLabel("Title").fill("Expedition notes");
   await page.getByLabel("Note", { exact: true }).fill("Review the field recording.");
-  await page.getByRole("button", { name: "Add note" }).click();
+  await page.getByRole("button", { name: "Save note", exact: true }).click();
   await page.getByText("Review the field recording.").waitFor();
-  await page.getByRole("checkbox", { name: "Expedition notes" }).check();
+  await page.getByRole("button", { name: "Select note for collection", exact: true }).click();
   await openCategory('File Browser');
   const filePicker = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Import files", exact: true }).press("Enter");
