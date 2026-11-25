@@ -35,3 +35,5 @@
   .ae-theme:not([data-motion="reduce"]) .aw-photo-tile:hover{transform:translateY(-2px)}
   .ae-theme:not([data-motion="reduce"]) .aw-photo-tile:active{transform:scale(.98)}
 }
+
+.aw-photos-next > svg { transform: rotate(180deg); }

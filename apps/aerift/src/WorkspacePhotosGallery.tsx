@@ -97,7 +97,7 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
 
   return <div className="aw-photos" data-ae-route-enter="neutral">
     <GlassSurface className="aw-photos-sidebar" material="content" role="complementary" aria-label="Photo albums">
-      <header><h4>Photos</h4><GlassSurface className="aw-photos-icons" material="control" role="group" aria-label="Album controls">
+      <header><h4>Photos</h4><GlassSurface className="aw-photos-icons" material="raised" role="group" aria-label="Album controls">
         <IconAction icon="add" label="New album" disabled={disabled} onClick={() => {
           setRemoveAlbum(false); setEditing({ name: "", style: { ...defaultCategoryStyle, icon: "camera" } });
         }} />
@@ -123,14 +123,14 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
           onChange={event => setEditing({ ...editing, name: event.currentTarget.value })} /></label>
         <CategoryStyleFields appearance={editing.style} disabled={disabled}
           onChange={style => setEditing(previous => previous ? { ...previous, style } : previous)} />
-        <GlassSurface className="aw-photos-icons" material="control" role="group" aria-label="Save album changes">
+        <GlassSurface className="aw-photos-icons" material="raised" role="group" aria-label="Save album changes">
           <NoteIconButton type="submit" icon="save" label="Save album" disabled={disabled || !editing.name.trim()} />
           <IconAction icon="close" label="Cancel album edit" onClick={() => setEditing(undefined)} />
         </GlassSurface>
       </form>}
       {removeAlbum && current && <div role="group" aria-label="Remove album confirmation">
         <p>Remove this album? Its photos will stay in Recents.</p>
-        <GlassSurface className="aw-photos-icons" material="control">
+        <GlassSurface className="aw-photos-icons" material="raised">
           <IconAction icon="check" label="Confirm remove album" onClick={() => {
             if (edit({ type: "remove", albumId: current.id })) selectAlbum();
           }} />
@@ -140,7 +140,7 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
     </GlassSurface>
     <GlassSurface className="aw-photos-main" material="content" role="region" aria-label="Photo gallery">
       <header><h4>{current?.name ?? "Recents"}</h4>
-        {onImport && <GlassSurface className="aw-photos-icons" material="control">
+        {onImport && <GlassSurface className="aw-photos-icons" material="raised">
           <IconAction icon="add" label="Import photos and videos" disabled={disabled} onClick={() => picker.current?.click()} />
           <input ref={picker} type="file" accept="image/*,video/*" aria-label="Import photos and videos" hidden multiple disabled={disabled}
             onChange={event => {
@@ -165,13 +165,13 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
       {lastPage > 0 && <nav className="aw-photos-icons" aria-label="Photo pages">
         <IconAction icon="back" label="Previous photos" disabled={thisPage === 0} onClick={() => setPage(thisPage - 1)} />
         <span>{thisPage + 1} / {lastPage + 1}</span>
-        <IconAction icon="next" label="Next photos" disabled={thisPage === lastPage} onClick={() => setPage(thisPage + 1)} />
+        <IconAction icon="back" className="aw-photos-next" label="Next photos" disabled={thisPage === lastPage} onClick={() => setPage(thisPage + 1)} />
       </nav>}
     </GlassSurface>
     {active && <dialog className="aw-photo-viewer" ref={dialog} aria-label={`Viewing ${active.name}`} onClose={() => {
       setActive(undefined); fromTile.current?.focus();
     }}>
-      <header><h4>{active.name}</h4><GlassSurface className="aw-photos-icons" material="control" role="group" aria-label="Photo controls">
+      <header><h4>{active.name}</h4><GlassSurface className="aw-photos-icons" material="raised" role="group" aria-label="Photo controls">
         <IconAction icon="collection" label="Add to album" disabled={!index.albums.length} onClick={() => setAddToAlbum(value => !value)} />
         {onRemove && <NoteIconButton type="button" icon="trash" label="Remove imported copy" disabled={disabled}
           onClick={() => setRemovePhoto(true)} />}
@@ -180,7 +180,7 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
       {issue && <p role="alert">{issue}</p>}
       {removePhoto && onRemove && <div role="group" aria-label="Confirm remove imported copy">
         <p>Remove this copy from AeRift? The original file isn’t changed.</p>
-        <GlassSurface className="aw-photos-icons" material="control">
+        <GlassSurface className="aw-photos-icons" material="raised">
           <NoteIconButton type="button" icon="trash" label="Confirm remove imported copy" disabled={disabled} onClick={() => {
             void onRemove(active.id).then(ok => {
               if (ok) {
@@ -192,7 +192,7 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
           <IconAction icon="close" label="Keep photo" onClick={() => setRemovePhoto(false)} />
         </GlassSurface>
       </div>}
-      {addToAlbum && <GlassSurface className="aw-photo-add-albums" material="control" role="group" aria-label="Choose photo album">
+      {addToAlbum && <GlassSurface className="aw-photo-add-albums" material="overlay" role="group" aria-label="Choose photo album">
         {index.albums.map(album => <button type="button" key={album.id} aria-pressed={album.photoIds.includes(active.id)}
           onClick={() => edit({ type: album.photoIds.includes(active.id) ? "remove-photo" : "add-photo", albumId: album.id, photoId: active.id })}>
           <CategoryGlyph appearance={album} />{album.name}
