@@ -4,6 +4,7 @@ import { Button, IconAction, MotionFeedbackProvider, Popover, SpatialIcon } from
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
+import { WorkspaceDocumentsGallery } from "../WorkspaceDocumentsGallery";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import { WorkspacePhotosGallery } from "../WorkspacePhotosGallery";
 import { NoteIconButton } from "../WorkspaceNoteTools";
@@ -55,6 +56,21 @@ function AssetPreview({ object }: { object: DigitalObject }) {
     {object.kind === "video" && <video src={url} aria-label={object.name} controls preload="metadata" />}
     <a href={url} download={object.name}>Save a copy</a>
   </>;
+}
+
+async function exportDocumentCopy(id: string, name: string) {
+  const asset = await loadWorkspaceAsset(id);
+  if (!asset) return false;
+  const href = URL.createObjectURL(asset);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = name.replace(/[\u0000-\u001f\u007f/\\]/gu, "_") || "document";
+  document.body.append(link);
+  try { link.click(); } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 10_000);
+  }
+  return true;
 }
 
 const pageSize = 48;
@@ -253,7 +269,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const pages = Math.max(1, Math.ceil(visible.length / pageSize));
   const page = Math.min(pageIndex, pages - 1);
   const visiblePage = visible.slice(page * pageSize, (page + 1) * pageSize);
-  const importLabel = section?.id === "documents" ? "Import documents" : "Import files";
+  const importLabel = "Import files";
   const selectedVisible = visible.filter(({ object }) => selected.includes(object.id)).map(({ object }) => object.id);
 
   return <MotionFeedbackProvider group="desktop-workspace"><WorkspaceScene scene={workspace}><div className="aerift-workspace">
@@ -266,6 +282,15 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       disabled={disabled} onSave={object => change(() => [{ object }], "")} onRemove={id => removeObjects([id])}
       onBack={workspace.back} heading={back => <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} desktop />}
       collectionSelection={selected} onCollectionSelect={select} />}
+    {section?.id === "documents" && <WorkspaceDocumentsGallery
+      catalog={categoryItems.flatMap(({ object, hasAsset }) =>
+        object.kind === "file" && hasAsset ? [{id: object.id, name: object.name, sizeBytes: object.sizeBytes}] : [])}
+      scope="desktop" disabled={disabled} readAsset={loadWorkspaceAsset}
+      onImport={files => importFiles(files, false)} onRemove={id => removeObjects([id])}
+      onExport={row => exportDocumentCopy(row.id, row.name)}
+      onSelect={row => { select(row.id, !selected.includes(row.id)); return true; }}
+      selectLabel="Toggle collection selection"
+      emptyText="No documents here yet. Use the plus icon to import documents." />}
 
     {current?.id === "photos" && <WorkspacePhotosGallery
       catalog={categoryItems.flatMap(({ object, hasAsset }) =>
@@ -278,7 +303,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         <NoteIconButton icon="folder" type="button" label="Select photo for collection" aria-pressed={selected.includes(object.id)}
           onClick={() => select(object.id, !selected.includes(object.id))} />
       </>} />}
-    {current && section?.id !== "notes" && current.id !== "photos" && <div className="aerift-workspace-content">
+    {current && section?.id !== "notes" && current.id !== "photos" && section?.id !== "documents" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
         onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
@@ -286,7 +311,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
           <div className="aerift-workspace-import">
             <IconAction variant="secondary" icon="add" label={importLabel} disabled={disabled}
               onClick={() => importInput.current?.click()} />
-            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
+            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled}
               onChange={event => {
                 void importFiles(Array.from(event.currentTarget.files ?? []), false);
                 event.currentTarget.value = "";
@@ -318,8 +343,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
             change(() => [{ object: { ...selectedCollection, itemIds: next } }], "Collection updated.")} />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
-          label={section?.id === "documents" ? "Search imported documents" : "Search imported files"}
-          kinds={section?.id === "documents" ? [] : ["document", "photo", "video", "other"]} />
+          label="Search imported files"
+          kinds={["document", "photo", "video", "other"]} />
       </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
         {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}
