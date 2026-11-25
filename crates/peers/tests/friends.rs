@@ -1056,8 +1056,19 @@ async fn explicit_file_window_uses_exact_route_and_consent_then_reports_durable_
 
 #[tokio::test]
 async fn person_file_window_awards_one_of_two_authenticated_acceptances() {
-    use aerift_peers::{FriendDecision, FriendFileWindow, Identity};
-    use aerift_transfer::State;
+    use aerift_peers::{
+        FriendDecision, FriendFileRoute, FriendFileRouteSource, FriendFileWindow, Identity,
+        PersonId,
+    };
+    use aerift_transfer::{ErrorCode, PeerId};
+    struct Routes(Vec<(PersonId, PeerId, FriendFileRoute)>);
+    impl FriendFileRouteSource for Routes {
+        fn verified_route(&self, person: PersonId, device: PeerId) -> Option<FriendFileRoute> {
+            self.0
+                .iter()
+                .find_map(|(p, d, r)| (*p == person && *d == device).then_some(*r))
+        }
+    }
     use std::{
         fs,
         net::Ipv4Addr,
@@ -1092,9 +1103,11 @@ async fn person_file_window_awards_one_of_two_authenticated_acceptances() {
         tempfile::tempdir().unwrap(),
         tempfile::tempdir().unwrap(),
     );
-    let wa = FriendFileWindow::open(a, ab.clone(), ad.path(), Ipv4Addr::LOCALHOST)
-        .await
-        .unwrap();
+    let wa = Arc::new(
+        FriendFileWindow::open(a, ab.clone(), ad.path(), Ipv4Addr::LOCALHOST)
+            .await
+            .unwrap(),
+    );
     let wb = FriendFileWindow::open(b, bb, bd.path(), Ipv4Addr::LOCALHOST)
         .await
         .unwrap();
@@ -1112,13 +1125,37 @@ async fn person_file_window_awards_one_of_two_authenticated_acceptances() {
         .await
         .is_err()
     );
-    let routes = [(bp, wb.route()), (cp, wc.route())];
-    let offers = || wa.offer_person(bob.id(), path.clone(), &routes);
+    let routes = Routes(vec![(bob.id(), bp, wb.route()), (bob.id(), cp, wc.route())]);
+    let back_routes = Routes(vec![(alice.id(), ap, wa.route())]);
+    assert_eq!(
+        wa.check_person_targets(bob.id(), &Routes(vec![]))
+            .unwrap_err()
+            .code,
+        ErrorCode::PeerUnavailable
+    );
+    assert_eq!(
+        wa.check_person_targets(alice.id(), &routes)
+            .unwrap_err()
+            .code,
+        ErrorCode::PeerUntrusted
+    );
+    let offers = || wa.offer_contact(bob.id(), path.clone(), &routes);
     let id = offers().await.unwrap();
     assert_eq!(wa.outgoing_person().unwrap(), Some((id, 2, None)));
     assert!(wa.send(id).await.is_err());
-    let r = wa.route().offers;
-    let (b_result, c_result) = tokio::join!(wb.accept(ap, id, r), wc.accept(ap, id, r));
+    assert_eq!(
+        wb.accept_contact_offer(id, &Routes(vec![]))
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::PeerUnavailable
+    );
+    // Hold back the new readiness ACK to prove the sender does not start
+    // while the receiver's final consent/ready handshake is incomplete.
+    let (b_result, c_result) = tokio::join!(
+        wb.accept(ap, id, wa.route().offers),
+        wc.accept(ap, id, wa.route().offers)
+    );
     assert_ne!(b_result.is_ok(), c_result.is_ok());
     let (winner, loser, winner_id, loser_id) = if b_result.is_ok() {
         (&wb, &wc, bp, cp)
@@ -1129,12 +1166,37 @@ async fn person_file_window_awards_one_of_two_authenticated_acceptances() {
         wa.outgoing_person().unwrap(),
         Some((id, 2, Some(winner_id)))
     );
-    assert_eq!(
-        loser.reconcile(ap, id, r).await.unwrap(),
-        FriendDecision::Withdrawn
+    assert!(wb.receipts().is_empty() && wc.receipts().is_empty());
+    assert!(
+        wa.send(id).await.is_err(),
+        "a manual command cannot release an automatic offer"
     );
-    assert!(loser.accept(ap, id, r).await.is_err());
-    assert_eq!(wa.send(id).await.unwrap().state, State::Completed);
+    assert_eq!(
+        winner
+            .reconcile_contact_offer(id, &back_routes)
+            .await
+            .unwrap(),
+        FriendDecision::Granted
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let loser_withdrawn = loser
+                .incoming()
+                .unwrap()
+                .into_iter()
+                .any(|offer| offer.id() == id && offer.decision() == FriendDecision::Withdrawn);
+            if winner.receipts().len() == 1
+                && loser_withdrawn
+                && wa.outgoing_person().is_ok_and(|offer| offer.is_none())
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(loser.accept_contact_offer(id, &back_routes).await.is_err());
     let (winning_dir, losing_dir) = if winner_id == bp {
         (bd.path(), cd.path())
     } else {
@@ -1149,12 +1211,62 @@ async fn person_file_window_awards_one_of_two_authenticated_acceptances() {
     assert!(loser.receipts().is_empty());
     assert!(wa.send(id).await.is_err());
 
+    // The picker-originated offer is released by the ordinary new accept
+    // action itself as well, without the explicit reconciliation above.
+    let second_path = ad.path().join("automatic.bin");
+    fs::write(&second_path, b"second").unwrap();
+    let second = wa
+        .offer_contact(bob.id(), second_path, &routes)
+        .await
+        .unwrap();
+    loser.decline_contact_offer(second).await.unwrap();
+    winner
+        .accept_contact_offer(second, &back_routes)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while winner.receipts().len() < 2
+            || !wa.outgoing_person().is_ok_and(|offer| offer.is_none())
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        fs::read(winning_dir.join("automatic.bin")).unwrap(),
+        b"second"
+    );
+    assert!(!losing_dir.join("automatic.bin").exists());
+
     let next = offers().await.unwrap();
-    winner.accept(ap, next, r).await.unwrap();
+    loser.decline_contact_offer(next).await.unwrap();
+    assert!(
+        loser
+            .accept_contact_offer(next, &back_routes)
+            .await
+            .is_err()
+    );
+    winner.accept(ap, next, wa.route().offers).await.unwrap();
+    assert!(
+        winner.decline_contact_offer(next).await.is_err(),
+        "decline cannot undo acceptance"
+    );
     ab.revoke_device(bob.id(), winner_id).unwrap();
+    assert!(
+        winner
+            .reconcile_contact_offer(next, &back_routes)
+            .await
+            .is_err()
+    );
     assert!(wa.send(next).await.is_err());
-    assert!(loser.accept(ap, next, r).await.is_err());
-    assert_eq!(winner.receipts().len(), 1);
+    assert!(
+        loser
+            .accept_contact_offer(next, &back_routes)
+            .await
+            .is_err()
+    );
+    assert_eq!(winner.receipts().len(), 2);
     assert!(loser.receipts().is_empty());
     assert_eq!(ab.winner(next).unwrap(), Some(winner_id));
     assert_ne!(winner_id, loser_id);
