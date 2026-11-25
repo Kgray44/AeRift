@@ -16,7 +16,10 @@ async fn endpoint(seed: u8) -> WanEndpoint {
 async fn explicit_private_route_transports_stream_between_pinned_endpoints() {
     let receiver = endpoint(1).await;
     let sender = endpoint(2).await;
-    let route = WanRoute::new(receiver.id(), &receiver.bound_addresses(), None).unwrap();
+    let route = sender
+        .configured_route(receiver.id(), &receiver.bound_addresses())
+        .unwrap();
+    assert!(sender.configured_route(receiver.id(), &[]).is_err());
     let allowed = HashSet::from([sender.id()]);
 
     let send = async {

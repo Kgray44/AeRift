@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(crate) const INVITATION_TTL: Duration = Duration::from_secs(300);
+const MAX_WAN_BINDINGS: usize = 64;
 const MAX_BAD_ATTEMPTS: u8 = 12;
 const MAX_REDEMPTIONS_PER_PEER: u8 = 3;
 
@@ -99,11 +100,15 @@ struct PairState {
     invitation: Option<Invitation>,
     revocation_uncommitted: HashSet<PeerId>,
     outbound: HashMap<PeerId, Weak<CancellationToken>>,
+    wan_keys: HashMap<[u8; 32], (PeerId, CancellationToken)>,
+    wan_stopped: CancellationToken,
 }
 
 struct Invitation {
     token: [u8; 32],
     expected: Option<PeerId>,
+    wan_key: Option<[u8; 32]>,
+    lease: CancellationToken,
     deadline: Instant,
     expires_at: SystemTime,
     failures: u8,
@@ -135,6 +140,8 @@ impl Pairing {
                 invitation: None,
                 revocation_uncommitted: HashSet::new(),
                 outbound: HashMap::new(),
+                wan_keys: HashMap::new(),
+                wan_stopped: CancellationToken::new(),
             }),
             pending,
         })
@@ -175,6 +182,14 @@ impl Pairing {
         &self,
         expected: Option<PeerId>,
     ) -> Result<InvitationCode, TransferError> {
+        self.create_invitation_with_route(expected, None)
+    }
+
+    pub(crate) fn create_invitation_with_route(
+        &self,
+        expected: Option<PeerId>,
+        wan_key: Option<[u8; 32]>,
+    ) -> Result<InvitationCode, TransferError> {
         if expected == Some(self.me.id) {
             return Err(ErrorCode::InvalidRequest.into());
         }
@@ -189,10 +204,15 @@ impl Pairing {
         if expected.is_some_and(|peer| state.revocation_uncommitted.contains(&peer)) {
             return Err(ErrorCode::PeerUntrusted.into());
         }
+        if let Some(key) = wan_key {
+            Self::check_wan_binding(&state, expected.ok_or(ErrorCode::InvalidRequest)?, key)?;
+        }
         self.invalidate(&mut state, ErrorCode::PairingRejected);
         state.invitation = Some(Invitation {
             token,
             expected,
+            wan_key,
+            lease: CancellationToken::new(),
             deadline,
             expires_at,
             failures: 0,
@@ -212,10 +232,11 @@ impl Pairing {
     pub fn confirm(&self, id: Uuid, approve: bool) -> Result<(), TransferError> {
         let mut state = self.state();
         self.expire(&mut state);
-        let request = state
-            .invitation
+        let invitation = state.invitation.as_ref().ok_or(ErrorCode::PairingExpired)?;
+        let wan_key = invitation.wan_key;
+        let request = invitation
+            .request
             .as_ref()
-            .and_then(|invitation| invitation.request.as_ref())
             .filter(|request| request.pending.id == id && request.reply.borrow().is_none())
             .ok_or(ErrorCode::PairingExpired)?;
         if !approve {
@@ -226,13 +247,20 @@ impl Pairing {
         if state.revocation_uncommitted.contains(&peer.id) {
             return Err(ErrorCode::PeerUntrusted.into());
         }
+        if let Some(key) = wan_key {
+            Self::check_wan_binding(&state, peer.id, key)?;
+        }
         self.store.put(&peer)?;
         request.reply.send_replace(Some(Ok(self.me.clone())));
         let entry = state
             .trusted
             .entry(peer.id)
             .or_insert_with(|| (peer.clone(), CancellationToken::new()));
+        let peer_id = peer.id;
         entry.0 = peer;
+        if let Some(key) = wan_key {
+            Self::insert_wan_binding(&mut state, peer_id, key);
+        }
         self.pending.send_replace(None);
         Ok(())
     }
@@ -274,6 +302,29 @@ impl Pairing {
         self.record_remote_locked(&mut state, device)
     }
 
+    pub(crate) fn record_wan_outbound(
+        &self,
+        device: Device,
+        guard: &Arc<CancellationToken>,
+        key: [u8; 32],
+    ) -> Result<(), TransferError> {
+        let mut state = self.state();
+        Self::check_wan_binding(&state, device.id, key)?;
+        if guard.is_cancelled()
+            || !state
+                .outbound
+                .get(&device.id)
+                .and_then(Weak::upgrade)
+                .is_some_and(|current| Arc::ptr_eq(&current, guard))
+        {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        let peer = device.id;
+        self.record_remote_locked(&mut state, device)?;
+        Self::insert_wan_binding(&mut state, peer, key);
+        Ok(())
+    }
+
     pub(crate) fn record_remote(&self, device: Device) -> Result<(), TransferError> {
         self.record_remote_locked(&mut self.state(), device)
     }
@@ -303,6 +354,14 @@ impl Pairing {
         if let Some(guard) = state.outbound.remove(&peer).and_then(|weak| weak.upgrade()) {
             guard.cancel();
         }
+        state.wan_keys.retain(|_, (bound, lease)| {
+            if *bound == peer {
+                lease.cancel();
+                false
+            } else {
+                true
+            }
+        });
         if let Some((_, lease)) = state.trusted.remove(&peer) {
             lease.cancel();
         }
@@ -395,6 +454,121 @@ impl Pairing {
         }
     }
 
+    fn check_wan_binding(
+        state: &PairState,
+        peer: PeerId,
+        key: [u8; 32],
+    ) -> Result<(), TransferError> {
+        if state.wan_stopped.is_cancelled()
+            || key == [0; 32]
+            || (!state.wan_keys.contains_key(&key) && state.wan_keys.len() >= MAX_WAN_BINDINGS)
+            || state.wan_keys.iter().any(|(known, (owner, _))| {
+                (*known == key && *owner != peer) || (*owner == peer && *known != key)
+            })
+        {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Ok(())
+    }
+
+    fn insert_wan_binding(state: &mut PairState, peer: PeerId, key: [u8; 32]) {
+        let stop = &state.wan_stopped;
+        state
+            .wan_keys
+            .entry(key)
+            .or_insert_with(|| (peer, stop.child_token()));
+    }
+
+    pub(crate) fn wan_preflight(
+        &self,
+        peer: PeerId,
+        key: [u8; 32],
+    ) -> Result<CancellationToken, TransferError> {
+        let state = self.state();
+        Self::check_wan_binding(&state, peer, key)?;
+        Ok(state.wan_stopped.clone())
+    }
+
+    pub(crate) fn wan_trust(
+        &self,
+        peer: PeerId,
+        key: [u8; 32],
+    ) -> Result<CancellationToken, TransferError> {
+        let state = self.state();
+        let (bound, lease) = state.wan_keys.get(&key).ok_or(ErrorCode::PeerUntrusted)?;
+        if *bound != peer || !state.trusted.contains_key(&peer) || lease.is_cancelled() {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        Ok(lease.clone())
+    }
+
+    pub(crate) fn wan_admitted_endpoints(&self) -> Vec<[u8; 32]> {
+        let mut state = self.state();
+        self.expire(&mut state);
+        if state.wan_stopped.is_cancelled() {
+            return Vec::new();
+        }
+        let mut keys: Vec<_> = state.wan_keys.keys().copied().collect();
+        if let Some(key) = state
+            .invitation
+            .as_ref()
+            .filter(|invite| invite.failures < MAX_BAD_ATTEMPTS)
+            .and_then(|invite| invite.wan_key)
+            .filter(|key| !keys.contains(key))
+        {
+            keys.push(key);
+        }
+        keys
+    }
+
+    pub(crate) fn wan_route_permit(
+        &self,
+        key: [u8; 32],
+    ) -> Result<crate::WanRoutePermit, TransferError> {
+        let mut state = self.state();
+        self.expire(&mut state);
+        if state.wan_stopped.is_cancelled() {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        if let Some((peer, lease)) = state.wan_keys.get(&key)
+            && state.trusted.contains_key(peer)
+        {
+            return Ok(crate::WanRoutePermit::new(
+                *peer,
+                state.wan_stopped.clone(),
+                lease.clone(),
+                None,
+            ));
+        }
+        if let Some(invite) = state
+            .invitation
+            .as_ref()
+            .filter(|invite| invite.wan_key == Some(key) && invite.failures < MAX_BAD_ATTEMPTS)
+            && let Some(peer) = invite.expected
+        {
+            return Ok(crate::WanRoutePermit::new(
+                peer,
+                state.wan_stopped.clone(),
+                invite.lease.clone(),
+                Some(invite.deadline),
+            ));
+        }
+        Err(ErrorCode::PeerUntrusted.into())
+    }
+
+    pub(crate) fn stop_wan_routes(&self) {
+        let mut state = self.state();
+        state.wan_stopped.cancel();
+        state.wan_keys.clear();
+        if state
+            .invitation
+            .as_ref()
+            .is_some_and(|invite| invite.wan_key.is_some())
+        {
+            self.invalidate(&mut state, ErrorCode::PairingRejected);
+        }
+    }
+
     fn state(&self) -> std::sync::MutexGuard<'_, PairState> {
         self.state
             .lock()
@@ -402,10 +576,11 @@ impl Pairing {
     }
 
     fn invalidate(&self, state: &mut PairState, code: ErrorCode) {
-        if let Some(invitation) = state.invitation.take()
-            && let Some(request) = invitation.request
-        {
-            request.reply.send_replace(Some(Err(code.into())));
+        if let Some(invitation) = state.invitation.take() {
+            invitation.lease.cancel();
+            if let Some(request) = invitation.request {
+                request.reply.send_replace(Some(Err(code.into())));
+            }
         }
         self.pending.send_replace(None);
     }

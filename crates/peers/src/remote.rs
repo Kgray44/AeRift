@@ -163,12 +163,17 @@ impl RemotePeerNode {
         recipient_endpoint_key: [u8; 32],
     ) -> Result<String, TransferError> {
         crate::wan_invitation::verify_distinct_keys(issuer_endpoint_key, recipient_endpoint_key)?;
+        let mut invitation = self
+            .peer
+            .pairing()
+            .create_invitation_with_route(Some(expected), Some(recipient_endpoint_key))?;
+        invitation.code = invitation.code.replacen("aerift:v1:", PREFIX, 1);
         crate::wan_invitation::seal(
             self.peer.identity(),
             expected,
             issuer_endpoint_key,
             recipient_endpoint_key,
-            self.create_invitation(expected)?,
+            invitation,
         )
     }
 
@@ -200,8 +205,66 @@ impl RemotePeerNode {
         route_for: impl FnOnce(&crate::WanInvitationBinding) -> Result<R, TransferError>,
     ) -> Result<Device, TransferError> {
         let invitation = self.inspect_wan_invitation(code, expected_issuer, local_endpoint_key)?;
+        let key = invitation.issuer_endpoint_key();
+        self.peer.pairing().wan_preflight(expected_issuer, key)?;
+        let intent = parse_invitation(&invitation.code)?;
         let route = route_for(&invitation)?;
-        self.redeem_via(route, &invitation.code).await
+        let endpoint = self.peer.routed_endpoint(route, expected_issuer, false)?;
+        self.peer.redeem_over(endpoint, intent, Some(key)).await
+    }
+
+    /// Outer transport may use this allowlist only as a prefilter: it can
+    /// stale during accept. Re-check through `serve_wan_stream` before dispatch.
+    pub fn wan_admitted_endpoints(&self) -> Vec<[u8; 32]> {
+        self.peer.pairing().wan_admitted_endpoints()
+    }
+
+    /// Gate an outer handshake with current, rather than snapshotted,
+    /// session state. Final stream admission must still be checked separately.
+    pub fn permits_wan_endpoint(&self, outer: [u8; 32]) -> bool {
+        self.wan_route_permit(outer).is_ok()
+    }
+
+    pub(crate) fn wan_route_permit(
+        &self,
+        outer: [u8; 32],
+    ) -> Result<crate::WanRoutePermit, TransferError> {
+        self.peer.pairing().wan_route_permit(outer)
+    }
+
+    /// Open a sender only for the exact current WAN route grant. The caller
+    /// must dial this same outer key using the fixed host transport policy.
+    pub fn sender_wan<R: RemoteRoute>(
+        &self,
+        route: R,
+        peer: PeerId,
+        outer: [u8; 32],
+        decision_timeout: Duration,
+        upload_timeout: Duration,
+    ) -> Result<Sender<RoutedPinnedEndpoint<R>>, TransferError> {
+        let lease = self.peer.pairing().wan_trust(peer, outer)?;
+        let endpoint = self
+            .peer
+            .routed_endpoint_with_lease(route, peer, Some(lease))?;
+        Ok(Sender::new(endpoint, decision_timeout, upload_timeout))
+    }
+
+    pub fn stop_wan_routes(&self) {
+        self.peer.pairing().stop_wan_routes();
+    }
+
+    /// After authenticating the outer connection, supply its actual endpoint
+    /// key, never an identifier claimed by a request or borrowed from the allowlist.
+    pub async fn serve_wan_stream<S>(&self, stream: S, outer: [u8; 32]) -> Result<(), TransferError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let permit = self.wan_route_permit(outer)?;
+        tokio::select! {
+            biased;
+            _ = permit.closed() => Err(ErrorCode::PeerUntrusted.into()),
+            result = self.serve_scoped_stream(stream, permit.peer(), permit.pairing_only()) => result,
+        }
     }
 
     pub fn cancel_invitation(&self) {
@@ -251,7 +314,7 @@ impl RemotePeerNode {
     ) -> Result<Device, TransferError> {
         let invite = parse_invitation(code)?;
         let endpoint = self.peer.routed_endpoint(route, invite.peer, false)?;
-        self.peer.redeem_over(endpoint, invite).await
+        self.peer.redeem_over(endpoint, invite, None).await
     }
 
     /// A route is not a grant. This fails before dialing if the target has
@@ -278,12 +341,24 @@ impl RemotePeerNode {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        self.serve_scoped_stream(stream, expected_peer, false).await
+    }
+
+    async fn serve_scoped_stream<S>(
+        &self,
+        stream: S,
+        expected_peer: PeerId,
+        pairing_only: bool,
+    ) -> Result<(), TransferError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let _permit = self
             .routed_connections
             .try_acquire()
             .map_err(|_| ErrorCode::PeerUnavailable)?;
         self.peer
-            .serve_bound_remote(stream, expected_peer, &self.routed_untrusted)
+            .serve_bound_remote(stream, expected_peer, &self.routed_untrusted, pairing_only)
             .await
     }
 
