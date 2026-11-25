@@ -2,8 +2,8 @@
 use std::{
     net::SocketAddr,
     path::PathBuf,
-    sync::{Arc, OnceLock},
-    time::Duration,
+    sync::{Arc, Mutex as SyncMutex, OnceLock},
+    time::{Duration, Instant},
 };
 
 use aerift_peers::{Device, Platform, RemotePeerNode};
@@ -11,7 +11,10 @@ use aerift_transfer::{
     ErrorCode, PeerId, ReceiveLimits, State, Status, TransferError, TransferKey,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, WebviewWindow};
+use tauri::{
+    Manager, WebviewWindow,
+    ipc::{Channel, JavaScriptChannelId},
+};
 #[cfg(feature = "private-remote-app")]
 use tauri::{WebviewUrl, WebviewWindowBuilder, Wry};
 use tauri_plugin_dialog::DialogExt;
@@ -20,10 +23,14 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    private_remote_profile::{overlay_endpoint, PrivateRemoteProfile},
+    private_remote_profile::{PrivateRemoteProfile, overlay_endpoint},
     protected_store::ProtectedFile,
     windows_storage::storage_failed,
 };
+
+#[path = "private_remote_progress.rs"]
+mod progress_window;
+use progress_window::ProgressWindow;
 
 #[cfg(any(test, feature = "private-remote-app"))]
 const FLAG: &str = "--private-remote-dev";
@@ -575,13 +582,90 @@ pub(crate) async fn windows_redeem_remote(
     }
 }
 
+// Optional observer for this one authorized invocation, never a broadcast.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteUploadProgress {
+    kind: &'static str,
+    name: String,
+    size_bytes: u64,
+    bytes_transferred: u64,
+    state: State,
+}
+
+#[derive(Default)]
+struct ProgressState {
+    limiter: ProgressWindow,
+    retired: bool,
+}
+
+struct UploadObserver {
+    window: WebviewWindow,
+    channel: Option<Channel<RemoteUploadProgress>>,
+    state: SyncMutex<ProgressState>,
+}
+
+impl UploadObserver {
+    fn new(window: WebviewWindow, target: Option<JavaScriptChannelId>) -> Self {
+        let channel = target.map(|target| target.channel_on(window.as_ref().clone()));
+        Self {
+            window,
+            channel,
+            state: SyncMutex::default(),
+        }
+    }
+
+    fn checkpoint(
+        &self,
+        stop: &CancellationToken,
+        kind: &'static str,
+        name: &str,
+        total: u64,
+        status: Status,
+    ) {
+        let Some(channel) = &self.channel else { return };
+        if status.state != State::Transferring || stop.is_cancelled() {
+            return;
+        }
+        let Ok(mut state) = self.state.try_lock() else {
+            return;
+        };
+        if state.retired
+            || !state
+                .limiter
+                .permit(Instant::now(), status.bytes_transferred, total)
+        {
+            return;
+        }
+        // A reload or failed channel may retire this UI report without altering the transfer.
+        if require_remote_origin(&self.window).is_err() || stop.is_cancelled() {
+            state.retired = true;
+            return;
+        }
+        if channel
+            .send(RemoteUploadProgress {
+                kind,
+                name: name.to_owned(),
+                size_bytes: total,
+                bytes_transferred: status.bytes_transferred,
+                state: status.state,
+            })
+            .is_err()
+        {
+            state.retired = true;
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn windows_send_remote_file(
     window: WebviewWindow,
     endpoint: String,
     peer_id: PeerId,
+    progress: Option<JavaScriptChannelId>,
 ) -> Result<Status, TransferError> {
     require_remote_origin(&window)?;
+    let observer = UploadObserver::new(window.clone(), progress);
     let route = overlay_endpoint(&endpoint)?;
     let runtime = window.state::<RemoteRuntime>();
     let _outbound = runtime
@@ -609,8 +693,23 @@ pub(crate) async fn windows_send_remote_file(
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or(ErrorCode::InvalidRequest)?;
+    let observing_stop = stop.clone();
     sender
-        .send_resumable_file(&selected, name, stop, |_, _| {})
+        .send_resumable_file_with_manifest_progress(
+            Uuid::new_v4(),
+            &selected,
+            name,
+            stop,
+            move |manifest, status| {
+                observer.checkpoint(
+                    &observing_stop,
+                    "file",
+                    &manifest.name,
+                    manifest.size_bytes,
+                    status,
+                );
+            },
+        )
         .await
 }
 

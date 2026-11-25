@@ -1,20 +1,24 @@
-import { useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
 import { PrivateRemoteFolders } from "./PrivateRemoteFolders";
+import { TransferIsland, type TransferIslandReceipt } from "@aerift/ui";
+import { usePrivateRemoteUpload } from "./usePrivateRemoteUpload";
+import { incomingRemoteIslandTransfers, type IncomingRemoteFile, type IncomingRemoteFolder } from "./private-remote-island";
 import { invoke } from "@tauri-apps/api/core";
 
 type Device = { id: string; name: string; platform: string };
-type Offer = {
-  peerId: string; id: string; name: string; sizeBytes: number;
-  status: { state: string; bytesTransferred: number };
-};
 type Snapshot = {
   foldersAvailable?: boolean; foldersActive?: boolean;
   active: boolean; endpoint: string; identity: string | null;
-  peers: Device[]; pairing: { id: string; peer: Device } | null; offers: Offer[];
+  peers: Device[]; pairing: { id: string; peer: Device } | null; offers: IncomingRemoteFile[];
 };
 
 export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
+  const recipientLabel = useId();
+  const [folderOffers, setFolderOffers] = useState<readonly IncomingRemoteFolder[]>([]);
+  const [fileProgress, setFileProgress] = useState<TransferIslandReceipt>();
+  const [folderProgress, setFolderProgress] = useState<TransferIslandReceipt>();
+  const upload = usePrivateRemoteUpload("file", setFileProgress);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [permission, setPermission] = useState(false);
   const [enableFolders, setEnableFolders] = useState(false);
@@ -66,6 +70,10 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
   }
 
   const active = snapshot?.active === true;
+  const islandTransfers = useMemo(() => {
+    const receiving = incomingRemoteIslandTransfers(snapshot?.offers ?? [], snapshot?.foldersActive ? folderOffers : []);
+    return [...receiving, ...(fileProgress ? [fileProgress] : []), ...(snapshot?.foldersActive && folderProgress ? [folderProgress] : [])];
+  }, [snapshot?.offers, snapshot?.foldersActive, folderOffers, fileProgress, folderProgress]);
   return (
     <main className="ae-private-remote-dev">
       <h1>{product ? "Remote transfers" : "Private Remote Development"}</h1>
@@ -76,7 +84,11 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
       {snapshot && <p>Selected private endpoint: <code>{snapshot.endpoint}</code></p>}
       {active && (
       <button type="button" disabled={busy}
-        onClick={() => action({ action: "stop" }, () => { setInvite(""); setPermission(false); setEnableFolders(false); })}>
+        onClick={() => action({ action: "stop" }, () => {
+          upload.close();
+          setFolderProgress(undefined);
+          setInvite(""); setPermission(false); setEnableFolders(false);
+        })}>
         {product ? "Stop Remote" : "Stop private receiver"}
       </button>
       )}
@@ -167,8 +179,9 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
               </button>
             </form>
             <h3>Send one file</h3>
-            <label>Authorized recipient
-              <select value={outgoingPeer} onChange={(event) => setOutgoingPeer(event.target.value)}>
+            <label>
+              <span id={recipientLabel}>Authorized recipient</span>
+              <select aria-labelledby={recipientLabel} value={outgoingPeer} onChange={(event) => setOutgoingPeer(event.target.value)}>
                 <option value="">Choose an authorized device</option>
                 {snapshot.peers.map((peer) => <option key={peer.id} value={peer.id}>{peer.name} · {peer.id.slice(0, 12)}</option>)}
               </select>
@@ -176,15 +189,18 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
             <button disabled={outgoing || !targetEndpoint.trim() || !snapshot.peers.some((peer) => peer.id === outgoingPeer)}
               onClick={() => {
                 setOutgoing(true); setOutgoingMessage("Choose a file. The other device must accept before upload starts.");
-                void invoke<{ state: string; bytesTransferred: number }>("windows_send_remote_file", { endpoint: targetEndpoint.trim(), peerId: outgoingPeer })
+                const transfer = upload.begin();
+                void invoke<{ state: string; bytesTransferred: number }>("windows_send_remote_file",
+                  { endpoint: targetEndpoint.trim(), peerId: outgoingPeer, progress: transfer.updates })
                   .then((receipt) => setOutgoingMessage(receipt.state === "completed"
                     ? "Delivered. The recipient verified the file." : "Transfer ended: " + receipt.state + "."))
                   .catch(() => setOutgoingMessage("No verified delivery. The transfer was cancelled, declined or could not connect."))
-                  .finally(() => setOutgoing(false));
+                  .finally(() => { transfer.close(); setOutgoing(false); });
               }}>Choose file to send</button>
             <p role="status">{outgoingMessage}</p>
           </section>}
-          {product && snapshot.foldersActive && <PrivateRemoteFolders peers={snapshot.peers} endpoint={targetEndpoint} />}
+          {product && snapshot.foldersActive && <PrivateRemoteFolders peers={snapshot.peers} endpoint={targetEndpoint}
+            onIncomingChange={setFolderOffers} onOutgoingChange={setFolderProgress} />}
           <section aria-labelledby="remote-peers-heading">
             <h2 id="remote-peers-heading">Authorized Remote devices</h2>
             <p>Saved authorization only. There is no discovery or online indicator.</p>
@@ -217,6 +233,7 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
         </>
       )}
       </fieldset>
+      {product && <TransferIsland transfers={islandTransfers} suppressed={!active || !fresh} />}
     </main>
   );
 }

@@ -9,3 +9,5 @@ export * from "./Orbit";
 export { OrbitSurface } from "./orbit-surface";
 export { RiftExperience, TransferObject } from "./RiftExperience";
 export { IconAction } from "./IconAction";
+export { TransferIsland } from "./TransferIsland";
+export type { TransferIslandReceipt } from "./transfer-island-metrics";
