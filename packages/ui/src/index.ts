@@ -8,3 +8,4 @@ export { GestureCameraIndicator, GestureControl, type GestureCameraStatus } from
 export * from "./Orbit";
 export { OrbitSurface } from "./orbit-surface";
 export { RiftExperience, TransferObject } from "./RiftExperience";
+export { IconAction } from "./IconAction";

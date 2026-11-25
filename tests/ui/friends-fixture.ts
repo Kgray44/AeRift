@@ -22,10 +22,10 @@ export function friendsFixture(current: () => AppSnapshot, publish: (value: AppS
     async apply(request) {
       const app = current();
       const friends = app.friends!;
-      if (request.action === "offer" && request.target.friendId === "friend-a" && request.target.deviceId === "friend-phone"
+      if (request.action === "offer" && request.target.friendId === "friend-a" && request.target.deviceId === undefined
         && request.selectionId === "fixture-picked") {
         publish({ ...app, friends: { ...friends, offers: [...friends.offers, {
-          id: "fixture-outgoing", friendId: "friend-a", deviceId: "friend-phone", kind: "file",
+          id: "fixture-outgoing", friendId: "friend-a", kind: "file",
           label: "Synthetic sample", direction: "outgoing", state: "queued",
         }] } });
       } else if (request.action === "respond_offer" && request.offerId === "fixture-incoming") {

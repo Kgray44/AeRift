@@ -1,5 +1,5 @@
 import { RemoteModeSettings } from "./RemoteModeSettings";
-import { Button, SettingsPanel, type AppearanceSettings, type GestureCameraStatus } from "@aerift/ui";
+import { Button, GlassSurface, SettingsPanel, SpatialIcon, type AppearanceSettings, type GestureCameraStatus } from "@aerift/ui";
 import { WORKSPACE_MODULES, type ModuleId } from "@aerift/app-contract/experience";
 import { useEffect, useState } from "react";
 import { cameraShortcutLabels, type CameraShortcut } from "./GestureCamera";
@@ -8,6 +8,16 @@ import { ambientPreviewCorner, ambientPreviewCorners, type DesktopPreferences } 
 import type { AmbientCaptureView } from "./DesktopApp";
 import type { Device } from "@aerift/app-contract";
 import type { ReceiveFolder } from "./nativeAppPort";
+import "./desktopSettings.css";
+
+const categories = [
+  { id: "general", label: "General", icon: "settings" },
+  { id: "appearance", label: "Appearance", icon: "photo" },
+  { id: "camera", label: "Gestures", icon: "rift" },
+  { id: "transfers", label: "Transfers", icon: "drop" },
+  { id: "privacy", label: "Privacy", icon: "clipboard" },
+  { id: "ambient", label: "Ambient", icon: "desktop" },
+] as const;
 
 export function DesktopSettings({ value, onChange, folder, folderError, openingFolderPicker, chooseFolder,
   ambientAvailable, ambientError, shortcutError, ambientCapture, ambientCaptureError, ambientSendError,
@@ -31,6 +41,7 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
   retryCamera(): void;
 }) {
   const { experience } = value;
+  const [category, setCategory] = useState<(typeof categories)[number]["id"]>("general");
   const [ambientTarget, setAmbientTarget] = useState<{ captureId: string; deviceId: string }>();
   const selectedAmbientDevice = ambientCapture?.state === "frozen" && ambientTarget?.captureId === ambientCapture.id
     && ambientTargets.some(device => device.id === ambientTarget.deviceId) ? ambientTarget.deviceId : "";
@@ -109,10 +120,18 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
     onChange({ ...value, experience: { ...experience, hiddenModules } });
   }
 
-  return <div className="aerift-settings-grid">
-    <RemoteModeSettings />
-    <section aria-labelledby="experience-heading">
-      <h3 id="experience-heading">Experience</h3><p className="aerift-settings-intro">Make room for the way you work.</p>
+  const showAmbient = ambientAvailable || startupEnabled !== undefined;
+  return <div className="aerift-settings-grid ae-desktop-settings">
+    <GlassSurface material="chrome" className="ae-settings-picker">
+      <div role="group" aria-label="Settings categories">
+        {categories.filter(item => item.id !== "ambient" || showAmbient).map(({ id, label, icon }) =>
+          <Button key={id} variant="quiet" title={label} aria-pressed={category === id} onClick={() => setCategory(id)}>
+            <SpatialIcon name={icon} size={18} /><span>{label}</span>
+          </Button>)}
+      </div>
+    </GlassSurface>
+    <section hidden={category !== "general"} aria-labelledby="experience-heading">
+      <h3 id="experience-heading">General</h3>
       <label>Window mode
         <select value={experience.windowMode} onChange={event => onChange({ ...value, experience: {
           ...experience, windowMode: event.currentTarget.value === "full" ? "full" : "simplified",
@@ -147,17 +166,18 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
         </label>)}
       </fieldset>
     </section>
-    <section aria-labelledby="appearance-heading">
-      <h3 id="appearance-heading">Appearance and accessibility</h3><p className="aerift-settings-intro">Choose your atmosphere and comfort.</p>
+    <section hidden={category !== "appearance"} aria-labelledby="appearance-heading">
+      <h3 id="appearance-heading">Appearance and accessibility</h3>
       <SettingsPanel value={experience} themes={[{ id: "glass", label: "GLASS" }]} onChange={updateAppearance} />
     </section>
-    <section aria-labelledby="gestures-heading">
+    <section hidden={category !== "camera"} aria-labelledby="gestures-heading">
       <h3 id="gestures-heading">Gestures and camera</h3>
       <label className="aerift-check"><input type="checkbox" checked={value.gestures}
         onChange={event => onChange({ ...value, gestures: event.currentTarget.checked })} />Enable gesture recognition in the Rift</label>
       <p>{cameraAvailability}</p>
       {value.gestures && cameraStatus && <p role="status">{cameraStatus.label}. {cameraStatus.detail}</p>}
-      {value.gestures && <Button onClick={retryCamera}>Retry camera when I return to the Rift</Button>}
+      {value.gestures && <Button variant="quiet" aria-label="Retry camera when I return to the Rift"
+        title="Retry camera when I return to the Rift" onClick={retryCamera}><SpatialIcon name="retry" /></Button>}
       <label>Camera
         <select value={value.cameraId} onChange={event => onChange({ ...value, cameraId: event.currentTarget.value })}>
           <option value="">System default</option>
@@ -175,11 +195,12 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
       </label>
       <p>AeRift listens only in the foreground Rift while an object and recipient, or an incoming offer, are available. The shortcut pauses or resumes recognition for this session.</p>
     </section>
-    <section aria-labelledby="transfer-settings-heading">
+    <section hidden={category !== "transfers"} aria-labelledby="transfer-settings-heading">
       <h3 id="transfer-settings-heading">Transfers and storage</h3>
       {folder?.active && <p>Receive folder <strong>{folder.active}</strong></p>}
       {folder?.next && <p>Restart AeRift to use <strong>{folder.next}</strong> for incoming files.</p>}
-      <Button onClick={chooseFolder} loading={openingFolderPicker} loadingLabel="Opening folder picker">Choose receive folder</Button>
+      <Button variant="quiet" aria-label="Choose receive folder" title="Choose receive folder"
+        onClick={chooseFolder} loading={openingFolderPicker} loadingLabel="Opening folder picker"><SpatialIcon name="collection" /></Button>
       {folderError && <p role="alert">AeRift could not use that folder.</p>}
       {explorerEnabled !== undefined && <>
         <label className="aerift-check">
@@ -190,14 +211,15 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
         <p>Stage one file, then choose a device and confirm the transfer in the Rift.</p>
         {explorerError && <p role="alert">AeRift could not update the File Explorer menu.</p>}
       </>}
+      <RemoteModeSettings />
     </section>
-    <section aria-labelledby="clipboard-heading">
+    <section hidden={category !== "privacy"} aria-labelledby="clipboard-heading">
       <h3 id="clipboard-heading">Clipboard privacy</h3>
       <label className="aerift-check"><input type="checkbox" checked={value.clipboard}
         onChange={event => onChange({ ...value, clipboard: event.currentTarget.checked })} />Allow manual clipboard capture in Workspace</label>
       <p>AeRift reads clipboard text only when you choose to capture it. Saved entries stay on this device.</p>
     </section>
-    {(ambientAvailable || startupEnabled !== undefined) && <section aria-labelledby="ambient-heading">
+    {showAmbient && <section hidden={category !== "ambient"} aria-labelledby="ambient-heading">
       <h3 id="ambient-heading">Ambient operation</h3>
       {ambientAvailable && <label className="aerift-check"><input type="checkbox" checked={experience.ambientEnabled}
         onChange={event => onChange({ ...value, experience: { ...experience, ambientEnabled: event.currentTarget.checked } })} />
@@ -236,10 +258,10 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
         {ambientCaptureError && <p role="alert">Ambient capture is unavailable. Check executable names and the shortcut.</p>}
         {ambientSendError && <p role="alert">The capture could not be offered. Capture it again and check the nearby device.</p>}
         {ambientCapture && <div aria-live="polite">
-          {ambientCapture.state === "working" && <p>Freezing the selected objects…</p>}
+          {ambientCapture.state === "working" && <p>Reading your selection…</p>}
           {ambientCapture.state === "paused" && <p>Ambient capture paused.</p>}
           {ambientCapture.state === "unavailable" && <p>No safe selection was captured. Check your Explorer selection.</p>}
-          {ambientCapture.state === "frozen" && <><p>Frozen selection, not sent.</p>
+          {ambientCapture.state === "frozen" && <><p>Selection ready. Nothing has been sent.</p>
             <ul>{ambientCapture.entries.slice(0, 30).map((entry, index) => <li key={index}>{entry.title}</li>)}</ul>
             {ambientCapture.entries.length > 30 && <p>{ambientCapture.entries.length - 30} more entries.</p>}
             {ambientCapture.canSendFile ? <>

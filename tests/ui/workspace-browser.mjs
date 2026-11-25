@@ -28,7 +28,12 @@ try {
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
   await snapped(desktop, "desktop-workspace-dark");
   await open(desktop, "File Browser");
-  await desktop.getByLabel("Import files", { exact: true }).setInputFiles([
+  const importButton = button(desktop, "Import files");
+  assert.equal(await importButton.innerText(), "", "Desktop import is an icon shortcut");
+  assert.equal(await importButton.getAttribute("title"), "Import files");
+  const filePicker = desktop.waitForEvent("filechooser");
+  await importButton.press("Enter");
+  await (await filePicker).setFiles([
     { name: "Report.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7") },
     { name: "Sketch.png", mimeType: "image/png", buffer: Buffer.from("synthetic image bytes") },
   ]);
@@ -46,7 +51,7 @@ try {
   const large = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await large.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
   await open(large, "File Browser");
-  await large.getByLabel("Import files", { exact: true }).setInputFiles(Array.from({ length: 52 }, (_, index) => ({
+  await large.locator('input[type="file"][aria-label="Import files"]').setInputFiles(Array.from({ length: 52 }, (_, index) => ({
     name: `Large-${index}.pdf`, mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7"),
   })));
   const saved = large.getByRole("region", { name: "Saved file browser", exact: true });
@@ -90,6 +95,47 @@ try {
   await button(updated, "Next page").click();
   assert.equal(await updated.getByRole("checkbox").count(), 3);
   await large.close();
+
+  const home = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await home.goto(root + "/desktop-visual.html?route=home");
+  const manage = button(home, "Manage devices");
+  await manage.waitFor();
+  assert.equal(await manage.innerText(), "");
+  assert.equal(await manage.getAttribute("title"), "Manage devices");
+  await snapped(home, "desktop-home-polished");
+  await manage.press("Enter");
+  const unpair = button(home, "Unpair Mira’s iPhone");
+  await unpair.waitFor();
+  assert.equal(await unpair.innerText(), "");
+  await unpair.press("Enter");
+  const confirmation = home.getByRole("group", { name: "Unpair Mira’s iPhone?", exact: true });
+  await button(confirmation, "Confirm unpair").waitFor();
+  await button(confirmation, "Keep paired").press("Escape");
+  assert.equal(await focused(unpair), true);
+  await snapped(home, "desktop-devices-polished");
+  await home.close();
+
+  const activity = await browser.newPage({ viewport: { width: 510, height: 780 }, colorScheme: "light" });
+  await activity.goto(root + "/desktop-visual.html?route=activity&inboxFixture=1&scheme=light");
+  const inbox = activity.getByRole("region", { name: "Inbox", exact: true });
+  const verify = button(inbox, "Check integrity for Verified survey.pdf");
+  await verify.waitFor();
+  assert.equal(await verify.innerText(), "");
+  await verify.press("Enter");
+  await inbox.getByText("File integrity verified.", { exact: true }).waitFor();
+  assert.equal(await focused(verify), true);
+  const search = inbox.getByRole("searchbox", { name: "Find a file", exact: true });
+  await search.fill("not listed");
+  await search.press("Enter");
+  await inbox.getByText("No matching files.", { exact: true }).waitFor();
+  await button(inbox, "Refresh Inbox").press("Enter");
+  await inbox.getByText("No matching files.", { exact: true }).waitFor();
+  await search.fill("");
+  await button(inbox, "Search Inbox").click();
+  await verify.waitFor();
+  assert.equal(await activity.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await snapped(activity, "desktop-activity-inbox-polished");
+  await activity.close();
 
   for (const platform of ["ios", "android"]) {
     const page = await browser.newPage({ viewport: { width: platform === "ios" ? 390 : 320, height: 844 },

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, GlassSurface } from "@aerift/ui";
+import { Button } from "@aerift/ui";
 import type { FriendContact } from "@aerift/app-contract/friends";
 import { command } from "../nativeAppPort";
 
@@ -28,7 +28,7 @@ export function WindowsFriendsMember({ contacts }: { contacts: readonly FriendCo
       if (!active) return;
       if (result.ok && result.value.type === "view") setView(result.value);
       else setProblem(true);
-    });
+    }).catch(() => { if (active) setProblem(true); });
     return () => { active = false; };
   }, []);
   const clear = () => { setReview(undefined); setHandoff(""); setMessage(""); };
@@ -50,19 +50,20 @@ export function WindowsFriendsMember({ contacts }: { contacts: readonly FriendCo
           setCapsule("");
           const fresh = await submit({ action: "view" });
           if (fresh.ok && fresh.value.type === "view") setView(fresh.value);
-          setMessage("This device is enrolled. Its verified friendship was saved in a separate protected profile. Select it explicitly in the file transfer window to use this friendship.");
+          setMessage("This device is enrolled for eligible Friends offers.");
           break;
         }
       }
+    } catch {
+      setMessage("Device enrollment is temporarily unavailable. Try again.");
     } finally { setBusy(false); }
   }
 
-  return <GlassSurface className="ae-friends-detail" aria-label="Friends device enrollment">
-    <h3>Enroll another device for a friendship</h3>
-    {problem ? <p role="alert">The protected enrollment profile is unavailable.</p> : !view ? <p>Checking the protected profile…</p> : <>
-      <p>Your device fingerprint: <code>{view.localDevice}</code></p>
-      {view.memberContacts > 0 && <p>This device has a verified delegated friendship in a separate protected profile. Select it explicitly when opening a Friends transfer window. Your primary profile remains the default.</p>}
-      <p>Verify fingerprints privately. The original device keeps the person signing key. Approval does not add a Nearby or Remote device.</p>
+  return <div aria-label="Friends device enrollment">
+    {problem ? <p role="alert">Device enrollment is unavailable.</p> : !view ? <p role="status">Checking device enrollment…</p> : <>
+      <details><summary>My device fingerprint</summary><code>{view.localDevice}</code></details>
+      {view.memberContacts > 0 && <p>This device is enrolled for eligible Friends offers.</p>}
+      <p>Authorize another device for a verified friendship. This does not pair it in Nearby or Remote.</p>
       <label>Your role<select value={operation} disabled={busy} onChange={event => {
         setOperation(event.target.value as Operation); setDevice(""); setCapsule(""); setAddress(""); clear();
       }}>{Object.entries(labels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
@@ -104,5 +105,5 @@ export function WindowsFriendsMember({ contacts }: { contacts: readonly FriendCo
         <textarea readOnly value={handoff} /></label>}
       {message && <p role="status">{message}</p>}
     </>}
-  </GlassSurface>;
+  </div>;
 }

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import type {
   AppPort, AppSnapshot, ErrorCode, FileSelection, PairingInvitation, Platform, Result, Transfer, TransferRequest,
 } from "@aerift/app-contract";
+import { ordinaryDevices } from "@aerift/app-contract/friends";
 import { automaticGestureTarget } from "@aerift/gestures";
 import { Button, GlassSurface, TransferProgress } from "./components";
+import { IconAction } from "./IconAction";
 import { Sheet, Toast } from "./overlays";
 import { PairingPanel, type PairingAction } from "./PairingPanel";
 import { offerTransfer, type TransferIntent } from "./send-action";
@@ -194,7 +196,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           const transfers = reconcileTransfers(previous?.transfers ?? [], next.transfers);
           const terminal = terminalTransition(previous?.transfers, transfers);
           if (terminal) setAftermath({ id: terminal.id, expiresAt: Date.now() + 2800 });
-          const current = { ...next, transfers };
+          // Keep the ordinary device picker and current transfer intent in the same lane.
+          // Native grants and existing incoming decisions remain independent.
+          const current = { ...next, devices: ordinaryDevices(next.devices, next.friends), transfers };
           session.snapshot = current;
           const pairedNearby = previous?.nearbyPairingIncoming;
           if (pairedNearby && !current.nearbyPairingIncoming
@@ -551,14 +555,16 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     if (!isTransferActive(transfer)) {
       if (transfer.direction !== "outgoing" || transfer.state === "completed") return undefined;
       const device = devices.find(peer => peer.id === transfer.deviceId && peer.paired);
-      return <Button variant="quiet" disabled={!!pending || !!watchError}
-        onClick={() => {
-          if (mobile) mobile.openRift();
-          else if (onOpenRift) onOpenRift();
-          else setDestination("send");
-          selectDevice(device?.id);
-          chooseFile();
-        }}>Choose file to retry</Button>;
+      const retryTransfer = () => {
+        if (mobile) mobile.openRift();
+        else if (onOpenRift) onOpenRift();
+        else setDestination("send");
+        selectDevice(device?.id);
+        chooseFile();
+      };
+      return hosted ?
+        <IconAction icon="retry" label="Choose file to retry" disabled={!!pending || !!watchError} onClick={retryTransfer} /> :
+        <Button variant="quiet" disabled={!!pending || !!watchError} onClick={retryTransfer}>Choose file to retry</Button>;
     }
     const operation = operations.get(transferKey(transfer.id));
     const offer = transfer.direction === "incoming" && transfer.state === "pending";
@@ -596,7 +602,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     aria-label={mobile ? "Transfer history" : undefined}
     aria-labelledby={mobile ? undefined : `${activityId}-heading`} className="ae-activity">
     <div className="ae-activity-header">
-      {mobile ? <h3>Transfer history</h3> : <h2 id={`${activityId}-heading`}>{hosted ? "Transfer history" : "Activity"}</h2>}
+      {mobile ? <h3>Transfer history</h3> : hosted ? <h3 id={`${activityId}-heading`}>Transfer history</h3> :
+        <h2 id={`${activityId}-heading`}>Activity</h2>}
       {canFilterActivity && <label className="aerift-activity-filter">Show
       <select value={activityFilter} onChange={event => {
         const value = event.currentTarget.value;
@@ -626,7 +633,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     tabIndex={-1} className="ae-rift-board" aria-label="Transfer status" hidden={hosted && destination === "activity" ? !featuredConsent.length : !channel.length || (hosted && !riftVisible)}>
     {destination === "activity" && featuredConsent.length > 0 &&
       <div className="ae-activity-consent-heading">
-        <h3>Incoming offers</h3><p>Decide what to accept before a transfer starts.</p>
+        <h3>Incoming offers</h3>{!hosted && <p>Decide what to accept before a transfer starts.</p>}
       </div>}
     {(hosted && destination === "activity" ? featuredConsent : channel).map(riftCard)}
   </section>;
@@ -657,7 +664,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     </div>
     {discoveryNotice}</>}
     {watchError && desktopView !== "hidden" && <div className="ae-workspace-notice">
-      <p role="alert">{watchError}</p><Button variant="quiet" onClick={retry}>Retry connection</Button>
+      <p role="alert">{watchError}</p>{hosted ? <IconAction icon="retry" label="Retry connection" onClick={retry} /> :
+        <Button variant="quiet" onClick={retry}>Retry connection</Button>}
     </div>}
     {mobile?.render({
       selection, selecting: pending === "file",
@@ -703,12 +711,13 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
               state={departure?.file === outgoingObject && pending === "send" ? "departing" : outgoingPhase || "resting"} />
               : null}
             <div className="ae-dock-actions">
-              <Button data-ae-lens-role={outgoingObject ? undefined : "control"} variant={outgoingObject ? "quiet" : "secondary"} onClick={chooseFile}
-                loading={pending === "file"} loadingLabel="Opening picker…" disabled={!snapshot || (!!pending && pending !== "file")}>
-                <SpatialIcon name="file" />{outgoingObject ? "Change file" : dockStatus ? "Choose another file" : "Choose file"}
-              </Button>
-              {selection && <Button variant="quiet" onClick={clearSelection} disabled={!!pending} aria-label="Clear selected file"
-                title="Clear selected file"><SpatialIcon name="close" /></Button>}
+              {hosted && outgoingObject ? <IconAction icon="file" label="Change file" onClick={chooseFile}
+                loading={pending === "file"} disabled={!snapshot || (!!pending && pending !== "file")} /> :
+                <Button data-ae-lens-role={outgoingObject ? undefined : "control"} variant={outgoingObject ? "quiet" : "secondary"} onClick={chooseFile}
+                  loading={pending === "file"} loadingLabel="Opening picker…" disabled={!snapshot || (!!pending && pending !== "file")}>
+                  <SpatialIcon name="file" />{outgoingObject ? "Change file" : dockStatus ? "Choose another file" : "Choose file"}
+                </Button>}
+              {selection && <IconAction icon="close" label="Clear selected file" onClick={clearSelection} disabled={!!pending} />}
             </div>
           </div>
           {outgoingObject && <div className="ae-dock-destination">

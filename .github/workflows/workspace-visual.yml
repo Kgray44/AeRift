@@ -6,6 +6,7 @@ on:
       - 'apps/aerift/src/**'
       - 'packages/ui/**'
       - 'tests/ui/**'
+      - 'tests/desktop/control-center-browser.mjs'
       - '.github/workflows/workspace-visual.yml'
   workflow_dispatch:
 
@@ -41,6 +42,22 @@ jobs:
           AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
             AERIFT_WORKSPACE_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
             node tests/ui/workspace-browser.mjs
+          AERIFT_FRIENDS_PLAYWRIGHT="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            AERIFT_FRIENDS_URL=http://127.0.0.1:4175 \
+            AERIFT_FRIENDS_PAIR_SCREENSHOT="$RUNNER_TEMP/aerift-workspace-evidence/desktop-friends-pairing.png" \
+            AERIFT_FRIENDS_SCREENSHOT="$RUNNER_TEMP/aerift-workspace-evidence/desktop-friends.png" \
+            node tests/ui/friends-browser.mjs
+      - name: Verify the installed desktop frontend entry with native calls simulated
+        run: |
+          npm --workspace @aerift/app run dev -- --host 127.0.0.1 --port 4176 --strictPort > "$RUNNER_TEMP/aerift-app-vite.log" 2>&1 &
+          for attempt in {1..25}; do
+            curl --fail --silent http://127.0.0.1:4176/ -o /dev/null && break
+            sleep 1
+          done
+          AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            AERIFT_DESKTOP_URL=http://127.0.0.1:4176 \
+            AERIFT_DESKTOP_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
+            node tests/desktop/control-center-browser.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
