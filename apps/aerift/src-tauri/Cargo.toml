@@ -19,12 +19,18 @@ path = "src/main.rs"
 ambient-native-model-qualification = ["dep:sha2", "windows-sys/Win32_System_LibraryLoader"]
 ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "dep:windows-core"]
 private-remote-host = []
+private-remote-wan-host = ["dep:aerift-remote-wan"]
 private-remote-app = ["tauri/custom-protocol"]
 
 [[example]]
 name = "private_remote_host"
 path = "examples/private_remote_host.rs"
 required-features = ["private-remote-host"]
+
+[[example]]
+name = "private_remote_wan_host"
+path = "examples/private_remote_wan_host.rs"
+required-features = ["private-remote-wan-host"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -53,6 +59,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
+aerift-remote-wan = { path = "../../../crates/remote-wan", optional = true }
 tauri = { version = "2", features = ["tray-icon"] }
 serde_json = "1"
 tauri-plugin-dialog = "2"

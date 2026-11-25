@@ -137,3 +137,61 @@ Tauri, qualify an exact reviewed lock and Windows build, implement trust
 preserving native invoke and UI flow with the immutable approved relay,
 and verify deployment, and the direct and relay tests above. No default,
 relay deployment or feature toggle is registered by this seam.
+
+### Windows Tauri qualification entry (source candidate, not live)
+
+The separate Windows `private_remote_wan_host` example requires Cargo feature
+`private-remote-wan-host`, exactly one qualified-start flag, and an immutable
+relay URL supplied by the trusted build. Missing or invalid build configuration
+fails before opening the existing app-local profile. The feature is not a
+default, the normal app has no call site, and the example creates no WebView,
+Tauri commands, pairing entry point or product UI. It only starts and joins
+the transport under an authorized qualification configuration. It cannot
+transfer a file by itself because it does not expose pairing controls; the
+standalone session fixture remains the consent and transfer entry proof.
+Do not run this source candidate with a real profile or a reachable relay
+without separate authorization.
+
+The example uses the same AeRift app-local exclusive lock as Nearby and VPN
+Remote, consumes current-user DPAPI protected host parts, and checks that the
+profile and new private receive directory are directories and not reparse
+points. Any console input or EOF is a local stop request, never configuration
+or pairing data. A single shutdown owner awaits `WanSession::stop` before
+exiting; it does not print relay addresses, codes, paths, or raw errors. This is
+a normal-exit design, not a guarantee for an OS kill or crash. The approved
+environment, Windows runtime, and exact route endpoints must be qualified
+before use. Do not compile an invitation, token or credential as a build input.
+
+The isolated lock was generated using `cargo update --workspace --offline`,
+not a broad dependency refresh. Review against a saved baseline lock with
+`python scripts/check-windows-wan-qualification-lock.py before.lock after.lock`.
+The script verifies and inventories exact package name/version/source/checksum
+identities and canonical dependency edges. The observed transition is 543 to
+677 lock entries; all 543 old package identities and semantic edges remain.
+The new entries are the local WAN package plus 133 checksum-pinned crates.io
+entries. Application lock SHA-256:
+`31a37f7697513a6b0c1da9a5d883e9bb53159f5862e07b7412808bf004c95aa3`.
+Feature unification adds edges to some existing packages; preserving versions
+does not exempt those edges from dependency review.
+
+Checks run locally:
+
+- Standalone Rust tests for the explicit flag and concurrent exit-owner
+  state machine passed. Standalone host relay and peers suites above still
+  cover transfers, not the native Windows event loop.
+- Locked, offline, Windows-target manifest metadata with `--no-deps` parsed
+  successfully. A full locked, offline Windows-target `cargo check` of the
+  feature/example stopped before compiling at uncached `ipconfig v0.3.4`.
+  The Windows example is therefore not yet natively compile-qualified.
+
+For the first approved native build, obtain the required cached Windows
+dependency closure by the ordinary approved CI route, review the locked
+feature tree with and without the optional feature, and run the existing
+advisory/license/source checks on the delta and new edges. Confirm the usual
+Windows build has no startup, invoke, capability or relay changes. Compile and
+test the feature and example on the same commit, with no configured service
+first and an isolated, reviewed qualification configuration only later.
+Verify wrong flag and active existing profile fail before networking, no WebView
+exists, native DPAPI and exclusive lock gates pass, and an explicit normal
+exit joins and permits the profile to reopen. Separate the eventual installed
+transfer, independent uplink and operator deployment acceptance.

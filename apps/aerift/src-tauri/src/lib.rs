@@ -47,6 +47,19 @@ mod windows_friends_files;
 #[cfg(windows)]
 mod windows_storage;
 
+#[cfg(all(windows, feature = "private-remote-wan-host"))]
+mod private_remote_wan_qualification;
+
+#[cfg(any(all(windows, feature = "private-remote-wan-host"), test))]
+mod wan_qualification_gate;
+
+/// Used only by the Windows qualification example, never by the app launcher.
+#[cfg(all(windows, feature = "private-remote-wan-host"))]
+#[doc(hidden)]
+pub fn run_private_remote_wan_qualification() -> i32 {
+    private_remote_wan_qualification::run()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(windows)]

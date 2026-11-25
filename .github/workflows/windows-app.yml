@@ -191,3 +191,28 @@ jobs:
           cargo build --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --bin aerift --features tauri/custom-protocol
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git diff --exit-code -- package-lock.json Cargo.lock apps/aerift/src-tauri/Cargo.lock
+      - name: Compile the opt-in WAN host without starting it
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
+        run: |
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'WAN qualification compilation is only for the disposable Windows runner.'
+          }
+          Remove-Item Env:AERIFT_TRUSTED_QUALIFICATION_RELAY -ErrorAction SilentlyContinue
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          $app = 'apps/aerift/src-tauri/Cargo.toml'
+          cargo check --locked --manifest-path $app --features private-remote-wan-host --example private_remote_wan_host
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $gate = Join-Path $env:RUNNER_TEMP 'aerift-wan-qualification-gate.exe'
+          rustc --edition=2024 --test apps/aerift/src-tauri/src/wan_qualification_gate.rs -o $gate
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $testLines = & $gate --test-threads=1 2>&1
+          $status = $LASTEXITCODE
+          $testLines | ForEach-Object { Write-Host $_ }
+          if ($status -ne 0) { throw "WAN activation gate test failed: $status" }
+          foreach ($name in @('native_opt_in_accepts_only_the_exact_start_flag','only_the_first_exit_request_owns_shutdown_and_release_is_explicit')) {
+            if (-not ($testLines -match ('^test (?:\S+::)?' + [regex]::Escape($name) + ' \.\.\. ok\s*$'))) {
+              throw "Required WAN activation gate did not pass: $name"
+            }
+          }
