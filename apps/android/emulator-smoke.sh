@@ -240,7 +240,39 @@ PY_PNG
   await_ui 'Everything in its place.' >/dev/null
   photo_stage 'open Photos through AeRift Workspace'
   tap_label 'Images & Videos'
-  tap_label 'Import photos and videos'
+  gallery_ax() { python3 apps/android/photo_gallery_ui.py "$tmp/ui.xml" "$identity" "$1"; }
+  confirmed=0
+  for ((attempt = 0; attempt < 6; attempt++)); do
+    if dump_ui && gallery_ax confirm; then confirmed=1; break; fi
+    sleep 1
+  done
+  if [[ "$confirmed" != 1 ]]; then
+    gallery_ax report || true
+    echo 'Android Photos smoke did not confirm the owned Photos category.' >&2; exit 1
+  fi
+  # The selected Rift object and system picker card precede the imported
+  # gallery. Seek its real accessible action by scrolling the owned WebView.
+  photo_stage 'seek the imported gallery action on the owned Photos category'
+  found=0
+  for ((attempt = 0; attempt < 7; attempt++)); do
+    if dump_ui; then
+      if hit="$(gallery_ax target)"; then
+        read -r x y <<<"$hit"
+        adb -s "$serial" shell input tap "$x" "$y"
+        found=1
+        break
+      fi
+      if (( attempt >= 1 && attempt < 6 )) && hit="$(gallery_ax scroll)"; then
+        read -r x1 y1 x2 y2 <<<"$hit"
+        adb -s "$serial" shell input swipe "$x1" "$y1" "$x2" "$y2" 350
+      fi
+    fi
+    sleep 1
+  done
+  if [[ "$found" != 1 ]]; then
+    gallery_ax report || true
+    echo 'Android Photos smoke did not find an enabled, unique, owned gallery import action.' >&2; exit 1
+  fi
   tap_photo_picker() {
     local action="$1" i hit x y
     for ((i = 0; i < 12; i++)); do

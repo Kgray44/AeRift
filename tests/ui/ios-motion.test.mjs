@@ -36,7 +36,7 @@ test("only the iOS content gets keyed animation; transfer and dock are persisten
   const workspace = ios("MobileWorkspace.tsx");
   assert.match(app, /key=\{destination\} className="ios-page"[^>]+data-ae-route-enter=\{route\.motion\}/);
   assert.doesNotMatch(app, /<(?:TransferWorkspace|MobileNavigation)\s+key=/);
-  assert.match(workspace, /key=\{section\?\.id \?\? "library"\} data-ae-route-enter=\{[^}]+\}/);
+  assert.match(workspace, /<WorkspaceScene scene=\{workspace\}><div className="ios-module-moment" key=\{section\?\.id \?\? "library"\}/);
   assert.match(workspace, /<WorkspaceCategoryHeading\b[^>]+onBack=\{back\}/);
 });
 
@@ -56,9 +56,9 @@ test("immediate route reversals use the live state and do not move the last pres
 
 test("settled or newly suppressed iOS entries cannot replay after Reduce Motion is turned off", () => {
   const app = ios("IosApp.tsx");
-  const workspace = ios("MobileWorkspace.tsx");
-  for (const source of [app, workspace]) {
-    assert.match(source, /onAnimationEnd=/);
-    assert.match(source, /observeMobileMotionSuppression/);
-  }
+  const workspace = ios("../WorkspaceLibrary.tsx");
+  assert.match(app, /onAnimationEnd=/);
+  assert.match(app, /observeMobileMotionSuppression/);
+  assert.match(workspace, /pending.current = undefined;/);
+  assert.match(workspace, /if \(quiet\) setHandoff\(undefined\)/);
 });
