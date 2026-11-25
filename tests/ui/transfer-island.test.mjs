@@ -71,3 +71,14 @@ test("the island reads live transfers at the shared desktop and mobile entry, an
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(styles, /safe-area-inset-bottom/);
 });
+
+test("island chrome participates in the same optical recipe with a foreground crop", () => {
+  const read = name => readFileSync(new URL("../../packages/ui/src/" + name, import.meta.url), "utf8");
+  assert.match(read("TransferIsland.tsx"), /closest<HTMLElement>\("\.ae-shell"\)/);
+  assert.match(read("TransferIsland.tsx"), /GlassSurface material="chrome" className="ae-transfer-island"/);
+  assert.match(read("TransferIsland.tsx"), /canvas[^>]+ae-transfer-island-optical/);
+  const optics = read("GlassOptics.tsx");
+  assert.match(optics, /shadeLens\(output\.data, source, pw, ph, islandBox, scale, t, appearance\)/);
+  assert.match(optics, /putImageData\(output, -x, -y, x, y, width, height\)/);
+  assert.match(optics, /movingGeometry\(island\?\.parentElement\)/);
+});

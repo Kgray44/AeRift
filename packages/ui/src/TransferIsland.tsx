@@ -31,8 +31,8 @@ export function TransferIsland({ transfers = noTransfers, mobile = false, suppre
   const visible = count > 0 && !suppressed;
 
   useLayoutEffect(() => {
-    // Leave routed/transformed content, but stay inside this window's theme and optics.
-    setHost(mounted.current?.closest<HTMLElement>(".ae-theme") ?? null);
+    // Leave routed/transformed content, but stay inside the production optical shell.
+    setHost(mounted.current?.closest<HTMLElement>(".ae-shell") ?? null);
   }, []);
 
   useLayoutEffect(() => {
@@ -82,8 +82,8 @@ export function TransferIsland({ transfers = noTransfers, mobile = false, suppre
     {host && createPortal(
       <aside aria-label="Active transfers" hidden={!visible} inert={!visible}
         className="ae-transfer-island-frame" data-mobile={mobile} data-collapsed={collapsed}>
-        <GlassSurface material="overlay" className="ae-transfer-island"
-          data-ae-lens-role={visible ? "control" : undefined} data-visible={visible}>
+        <GlassSurface material="chrome" className="ae-transfer-island" data-visible={visible}>
+          <canvas className="ae-transfer-island-optical" aria-hidden="true" />
           <div className="ae-transfer-island-summary">
             <span className="ae-transfer-island-symbol">
               <SpatialIcon name={incoming && outgoing ? "activity" : incoming ? "drop" : "send"} size={18} />

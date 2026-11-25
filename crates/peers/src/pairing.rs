@@ -489,6 +489,20 @@ impl Pairing {
         Ok(state.wan_stopped.clone())
     }
 
+    pub(crate) fn wan_active_endpoint(&self, peer: PeerId) -> Result<[u8; 32], TransferError> {
+        let state = self.state();
+        if !state.trusted.contains_key(&peer) {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        state
+            .wan_keys
+            .iter()
+            .find_map(|(key, (owner, lease))| {
+                (*owner == peer && !lease.is_cancelled()).then_some(*key)
+            })
+            .ok_or_else(|| ErrorCode::PeerUntrusted.into())
+    }
+
     pub(crate) fn wan_trust(
         &self,
         peer: PeerId,

@@ -20,11 +20,31 @@
 }
 .ae-transfer-island {
   inline-size: min(100%, 29rem);
-  border-radius: 1.65rem;
+  position: relative;
+  isolation: isolate;
   padding: .35rem .55rem;
   pointer-events: auto;
   animation: ae-transfer-island-enter var(--ae-motion-overlay) var(--ae-motion-out) both;
   transition: inline-size var(--ae-motion-overlay) var(--ae-motion-out);
+}
+.ae-transfer-island-optical {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  display: none;
+}
+.ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
+  .ae-shell[data-ae-optics="ready"] .ae-transfer-island[data-visible="true"][data-ae-lens="sampled"] > .ae-transfer-island-optical {
+  display: block;
+}
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"] .ae-transfer-island > .ae-transfer-island-optical {
+    visibility: hidden;
+  }
 }
 .ae-transfer-island-frame[data-collapsed="true"] .ae-transfer-island {
   inline-size: min(100%, 18rem);
