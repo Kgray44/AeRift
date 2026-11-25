@@ -1,5 +1,10 @@
 //! Opt-in Remote lane. No discovery, shared directory, or nearby grants.
-use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    path::Path,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use aerift_transfer::{
     Connector, ErrorCode, IncomingTransfer, PeerId, ReceiveLimits, Receiver, Sender, Status,
@@ -145,6 +150,58 @@ impl RemotePeerNode {
         let mut invitation = self.peer.pairing().create_invitation_for(Some(expected))?;
         invitation.code = invitation.code.replacen("aerift:v1:", PREFIX, 1);
         Ok(invitation)
+    }
+
+    /// Pack a targeted invitation and both outer keys in a single signed
+    /// message. Supply the recipient fingerprint and endpoint key obtained
+    /// together through an authenticated private exchange. No IPs, URLs or
+    /// operator configuration travel in the code.
+    pub fn create_wan_invitation(
+        &self,
+        expected: PeerId,
+        issuer_endpoint_key: [u8; 32],
+        recipient_endpoint_key: [u8; 32],
+    ) -> Result<String, TransferError> {
+        crate::wan_invitation::verify_distinct_keys(issuer_endpoint_key, recipient_endpoint_key)?;
+        crate::wan_invitation::seal(
+            self.peer.identity(),
+            expected,
+            issuer_endpoint_key,
+            recipient_endpoint_key,
+            self.create_invitation(expected)?,
+        )
+    }
+
+    /// Verify before any route selection or dial. Use the separately trusted
+    /// issuer fingerprint and the current locally owned WAN endpoint key.
+    pub fn inspect_wan_invitation(
+        &self,
+        code: &str,
+        expected_issuer: PeerId,
+        local_endpoint_key: [u8; 32],
+    ) -> Result<crate::WanInvitationBinding, TransferError> {
+        crate::wan_invitation::inspect_at(
+            code,
+            expected_issuer,
+            self.device().id,
+            local_endpoint_key,
+            SystemTime::now(),
+        )
+    }
+
+    /// Redeem only through an operator-configured route. The callback
+    /// receives a verified binding, not an untrusted endpoint or relay URL.
+    /// Existing pinned inner TLS and both consent decisions remain required.
+    pub async fn redeem_wan_invitation<R: RemoteRoute>(
+        &self,
+        code: &str,
+        expected_issuer: PeerId,
+        local_endpoint_key: [u8; 32],
+        route_for: impl FnOnce(&crate::WanInvitationBinding) -> Result<R, TransferError>,
+    ) -> Result<Device, TransferError> {
+        let invitation = self.inspect_wan_invitation(code, expected_issuer, local_endpoint_key)?;
+        let route = route_for(&invitation)?;
+        self.redeem_via(route, &invitation.code).await
     }
 
     pub fn cancel_invitation(&self) {
@@ -395,7 +452,7 @@ impl RemotePeerNode {
     }
 }
 
-fn parse_invitation(code: &str) -> Result<RedeemCode, TransferError> {
+pub(crate) fn parse_invitation(code: &str) -> Result<RedeemCode, TransferError> {
     let suffix = code
         .strip_prefix(PREFIX)
         .filter(|value| value.len() == 64 + 1 + 43)

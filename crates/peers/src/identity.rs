@@ -68,6 +68,30 @@ impl Identity {
         Ok(identity)
     }
 
+    pub(crate) fn certificate_der(&self) -> &[u8] {
+        self.certificate.as_ref()
+    }
+
+    pub(crate) fn sign_wan_invitation(&self, body: &[u8]) -> Result<Vec<u8>, TransferError> {
+        use ring::{
+            rand::SystemRandom,
+            signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair},
+        };
+        let rng = SystemRandom::new();
+        let key = EcdsaKeyPair::from_pkcs8(
+            &ECDSA_P256_SHA256_ASN1_SIGNING,
+            self.key.secret_pkcs8_der(),
+            &rng,
+        )
+        .map_err(|_| ErrorCode::StorageFailed)?;
+        let message = crate::wan_invitation::transcript(body);
+        Ok(key
+            .sign(&rng, &message)
+            .map_err(|_| ErrorCode::InternalError)?
+            .as_ref()
+            .to_vec())
+    }
+
     pub fn id(&self) -> PeerId {
         PeerId::from_tls_leaf(self.certificate.as_ref())
     }
@@ -98,7 +122,10 @@ impl Identity {
     }
 }
 
-fn profile(leaf: &CertificateDer<'_>, intermediates: &[CertificateDer<'_>]) -> Result<(), Error> {
+pub(crate) fn profile(
+    leaf: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+) -> Result<(), Error> {
     let invalid = || Error::InvalidCertificate(CertificateError::BadEncoding);
     if !intermediates.is_empty() || leaf.len() > 4096 {
         return Err(invalid());
