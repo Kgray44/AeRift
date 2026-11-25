@@ -5,6 +5,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
+import { WorkspacePhotosGallery } from "../WorkspacePhotosGallery";
+import { NoteIconButton } from "../WorkspaceNoteTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
 import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
@@ -67,7 +69,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const section = workspace.section;
   const current = section ? { id: section.module, label: section.label } : undefined;
   const fileTools = useWorkspaceFileTools(`desktop:${section?.id ?? "all"}`);
-  const fileCategory = current?.id === "files" || current?.id === "photos";
+  const fileCategory = current?.id === "files";
   const itemsRef = useRef<HTMLElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
   useDesktopContentEnter(section?.id, itemsRef);
@@ -138,7 +140,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     }
   }
 
-  function importFiles(files: File[], mediaOnly: boolean) {
+  async function importFiles(files: File[], mediaOnly: boolean): Promise<readonly string[]> {
     const additions: WorkspaceEntry[] = [];
     for (const file of files) {
       const kind = file.type.startsWith("image/") ? "photo" : file.type.startsWith("video/") ? "video" : "file";
@@ -146,8 +148,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       additions.push({ object: { ...newObject(file.name), kind: mediaOnly ? kind : "file",
         sizeBytes: file.size, mediaType: file.type || undefined }, asset: file });
     }
-    if (additions.length) void change(() => additions, `Imported ${additions.length} ${additions.length === 1 ? "item" : "items"}.`);
-    else if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
+    if (additions.length) {
+      const saved = await change(() => additions, `Imported ${additions.length} ${additions.length === 1 ? "item" : "items"}.`);
+      return saved ? additions.map(({ object }) => object.id) : [];
+    }
+    if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
+    return [];
   }
 
   async function submit(event: FormEvent<HTMLFormElement>, kind: "url" | "collection") {
@@ -247,8 +253,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const pages = Math.max(1, Math.ceil(visible.length / pageSize));
   const page = Math.min(pageIndex, pages - 1);
   const visiblePage = visible.slice(page * pageSize, (page + 1) * pageSize);
-  const importLabel = current?.id === "photos" ? "Import photos and videos" :
-    section?.id === "documents" ? "Import documents" : "Import files";
+  const importLabel = section?.id === "documents" ? "Import documents" : "Import files";
   const selectedVisible = visible.filter(({ object }) => selected.includes(object.id)).map(({ object }) => object.id);
 
   return <div className="aerift-workspace">
@@ -261,17 +266,29 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       disabled={disabled} onSave={object => change(() => [{ object }], "")} onRemove={id => removeObjects([id])}
       onBack={workspace.back} heading={back => <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} desktop />}
       collectionSelection={selected} onCollectionSelect={select} />}
-    {current && section?.id !== "notes" && <div className="aerift-workspace-content">
+
+    {current?.id === "photos" && <WorkspacePhotosGallery
+      catalog={categoryItems.flatMap(({ object, hasAsset }) =>
+        (object.kind === "photo" || object.kind === "video") && hasAsset ? [{ id: object.id, name: object.name, kind: object.kind, object }] : [])}
+      scope="desktop" disabled={disabled} readAsset={loadWorkspaceAsset}
+      onImport={files => importFiles(files, true)} onRemove={id => removeObjects([id])}
+      emptyText="No photos here yet. Use the plus icon to import photos or videos."
+      viewer={({ object }) => <>
+        <AssetPreview object={object} />
+        <NoteIconButton icon="folder" type="button" label="Select photo for collection" aria-pressed={selected.includes(object.id)}
+          onClick={() => select(object.id, !selected.includes(object.id))} />
+      </>} />}
+    {current && section?.id !== "notes" && current.id !== "photos" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
         onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
-        {(current?.id === "files" || current?.id === "photos") &&
+        {current?.id === "files" &&
           <div className="aerift-workspace-import">
             <IconAction variant="secondary" icon="add" label={importLabel} disabled={disabled}
               onClick={() => importInput.current?.click()} />
-            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
+            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={section?.id === "documents" ? ".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.pages,.ppt,.pptx,.key,.odp,.xls,.xlsx,.ods,.numbers,.csv,.tsv,.epub" : undefined}
               onChange={event => {
-                importFiles(Array.from(event.currentTarget.files ?? []), current.id === "photos");
+                void importFiles(Array.from(event.currentTarget.files ?? []), false);
                 event.currentTarget.value = "";
               }} />
           </div>}
@@ -301,12 +318,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
             change(() => [{ object: { ...selectedCollection, itemIds: next } }], "Collection updated.")} />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
-          label={section?.id === "documents" ? "Search imported documents" : current.id === "photos" ? "Search imported media" : "Search imported files"}
-          kinds={section?.id === "documents" ? [] : current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
+          label={section?.id === "documents" ? "Search imported documents" : "Search imported files"}
+          kinds={section?.id === "documents" ? [] : ["document", "photo", "video", "other"]} />
       </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
         {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}
-        {entries && current && categoryItems.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved {current.id === "photos" ? "media" : "items"} yet</h4>{(current.id === "files" || current.id === "photos") && <p>Use the add button above to import.</p>}</div>}
+        {entries && current && categoryItems.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved items yet</h4>{current.id === "files" && <p>Use the add button above to import.</p>}</div>}
         {selectedVisible.length > 0 && <div>
           <Button variant="quiet" disabled={disabled} onClick={() => removeObjects(selectedVisible)}>
             Remove selected ({selectedVisible.length})

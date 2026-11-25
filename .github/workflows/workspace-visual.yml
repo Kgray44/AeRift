@@ -42,6 +42,9 @@ jobs:
           AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
             AERIFT_WORKSPACE_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
             node tests/ui/workspace-browser.mjs
+          AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            AERIFT_WORKSPACE_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
+            node tests/ui/photos-gallery-browser.mjs
           AERIFT_FRIENDS_PLAYWRIGHT="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
             AERIFT_FRIENDS_URL=http://127.0.0.1:4175 \
             AERIFT_FRIENDS_SCREENSHOT="$RUNNER_TEMP/aerift-workspace-evidence/friends-desktop.png" \
