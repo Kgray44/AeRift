@@ -116,7 +116,7 @@ test("offline card diverts before relay or app construction and exposes no rende
   const branch = run.indexOf("Some(LaunchMode::OfflineCard) => return show_offline_device_card()");
   assert.ok(branch >= 0 && branch < run.indexOf("OPERATOR_RELAY") && branch < run.indexOf("tauri::Builder"));
   const offline = native.slice(native.indexOf("fn show_offline_device_card()"), native.indexOf("fn start_in_profile"));
-  assert.match(offline, /native_app_local_data_base\(\)/);
+  assert.match(offline, /open_qualification_root\(\)/);
   assert.match(offline, /derive_offline_in_profile\(&root\)/);
   assert.match(offline, /writeln!\(io::stdout\(\)\.lock\(\), "\{public_card\}"\)/);
   assert.doesNotMatch(offline, /OperatorRelay|WanSession|RECEIVE_DIRECTORY|\.trust|tauri::Builder/);
@@ -141,4 +141,13 @@ test("the native WebView smoke is ignored, test-only, and has no online fixture"
   assert.match(smoke, /\.data_directory\(temp\.path\(\)\.join\("webview-data"\)\)/);
   assert.match(smoke, /run_qualification_app/);
   assert.doesNotMatch(smoke, /WanSession::start|WanEndpoint::bind|https?:\/\//);
+});
+
+test("WAN preview uses a dedicated qualification profile, not the installed app profile", () => {
+  const native = readFileSync(new URL("../private_remote_wan_qualification.rs", assets), "utf8");
+  assert.match(native, /const APPLICATION_ID: &str = "com\.kgamazing44\.aerift\.wanpreview";/);
+  assert.match(native, /context\.config_mut\(\)\.identifier = APPLICATION_ID\.into\(\);/);
+  assert.match(native, /fn open_qualification_root[\s\S]*?\.join\(APPLICATION_ID\)/);
+  assert.match(native, /fn show_offline_device_card[\s\S]*?open_qualification_root\(\)/);
+  assert.match(native, /pub\(crate\) fn run\(\)[\s\S]*?open_qualification_root\(\)/);
 });

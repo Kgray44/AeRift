@@ -36,7 +36,8 @@ use crate::{
 // One trusted build input. No runtime environment, files, URLs, or relay
 // addresses from the CLI or a webview are accepted. Never print this value.
 const OPERATOR_RELAY: Option<&str> = option_env!("AERIFT_TRUSTED_QUALIFICATION_RELAY");
-const APPLICATION_ID: &str = "com.kgamazing44.aerift";
+// Never share the regular installation’s profile, keys, or WebView data.
+const APPLICATION_ID: &str = "com.kgamazing44.aerift.wanpreview";
 const RECEIVE_DIRECTORY: &str = "RemoteWanQualificationReceived";
 
 const WINDOW: &str = "private-wan-qualification";
@@ -214,32 +215,34 @@ fn derive_offline_in_profile(root: &Path) -> Result<(PrivateRemoteProfile, Strin
     Ok((locked, card))
 }
 
+fn open_qualification_root() -> io::Result<PathBuf> {
+    let root = native_app_local_data_base()?.join(APPLICATION_ID);
+    match fs::create_dir(&root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    normal_local_directory(&root)?;
+    Ok(root)
+}
+
 fn show_offline_device_card() -> i32 {
-    let card = (|| -> Result<(PrivateRemoteProfile, String), ()> {
-        let root = native_app_local_data_base()
-            .map_err(|_| ())?
-            .join(APPLICATION_ID);
-        // First use may initialize the profile + protected identity only.
-        match fs::create_dir(&root) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err(()),
-        }
-        derive_offline_in_profile(&root)
-    })();
+    // First use may initialize the pilot profile and protected identity only.
+    let card = open_qualification_root()
+        .map_err(|_| ())
+        .and_then(|root| derive_offline_in_profile(&root));
     if let Ok((_locked, public_card)) = card {
         if writeln!(io::stdout().lock(), "{public_card}").is_ok() {
             return 0;
         }
     }
-    eprintln!("Could not display the offline public device card. Close AeRift and try again.");
+    eprintln!("Could not display the offline pilot card. Close any other WAN preview and try again.");
     2
 }
 
 fn start_in_profile(root: &Path, relay: OperatorRelay) -> Result<WanSession, ()> {
     normal_local_directory(root).map_err(|_| ())?;
-    // This is the same lock used by Nearby and the manually configured VPN
-    // runtime. Open and retain it before creating the receive directory.
+    // Lock the dedicated preview profile before creating the receive directory.
     let profile = PrivateRemoteProfile::open(root).map_err(|_| ())?;
     let destination = root.join(RECEIVE_DIRECTORY);
     match fs::create_dir(&destination) {
@@ -292,6 +295,7 @@ fn shutdown_after_join(
 
 fn private_context() -> tauri::Context<Wry> {
     let mut context = tauri::generate_context!();
+    context.config_mut().identifier = APPLICATION_ID.into();
     context.config_mut().app.windows.clear();
     context.config_mut().build.dev_url = None;
     context.set_assets(Box::new(QualificationAssets));
@@ -354,8 +358,8 @@ pub(crate) fn run() -> i32 {
         eprintln!("WAN qualification application could not start.");
         return 2;
     };
-    let Ok(root) = app.path().app_local_data_dir() else {
-        eprintln!("WAN qualification requires the existing AeRift profile.");
+    let Ok(root) = open_qualification_root() else {
+        eprintln!("WAN qualification could not open its dedicated preview profile.");
         return 2;
     };
     let Ok(session) = start_in_profile(&root, relay) else {
@@ -418,8 +422,10 @@ mod tests {
             assert_eq!(fs::read(file).unwrap(), b"synthetic invalid grant");
         }
         let context: tauri::Context<Wry> = tauri::generate_context!();
-        assert_eq!(context.config().identifier, APPLICATION_ID);
-        assert!(context.config().app.app_directories_override.is_none());
+        assert_ne!(context.config().identifier, APPLICATION_ID);
+        let pilot_context = private_context();
+        assert_eq!(pilot_context.config().identifier, APPLICATION_ID);
+        assert!(pilot_context.config().app.app_directories_override.is_none());
         for nonlocal in [r"\\remote.invalid\share", "relative"] {
             assert!(require_local_profile_base(Path::new(nonlocal)).is_err());
         }
