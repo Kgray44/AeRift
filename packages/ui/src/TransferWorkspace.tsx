@@ -603,9 +603,10 @@ export function TransferWorkspace({ port, gesture, activityFooter, activityLibra
   }
 
   const activitySection = <section key="activity" id={activityId} hidden={destination !== "activity"}
-    aria-label={mobile ? "Transfer history" : undefined}
-    aria-labelledby={mobile ? undefined : `${activityId}-heading`} className="ae-activity">
+    aria-label={mobile || hosted ? "Activity" : undefined} className="ae-activity">
     {destination === "activity" && activityLibrary}
+    <section aria-label={mobile ? "Transfer history" : undefined}
+      aria-labelledby={mobile ? undefined : `${activityId}-heading`}>
     <div className="ae-activity-header">
       {mobile ? <h3>Transfer history</h3> : hosted ? <h3 id={`${activityId}-heading`}>Transfer history</h3> :
         <h2 id={`${activityId}-heading`}>Activity</h2>}
@@ -631,6 +632,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, activityLibra
     </div> : <div className="ae-activity-empty"><SpatialIcon name="activity" size={24} />
       <p>{canFilterActivity && activityFilter !== "all" ? "No transfers match this view." :
         channel.length ? "No other transfers." : "No transfers yet."}</p></div>}
+    </section>
     {activityFooter}
   </section>;
 
