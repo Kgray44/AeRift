@@ -214,20 +214,27 @@ function AtmosphereFallback() {
  */
 export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<GlassAppearanceRecipe> } = {}) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const atmosphereRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     const shell = canvas?.parentElement;
     const theme = shell?.closest<HTMLElement>(".ae-theme");
-    if (!canvas || !shell || !theme || typeof window.matchMedia !== "function") return;
+    const scene = atmosphereRef.current;
+    if (!canvas || !scene || !shell || !theme || typeof window.matchMedia !== "function") return;
     const ctx = canvas.getContext("2d", { alpha: false });
     const backing = document.createElement("canvas");
     const paint = backing.getContext("2d", { alpha: false, willReadFrequently: true });
-    if (!ctx || !paint) return;
+    const sceneCtx = scene.getContext("2d", { alpha: false });
+    if (!ctx || !paint || !sceneCtx) return;
     const media = ["(forced-colors: active)", "(prefers-contrast: more)", "(prefers-reduced-transparency: reduce)", "(prefers-reduced-motion: reduce)"].map(query => window.matchMedia(query));
     const marked = new Set<HTMLElement>();
     let frame = 0, timer = 0, lastAdvanced = 0, phase = 0, deadline = 0, faulted = false;
     let atmosphere = atmosphereTarget();
     let output: ImageData | undefined;
+    let artwork: ImageData | undefined;
+    let paintedSceneKey = "";
+    let scrolling = false, scrollTimer = 0;
+    const scrollQuietMs = 110;
     let observedIsland: HTMLElement | null = null;
     const tag = (sampled: Set<HTMLElement>, local: Set<HTMLElement> = new Set()) => {
       for (const element of marked) if (!sampled.has(element) && !local.has(element)) {
@@ -240,9 +247,16 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
           marked.add(element);
         }
     };
-    const clear = () => { delete shell.dataset.aeOptics; tag(new Set()); if (!canvas.hidden) canvas.hidden = true; };
+    const clear = () => {
+      delete shell.dataset.aeOptics;
+      delete shell.dataset.aeScrolling;
+      tag(new Set());
+      canvas.hidden = true;
+      scene.hidden = true;
+    };
     const paintFrame = (now: number) => {
       frame = 0;
+      if (scrolling) return;
       const explicit = theme.dataset;
       if (explicit.aeTheme !== "glass" || explicit.contrast === "increase" || explicit.transparency === "reduce"
         || media[0].matches || media[1].matches || media[2].matches || faulted) { clear(); return; }
@@ -250,20 +264,23 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       const reduced = explicit.motion === "reduce" || media[3].matches;
       const seconds = lastAdvanced ? Math.min((now - lastAdvanced) / 1000, .25) : .14;
       const appearance = appearanceRecipe ? { ...R, ...appearanceRecipe } : R;
-      phase += seconds * appearance.speed / 100;
       lastAdvanced = now;
       const bounds = shell.getBoundingClientRect();
-      const top = Math.max(0, -bounds.top), left = Math.max(0, -bounds.left);
-      const width = Math.min(bounds.right, window.innerWidth) - Math.max(0, bounds.left);
-      const height = Math.min(bounds.bottom, window.innerHeight) - Math.max(0, bounds.top);
+      // The art is physically viewport anchored; document Y never contributes.
+      const originX = Math.max(0, bounds.left), originY = 0;
+      const width = Math.min(bounds.right, window.innerWidth) - originX;
+      const height = window.innerHeight;
       if (width < 12 || height < 12) { clear(); return; }
       const scale = opticalViewportScale(width, height, window.devicePixelRatio || 1);
       const pw = Math.max(2, Math.round(width * scale)), ph = Math.max(2, Math.round(height * scale));
       if (backing.width !== pw || backing.height !== ph) { backing.width = pw; backing.height = ph; }
       if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; output = undefined; }
-      canvas.style.left = left + "px"; canvas.style.top = top + "px";
-      canvas.style.width = width + "px"; canvas.style.height = height + "px";
-      const originX = bounds.left + left, originY = bounds.top + top;
+      if (scene.width !== pw || scene.height !== ph) { scene.width = pw; scene.height = ph; paintedSceneKey = ""; }
+      for (const layer of [canvas, scene]) {
+        layer.style.left = originX + "px";
+        layer.style.width = width + "px";
+        layer.style.height = height + "px";
+      }
       const elements = new Map<HTMLElement, Surface>();
       const local = new Set<HTMLElement>();
       const island = shell.querySelector<HTMLElement>(".ae-transfer-island[data-visible='true']");
@@ -323,15 +340,27 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         const moving = Math.abs(target.energy - atmosphere.energy) > .01
           || Math.abs(target.bend - atmosphere.bend) > .03 || Math.abs(target.x - atmosphere.x) > .015
           || Math.abs(target.y - atmosphere.y) > .015;
-        atmosphere = reduced ? target : blendAtmosphere(atmosphere, target, seconds);
+        // Resampling settled lens geometry is not an animation clock. Scroll
+        // and unrelated DOM changes cannot advance or regenerate the scene.
+        if (!reduced && (moving || deadline > now)) phase += seconds * appearance.speed / 100;
+        if (moving || reduced) atmosphere = reduced ? target : blendAtmosphere(atmosphere, target, seconds);
         const t = reduced ? 0 : phase;
         const intensity = atmosphereIntensity(!!rift, atmosphere.energy, light);
-        paintAtmosphere(paint, pw, ph, t, light, atmosphere, intensity, light ? 100 : 108);
-        const source = paint.getImageData(0, 0, pw, ph).data;
         const exposure = clamp(appearance.exposure, 50, 150) / 100;
-        if (exposure !== 1) for (let j = 0; j < source.length; j += 4) {
-          source[j] *= exposure; source[j+1] *= exposure; source[j+2] *= exposure;
+        const sceneKey = [pw, ph, light, t, intensity, exposure, atmosphere.energy, atmosphere.bend,
+          atmosphere.x, atmosphere.y].join(":");
+        if (sceneKey !== paintedSceneKey) {
+          paintAtmosphere(paint, pw, ph, t, light, atmosphere, intensity, light ? 100 : 108);
+          artwork = paint.getImageData(0, 0, pw, ph);
+          const pixels = artwork.data;
+          if (exposure !== 1) for (let j = 0; j < pixels.length; j += 4) {
+            pixels[j] *= exposure; pixels[j+1] *= exposure; pixels[j+2] *= exposure;
+          }
+          sceneCtx.putImageData(artwork, 0, 0);
+          paintedSceneKey = sceneKey;
         }
+        if (!artwork) return;
+        const source = artwork.data;
         if (!output) output = ctx.createImageData(pw, ph);
         output.data.set(source);
         // Do not compound white reflections in nested controls: each surface
@@ -373,7 +402,9 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         shell.style.setProperty("--ae-lab-local-blur", `${appearance.softness * .70}px`);
         tag(new Set(elements.keys()), local);
         if (canvas.hidden) canvas.hidden = false;
+        if (scene.hidden) scene.hidden = false;
         shell.dataset.aeOptics = "ready";
+        delete shell.dataset.aeScrolling;
         // Schedule only an in-flight interaction/transition, never an idle loop.
         if (!reduced && (moving || deadline > now)) timer = window.setTimeout(queue, 55);
         else lastAdvanced = 0;
@@ -386,12 +417,12 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     const onContextLost = () => { faulted = true; clear(); };
     const queue = () => {
       window.clearTimeout(timer);
-      if (frame || document.hidden) return;
+      if (frame || scrolling || document.hidden) return;
       const delay = Math.max(0, 50 - (performance.now() - lastAdvanced));
       if (delay > 4) timer = window.setTimeout(queue, delay);
       else frame = requestAnimationFrame(paintFrame);
     };
-    const animate = () => { deadline = performance.now() + 680; queue(); };
+    const animate = () => { if (!scrolling) { deadline = performance.now() + 680; queue(); } };
     const opticalHover = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest(".ae-orbit")) animate();
     };
@@ -407,7 +438,25 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         frame = 0; lastAdvanced = 0;
       } else queue();
     };
-    const onScroll = () => queue();
+    const onScroll = (event: Event) => {
+      // Capture document and app-owned scrollers, but don't react to scrolling
+      // a dialog, input, or unrelated fixture elsewhere in the document.
+      const target = event.target;
+      if (target instanceof Element && (!shell.contains(target) ||
+        target.closest("dialog, .ae-popover, input, textarea"))) return;
+      if (!scrolling) {
+        scrolling = true;
+        shell.setAttribute("data-ae-scrolling", "");
+        cancelAnimationFrame(frame);
+        window.clearTimeout(timer);
+        frame = 0; lastAdvanced = 0; deadline = 0;
+      }
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(() => {
+        scrolling = false;
+        queue();
+      }, scrollQuietMs);
+    };
     const geometryEvent = (event: Event) => {
       if (event.target instanceof Element && event.target.matches(
         "[data-ae-route-enter], .ae-workspace-view, .ae-orbit-choice, .ae-orbit-orb, .ae-spatial-glyph, .ae-button, " +
@@ -429,14 +478,17 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       else mq.addListener(settle);
     }
     canvas.addEventListener("contextlost", onContextLost);
+    scene.addEventListener("contextlost", onContextLost);
     backing.addEventListener("contextlost", onContextLost);
     window.addEventListener("resize", settle);
     window.addEventListener("scroll", onScroll, { passive: true, capture: true });
     window.visualViewport?.addEventListener("resize", settle);
     document.addEventListener("visibilitychange", visibility);
     document.addEventListener(appearanceCommitEvent, appearanceChanged);
-    shell.addEventListener("pointerdown", animate, { passive: true });
-    shell.addEventListener("focusin", animate);
+    // A touch may become a scroll before any route or transfer changes.
+    // Ordinary pointer/focus feedback only requests geometry, not moving art.
+    shell.addEventListener("pointerdown", settle, { passive: true });
+    shell.addEventListener("focusin", settle);
     shell.addEventListener("pointerover", opticalHover, { passive: true });
     shell.addEventListener("pointerout", opticalHover, { passive: true });
     for (const name of geometryEvents) shell.addEventListener(name, geometryEvent, true);
@@ -445,21 +497,23 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(timer);
+      window.clearTimeout(scrollTimer);
       changes.disconnect(); resize?.disconnect();
       for (const mq of media) {
         if (typeof mq.removeEventListener === "function") mq.removeEventListener("change", settle);
         else mq.removeListener(settle);
       }
       canvas.removeEventListener("contextlost", onContextLost);
+      scene.removeEventListener("contextlost", onContextLost);
       backing.removeEventListener("contextlost", onContextLost);
       window.removeEventListener("resize", settle); window.removeEventListener("scroll", onScroll, true);
       window.visualViewport?.removeEventListener("resize", settle);
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener(appearanceCommitEvent, appearanceChanged);
-      shell.removeEventListener("pointerdown", animate); shell.removeEventListener("focusin", animate);
+      shell.removeEventListener("pointerdown", settle); shell.removeEventListener("focusin", settle);
       shell.removeEventListener("pointerover", opticalHover); shell.removeEventListener("pointerout", opticalHover);
       clear();
     };
   }, [appearanceRecipe]);
-  return <><AtmosphereFallback /><canvas ref={ref} className="ae-glass-optics" aria-hidden="true" hidden /></>;
+  return <><AtmosphereFallback /><canvas ref={atmosphereRef} className="ae-glass-atmosphere" aria-hidden="true" hidden /><canvas ref={ref} className="ae-glass-optics" aria-hidden="true" hidden /></>;
 }
