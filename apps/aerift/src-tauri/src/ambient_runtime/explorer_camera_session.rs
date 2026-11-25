@@ -12,9 +12,10 @@ use aerift_transfer::ambient_camera::{
 
 use super::{ambient_context, camera_policy, AmbientRuntime, CaptureAnchor, CameraMode, Supervisor};
 use super::explorer_gesture::{ExplorerCameraContext, ExplorerGesture};
-use crate::ambient_media_foundation::{NativeCameraGrant, NativeIndicator, WindowsCameraProvider};
+use crate::ambient_media_foundation::{NativeCameraGrant, WindowsCameraProvider};
 
 mod notifications;
+mod indicator;
 
 const POLL_MILLISECONDS: u32 = 20;
 
@@ -67,12 +68,11 @@ impl Drop for Exclusive {
 
 impl AmbientRuntime {
     /// Only a native owner with a deliberately chosen, currently granted device
-    /// and a real user-visible indicator may call this. No permission prompt at
-    /// acquisition. Require an eligible Explorer foreground at invocation.
+    /// may call this. This session installs and owns its own visible indication.
+    /// No permission prompt at acquisition. Require an eligible Explorer foreground.
     pub(crate) fn start_explorer_camera_session(
         &self,
         grant: NativeCameraGrant,
-        indicator: impl NativeIndicator,
         model: impl RgbLandmarker,
     ) -> Result<ExplorerCameraSession, ExplorerCameraEnd> {
         grant.allowed().map_err(ExplorerCameraEnd::Unavailable)?;
@@ -92,9 +92,23 @@ impl AmbientRuntime {
             };
             let invalidated = events.latch();
             let grant = Arc::new(grant);
-            let provider = WindowsCameraProvider::with_shared_grant(model, indicator, grant.clone());
+            if stop_worker.load(Ordering::Acquire) || events.drain().is_err()
+                || runtime.explorer_session_policy(anchor).is_err()
+            {
+                return ExplorerCameraEnd::ContextLost;
+            }
+            let surface = match indicator::Surface::display() {
+                Ok(surface) => surface,
+                Err(issue) => return ExplorerCameraEnd::Unavailable(issue),
+            };
+            // Declared after surface; sensor and indicator guard are joined
+            // before the visible native surface is destroyed.
+            let indicator = surface.occupancy();
+            let provider = WindowsCameraProvider::with_shared_grant(
+                model, indicator::ProviderIndicator(indicator.clone()), grant.clone(),
+            );
             let camera = match CameraSupervisor::spawn(provider) {
-                Ok(camera) => Arc::new(camera),
+                Ok(camera) => camera,
                 Err(_) => return ExplorerCameraEnd::Unavailable(CameraIssue::DeviceUnavailable),
             };
             let continuing = |context| same_epoch(origin_epoch, policy.camera_mode(), context);
@@ -106,6 +120,9 @@ impl AmbientRuntime {
             }
             if events.drain().is_err() {
                 return ExplorerCameraEnd::ContextLost;
+            }
+            if !surface.check() {
+                return ExplorerCameraEnd::Unavailable(CameraIssue::IndicatorUnavailable);
             }
             camera.configure(policy, !stop_worker.load(Ordering::Acquire));
             let mut gesture = ExplorerGesture::default();
@@ -123,6 +140,9 @@ impl AmbientRuntime {
                 if !continuing(runtime.explorer_session_policy(anchor).ok()) {
                     break ExplorerCameraEnd::ContextLost;
                 }
+                if !surface.check() {
+                    break ExplorerCameraEnd::Unavailable(CameraIssue::IndicatorUnavailable);
+                }
                 match camera.status() {
                     CameraStatus::Running(mode) if mode == policy.camera_mode() => {
                         let now = Instant::now();
@@ -135,20 +155,22 @@ impl AmbientRuntime {
                             if events.drain().is_err() {
                                 break ExplorerCameraEnd::ContextLost;
                             }
+                            if !surface.check() || !indicator.occupying() {
+                                break ExplorerCameraEnd::Unavailable(CameraIssue::IndicatorUnavailable);
+                            }
                             let stop = stop_worker.clone();
                             let invalidated = invalidated.clone();
+                            let indicator = indicator.clone();
                             let runtime_weak = Arc::downgrade(&runtime.0);
-                            let camera = Arc::downgrade(&camera);
                             let grant = grant.clone();
                             runtime.request_explorer_gesture(pickup, move || {
                                     let runtime = runtime_weak.upgrade()?;
-                                    let camera = camera.upgrade()?;
                                     (live_authority(
                                         stop.load(Ordering::Acquire) || invalidated.load(Ordering::Acquire),
                                         runtime.generation.load(Ordering::Acquire) == origin_epoch,
                                         ambient_context::interactive_session(),
                                         grant.allowed().is_ok(),
-                                        camera.status() == CameraStatus::Running(mode),
+                                        indicator.occupying(),
                                     )).then_some(authority)
                             });
                         }
@@ -165,7 +187,10 @@ impl AmbientRuntime {
             // Revoke pending capture before the worker waits for sensor teardown.
             stop_worker.store(true, Ordering::Release);
             camera.configure(Default::default(), false);
-            end
+            match camera.shutdown() {
+                Ok(()) => end,
+                Err(issue) => ExplorerCameraEnd::Unavailable(issue),
+            }
         }).map_err(|_| ExplorerCameraEnd::Unavailable(CameraIssue::DeviceUnavailable))?;
         Ok(ExplorerCameraSession { stop, worker: Some(worker) })
     }

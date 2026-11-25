@@ -65,6 +65,7 @@ impl NativeCameraGrant {
 pub(crate) trait NativeIndicator: Send + 'static {
     type Guard;
     fn show(&mut self) -> Result<Self::Guard, CameraIssue>;
+    fn occupancy_probe(&self) -> Arc<dyn Fn() -> bool + Send + Sync>;
 }
 
 pub(crate) struct WindowsCameraProvider<M, I> {
@@ -105,8 +106,17 @@ impl<M: RgbLandmarker, I: NativeIndicator> LocalCameraProvider for WindowsCamera
         budget: Duration,
     ) -> Result<Self::Lease, CameraIssue> {
         self.grant.allowed()?;
+        let occupancy = self.indicator.occupancy_probe();
+        if !occupancy() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
+        let ingress = MediaReader::start(&self.grant, cadence, budget)?;
+        if !occupancy() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
         Ok(WindowsLandmarkLease {
-            ingress: MediaReader::start(&self.grant, cadence, budget)?,
+            ingress,
+            occupancy,
             model: self.model.clone(),
             grant: self.grant.clone(),
         })
@@ -115,6 +125,7 @@ impl<M: RgbLandmarker, I: NativeIndicator> LocalCameraProvider for WindowsCamera
 
 pub(crate) struct WindowsLandmarkLease<M> {
     ingress: MediaReader,
+    occupancy: Arc<dyn Fn() -> bool + Send + Sync>,
     model: Arc<Mutex<M>>,
     grant: Arc<NativeCameraGrant>,
 }
@@ -122,6 +133,9 @@ pub(crate) struct WindowsLandmarkLease<M> {
 impl<M: RgbLandmarker> LocalLandmarkSource for WindowsLandmarkLease<M> {
     fn sample(&mut self, budget: Duration) -> Result<Option<LandmarkFrame>, CameraIssue> {
         self.grant.allowed()?;
+        if !(self.occupancy)() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
         let deadline = Instant::now() + budget;
         // Keep half the total budget available for the independently bounded model.
         let Some(frame) = self.ingress.sample(budget / 2)? else {
@@ -141,6 +155,9 @@ impl<M: RgbLandmarker> LocalLandmarkSource for WindowsLandmarkLease<M> {
             return Ok(None);
         }
         self.grant.allowed()?;
+        if !(self.occupancy)() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
         Ok(Some(LandmarkFrame {
             captured: frame.captured,
             width: frame.width,
