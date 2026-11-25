@@ -44,6 +44,7 @@ jobs:
             node tests/ui/workspace-browser.mjs
           AERIFT_FRIENDS_PLAYWRIGHT="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
             AERIFT_FRIENDS_URL=http://127.0.0.1:4175 \
+            AERIFT_FRIENDS_PAIR_SCREENSHOT="$RUNNER_TEMP/aerift-workspace-evidence/desktop-friends-pairing.png" \
             AERIFT_FRIENDS_SCREENSHOT="$RUNNER_TEMP/aerift-workspace-evidence/desktop-friends.png" \
             node tests/ui/friends-browser.mjs
       - name: Verify the installed desktop frontend entry with native calls simulated

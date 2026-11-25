@@ -21,23 +21,37 @@ try {
   assert.equal((await commands()).includes("friends_files_view"), false);
   assert.equal(await desktop.getByRole("button", { name: "Revoke", exact: true }).count(), 0);
 
-  await desktop.getByRole("button", { name: "Review friendship invitation" }).click();
-  await desktop.getByRole("heading", { name: "Add a friend" }).waitFor();
-  await desktop.getByRole("button", { name: "Verify and approve friendship" }).click();
-  await desktop.getByRole("button", { name: "Add a friend", exact: true }).waitFor();
-  await desktop.getByRole("button", { name: "Show my private contact card" }).click();
-  assert.equal(await desktop.getByLabel("Share this card privately with your friend").inputValue(), "fixture-card");
-  await desktop.getByRole("button", { name: "Back to friend details" }).click();
+  const addFriend = desktop.getByRole("button", { name: "Add a friend", exact: true });
+  assert.equal(await addFriend.getAttribute("aria-haspopup"), "dialog");
+  assert.ok(await addFriend.locator("svg").isVisible(), "the Add a friend control is icon-first");
+  const pairDialog = desktop.getByRole("dialog", { name: "Friends", exact: true });
+  const reviewInvitation = desktop.getByRole("button", { name: "Review friendship invitation" });
+  await reviewInvitation.click();
+  await pairDialog.waitFor();
+  assert.equal(await pairDialog.evaluate(node => node.matches(":modal")), true);
+  assert.equal(await pairDialog.getByRole("button", { name: "Close Friends" }).evaluate(node => document.activeElement === node), true);
+  await desktop.keyboard.press("Shift+Tab");
+  assert.equal(await desktop.evaluate(() => !document.activeElement?.closest(".ae-friends-list")), true, "modal prevents keyboard focus from reaching background");
+  await pairDialog.getByRole("button", { name: "Verify and approve friendship" }).click();
+  await pairDialog.getByRole("button", { name: "Verify and approve friendship" }).waitFor({ state: "hidden" });
+  await pairDialog.getByRole("button", { name: "Show my private contact card" }).click();
+  assert.equal(await pairDialog.getByLabel("Share this card privately with your friend").inputValue(), "fixture-card");
+  if (process.env.AERIFT_FRIENDS_PAIR_SCREENSHOT) {
+    await desktop.screenshot({ path: process.env.AERIFT_FRIENDS_PAIR_SCREENSHOT, animations: "disabled" });
+  }
+  await desktop.keyboard.press("Escape");
+  await pairDialog.waitFor({ state: "hidden" });
+  await addFriend.press("Enter");
+  await pairDialog.waitFor();
+  await pairDialog.getByRole("button", { name: "Close Friends" }).click();
+  await pairDialog.waitFor({ state: "hidden" });
+  assert.equal(await addFriend.evaluate(node => document.activeElement === node), true, "closing restores focus to the glass plus");
   await desktop.getByRole("button", { name: "Send a file to Test contact A" }).click();
   await desktop.getByRole("heading", { name: "Private transfers" }).waitFor();
-  await desktop.getByLabel("Your reachable private IPv4 address").fill("100.64.0.1");
-  await desktop.getByRole("button", { name: "Open five-minute transfer window" }).click();
-  await desktop.getByText("Transfer window open", { exact: true }).waitFor();
-  assert.ok((await commands()).includes("friends_files_action:open"));
   assert.equal(await desktop.getByRole("combobox", { name: "Friend", exact: true }).inputValue(), "friend-a");
-  await desktop.getByLabel("Their authorized device").selectOption("friend-phone");
-  await desktop.getByLabel("Their offer address").fill("100.64.0.2:54000");
-  await desktop.getByLabel("Their payload address").fill("100.64.0.2:54001");
+  assert.equal(await desktop.getByLabel("Their authorized device").count(), 0);
+  assert.equal(await desktop.getByLabel("Their payload address").count(), 0);
+  assert.equal(await desktop.getByText("Test phone", { exact: true }).count(), 0);
   await desktop.getByRole("button", { name: "Choose a file and send offer" }).click();
   await desktop.getByText("Waiting for acceptance. No file has been sent.").waitFor();
   assert.equal(await desktop.getByRole("button", { name: "Send accepted file" }).isEnabled(), false);
@@ -49,16 +63,29 @@ try {
   await desktop.getByRole("button", { name: "Private transfers", exact: true }).click();
   await desktop.getByText("Waiting for acceptance. No file has been sent.").waitFor();
   await desktop.getByRole("button", { name: "Withdraw offer" }).click();
-  await desktop.getByRole("button", { name: "Close transfer window" }).click();
-  await desktop.getByRole("button", { name: "Open five-minute transfer window" }).waitFor();
+  await desktop.getByRole("button", { name: "Choose file and send offer" }).waitFor();
+  const incoming = desktop.getByRole("region", { name: "Incoming file offer", exact: true });
+  await incoming.getByRole("button", { name: "Decline", exact: true }).click();
+  await incoming.waitFor({ state: "hidden" });
   const calls = await commands();
-  for (const command of ["friends_setup_answer", "friends_files_action:offer", "friends_files_action:withdraw",
-    "friends_files_action:close", "friends_member:view"]) assert.ok(calls.includes(command), command);
+  for (const command of ["friends_setup_answer", "friends_files_action:offer_contact", "friends_files_action:withdraw",
+    "friends_files_action:decline_contact_offer", "friends_member:view"]) assert.ok(calls.includes(command), command);
   assert.equal(calls.includes("friends_files_action:send"), false);
   await desktop.getByRole("button", { name: "Back to friend details" }).click();
   if (process.env.AERIFT_FRIENDS_SCREENSHOT) {
+    // The decorative canvas coalesces geometry updates. Capture the settled resting screen.
+    await desktop.evaluate(async () => {
+      await new Promise(resolve => setTimeout(resolve, 120));
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
     await desktop.screenshot({ path: process.env.AERIFT_FRIENDS_SCREENSHOT, animations: "disabled" });
   }
+  const unavailable = await browser.newPage({ viewport: { width: 950, height: 800 } });
+  await unavailable.goto(base + "/desktop-visual.html?route=friends&friendsFixture=1&friendsRoute=unavailable");
+  await unavailable.getByRole("button", { name: "Private transfers", exact: true }).click();
+  await unavailable.getByText("Friends transfers aren’t available on this connection yet.").waitFor();
+  assert.equal(await unavailable.getByRole("button", { name: "Choose file and send offer" }).count(), 0);
+  assert.equal(await unavailable.getByLabel("Their payload address").count(), 0);
   const empty = await browser.newPage({ viewport: { width: 850, height: 800 }, reducedMotion: "reduce" });
   await empty.goto(base + "/desktop-visual.html?route=friends&friendsFixture=1&state=empty&scheme=light");
   await empty.getByRole("heading", { name: "No friends yet" }).waitFor();
@@ -76,19 +103,27 @@ try {
   await phone.getByRole("button", { name: "Rift", exact: true }).click();
   assert.equal(await phoneName.count(), 0, "Rift never offers a Friends device via Nearby");
   await phone.getByRole("button", { name: "Friends", exact: true }).click();
-  await phone.locator("summary").getByText("Add a friend").click();
-  await phone.getByRole("button", { name: "Show my private contact card" }).click();
-  assert.equal(await phone.getByLabel("Your private contact card").inputValue(), "fixture-card");
-  const generate = phone.getByRole("button", { name: "Create targeted invitation" });
+  const mobileAddFriend = phone.getByRole("button", { name: "Add a friend", exact: true });
+  await mobileAddFriend.click();
+  const mobilePair = phone.getByRole("dialog", { name: "Friends", exact: true });
+  await mobilePair.waitFor();
+  assert.equal(await mobilePair.evaluate(node => getComputedStyle(node).animationName), "none");
+  await mobilePair.getByRole("button", { name: "Show my private contact card" }).click();
+  assert.equal(await mobilePair.getByLabel("Your private contact card").inputValue(), "fixture-card");
+  const generate = mobilePair.getByRole("button", { name: "Create targeted invitation" });
   assert.equal(await generate.isEnabled(), false);
-  await phone.getByLabel("Recipient’s private contact card").fill("recipient-fixture-card");
+  await mobilePair.getByLabel("Recipient’s private contact card").fill("recipient-fixture-card");
   await generate.click();
-  assert.equal(await phone.getByLabel("Private invitation", { exact: true }).inputValue(), "test-fixture");
+  assert.equal(await mobilePair.getByLabel("Private invitation", { exact: true }).inputValue(), "test-fixture");
+  await mobilePair.getByRole("button", { name: "Close Friends" }).click();
+  await mobilePair.waitFor({ state: "hidden" });
+  assert.equal(await mobileAddFriend.evaluate(node => document.activeElement === node), true);
   await phone.getByRole("button", { name: "Test contact A" }).click();
   assert.equal(await phone.getByRole("button", { name: "Test contact B" }).isVisible(), false);
   assert.equal(await phone.getByRole("heading", { name: "Test contact A" }).evaluate(node => document.activeElement === node), true);
   assert.equal(await phone.locator(".ae-friends-detail").evaluate(node => getComputedStyle(node).animationName), "none");
-  await phone.getByRole("region", { name: "Send to friend" }).getByRole("combobox", { name: /^Send to/ }).selectOption("friend-phone");
+  assert.equal(await phone.getByRole("region", { name: "Send to friend" }).getByRole("combobox").count(), 0);
+  assert.equal(await phoneName.count(), 0, "sender never sees the recipient’s device");
   await phone.getByRole("button", { name: "File", exact: true }).click();
   await phone.getByRole("button", { name: "Send offer" }).click();
   await phone.getByText("Synthetic sample · queued").waitFor();
@@ -96,8 +131,7 @@ try {
   await phone.getByText("Incoming fixture · accepted").waitFor();
   await phone.getByRole("button", { name: "Back to friends" }).click();
   await phone.getByRole("button", { name: "Test contact B" }).click();
-  assert.equal(await phone.locator(".ae-friends-detail option").count(), 2);
-  assert.equal(await phone.locator(".ae-friends-detail option[value='friend-phone']").count(), 0);
+  assert.equal(await phone.locator(".ae-friends-detail option").count(), 0);
   assert.equal(await phone.getByText("Synthetic sample · queued").count(), 0);
   console.log("Friends desktop two-pane and mobile list/detail, capability gating, recipient scoping, confirm/send and native snapshots verified with synthetic IPC.");
 } finally { await browser.close(); }

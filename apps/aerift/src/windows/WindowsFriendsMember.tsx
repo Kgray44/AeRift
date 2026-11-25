@@ -50,7 +50,7 @@ export function WindowsFriendsMember({ contacts }: { contacts: readonly FriendCo
           setCapsule("");
           const fresh = await submit({ action: "view" });
           if (fresh.ok && fresh.value.type === "view") setView(fresh.value);
-          setMessage("This device is enrolled. Choose Delegated friendship when opening a private transfer.");
+          setMessage("This device is enrolled for eligible Friends offers.");
           break;
         }
       }
@@ -62,7 +62,7 @@ export function WindowsFriendsMember({ contacts }: { contacts: readonly FriendCo
   return <div aria-label="Friends device enrollment">
     {problem ? <p role="alert">Device enrollment is unavailable.</p> : !view ? <p role="status">Checking device enrollment…</p> : <>
       <details><summary>My device fingerprint</summary><code>{view.localDevice}</code></details>
-      {view.memberContacts > 0 && <p>This device is enrolled. Choose Delegated friendship to use it in Private transfers.</p>}
+      {view.memberContacts > 0 && <p>This device is enrolled for eligible Friends offers.</p>}
       <p>Authorize another device for a verified friendship. This does not pair it in Nearby or Remote.</p>
       <label>Your role<select value={operation} disabled={busy} onChange={event => {
         setOperation(event.target.value as Operation); setDevice(""); setCapsule(""); setAddress(""); clear();

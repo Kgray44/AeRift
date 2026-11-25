@@ -138,3 +138,22 @@
 }
 
 .ae-friends-field { display: grid; gap: .4rem; }
+
+.ae-friends-pair-controls { display: flex; align-items: center; gap: .35rem; }
+.ae-friends-pair-sheet .ae-sheet-close-icon {
+  display: inline-grid;
+  place-items: center;
+  min-inline-size: 2.65rem;
+  min-block-size: 2.65rem;
+  padding: 0;
+  border-radius: 50%;
+}
+.ae-friends-pair-sheet .ae-sheet-close-icon:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.ae-friends-pair-sheet { overflow: auto; overscroll-behavior: contain; }
+@media (max-width: 42rem) {
+  .ae-theme[data-ae-theme="glass"] .ae-friends[data-desktop] .ae-friends-pair-sheet {
+    inset-block: 0;
+    padding-block-start: var(--ae-space-5);
+  }
+  .ae-friends[data-desktop] .ae-friends-pair-sheet .ae-sheet-grip { display: none; }
+}

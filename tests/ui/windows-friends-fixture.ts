@@ -1,11 +1,12 @@
 import type { FriendsSnapshot } from "@aerift/app-contract/friends";
 
-export function windowsFriendsFixture(snapshot: () => FriendsSnapshot, empty: boolean) {
+export function windowsFriendsFixture(snapshot: () => FriendsSnapshot, empty: boolean, personTransfersAvailable = !empty) {
   const commands: string[] = [];
   const token = "a".repeat(64);
-  let endpoint: [string, string, number] | null = null;
   let outgoing: [string, number, string | null] | null = null;
   let operationPending = true;
+  let accepted = false;
+  let declined = false;
   const contacts = () => empty ? [] : snapshot().contacts;
   Object.defineProperty(window, "__aeWindowsFriendsFixtureCommands", { get: () => commands.slice() });
   return (command: string, args?: Record<string, unknown>) => {
@@ -19,18 +20,19 @@ export function windowsFriendsFixture(snapshot: () => FriendsSnapshot, empty: bo
       case "friends_setup_answer": operationPending = false; return;
       case "friends_setup_contact": return;
       case "friends_files_view": return {
-        endpoint, outgoing, incoming: endpoint ? [{ id: "offer-a", issuer: "d".repeat(64), sender: "friend-b",
-          label: "Field notes.txt", sizeBytes: 4299, accepted: false }] : [],
-        profile: endpoint ? "primary" : null, memberRoster: [], receipts: [], canRelease: false,
+        personTransfersAvailable, outgoing,
+        incoming: personTransfersAvailable && !declined ? [{ id: "offer-a", issuer: "d".repeat(64), sender: "friend-b",
+          label: "Field notes.txt", sizeBytes: 4299, accepted }] : [],
+        receipts: [], canRelease: false,
       };
       case "friends_files_action": {
-        if (request?.action === "open") endpoint = ["100.64.0.1:54000", "100.64.0.1:54001", Math.floor(Date.now() / 1000) + 300];
-        if (request?.action === "close") { endpoint = null; outgoing = null; }
-        if (request?.action === "offer") {
-          if (request.friendId !== "friend-a" || request.device !== "friend-phone") throw { code: "invalid_request" };
+        if (request?.action === "offer_contact") {
+          if (!personTransfersAvailable || request.friendId !== "friend-a" || request.device) throw { code: "invalid_request" };
           outgoing = ["fixture-outgoing", 1, null];
-        }
-        if (request?.action === "withdraw") outgoing = null;
+        } else if (request?.action === "withdraw") outgoing = null;
+        else if (request?.action === "accept_contact_offer") accepted = true;
+        else if (request?.action === "decline_contact_offer") declined = true;
+        else throw { code: "invalid_request" };
         return null;
       }
       case "friends_member": {

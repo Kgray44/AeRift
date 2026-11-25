@@ -1,9 +1,11 @@
 import { useEffect, useId, useRef, type PointerEvent, type ReactNode } from "react";
 import { Button } from "./components";
+import { SpatialIcon } from "./SpatialScene";
 import { transitionAppearance, type ColorScheme, type Preference, type Reduction } from "./theme";
 
-export function Sheet({ open, title, onClose, children }: {
+export function Sheet({ open, title, onClose, children, id, className, closeIcon = false, onAfterClose }: {
   open: boolean; title: string; onClose: () => void; children: ReactNode;
+  id?: string; className?: string; closeIcon?: boolean; onAfterClose?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -37,7 +39,9 @@ export function Sheet({ open, title, onClose, children }: {
     } else dialog.current?.style.removeProperty("--ae-sheet-swipe");
   }
   return (
-    <dialog ref={dialog} className="ae-sheet ae-surface" data-material="overlay" aria-labelledby={titleId}
+    <dialog ref={dialog} id={id} className={["ae-sheet ae-surface", className].filter(Boolean).join(" ")}
+      data-material="overlay" aria-labelledby={titleId}
+      onClose={event => { if (!event.currentTarget.open) onAfterClose?.(); }}
       onCancel={(event) => { event.preventDefault(); onClose(); }}>
       <div className="ae-sheet-grip" aria-hidden="true"
         onPointerDown={event => {
@@ -49,7 +53,10 @@ export function Sheet({ open, title, onClose, children }: {
         onPointerMove={dragSheet} onPointerUp={event => finishDrag(event, true)}
         onPointerCancel={event => finishDrag(event, false)} onLostPointerCapture={event => finishDrag(event, false)} />
       <div className="ae-sheet-header">
-        <h2 id={titleId}>{title}</h2><Button variant="quiet" onClick={onClose}>Close</Button>
+        <h2 id={titleId}>{title}</h2>
+        {closeIcon ? <Button variant="quiet" autoFocus className="ae-sheet-close-icon" title="Close" aria-label={`Close ${title}`} onClick={onClose}>
+          <SpatialIcon name="close" size={18} />
+        </Button> : <Button variant="quiet" onClick={onClose}>Close</Button>}
       </div>
       {children}
     </dialog>

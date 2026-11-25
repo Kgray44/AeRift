@@ -45,7 +45,7 @@ function broadcast(value: AppSnapshot) {
 }
 if (motionFixture) installMotionFixture(first.id, () => snapshot, broadcast);
 const friends = query.get("friendsFixture") === "1" ? friendsFixture(() => snapshot, broadcast) : undefined;
-const windowsFriends = friends && windowsFriendsFixture(() => snapshot.friends!, state === "empty");
+const windowsFriends = friends && windowsFriendsFixture(() => snapshot.friends!, state === "empty", state !== "empty" && query.get("friendsRoute") !== "unavailable");
 mockIPC((cmd, args) => {
   if (windowsFriends && /^(friends_setup_|friends_files_|friends_member$)/.test(cmd)) {
     return windowsFriends(cmd, args as Record<string, unknown> | undefined);
