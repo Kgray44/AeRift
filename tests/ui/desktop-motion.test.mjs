@@ -52,7 +52,7 @@ function fixture() {
 test("an actual Orbit morph wins over direct feedback; reduced and hidden state never start an effect", async () => {
   const begin = await entryPoint();
   const { attributes, animations, preference, document, target, surface } = fixture();
-  animations.push({ finished: new Promise(() => {}) });
+  animations.push({ animationName: "ae-route-neutral", finished: new Promise(() => {}) });
   surface.dataset.morphing = "true";
   assert.equal(begin(surface, "orbit"), undefined);
   delete surface.dataset.morphing;
@@ -71,11 +71,11 @@ test("a superseded route cannot remove a newer route's animation marker", async 
   const begin = await entryPoint();
   const { attributes, animations, surface, document } = fixture();
   let resolveFirst;
-  animations.push({ finished: new Promise(resolve => { resolveFirst = resolve; }) });
+  animations.push({ animationName: "ae-route-neutral", finished: new Promise(resolve => { resolveFirst = resolve; }) });
   const cleanupFirst = begin(surface, "orbit");
   assert.equal(attributes.get("data-ae-route-enter"), "neutral");
   cleanupFirst();
-  animations[0] = { finished: new Promise(() => {}) };
+  animations[0] = { animationName: "ae-route-neutral", finished: new Promise(() => {}) };
   begin(surface, "orbit");
   resolveFirst();
   await Promise.resolve();
@@ -90,13 +90,13 @@ test("completion or a live OS reduced-motion change cleans up just the decorativ
   const begin = await entryPoint();
   const { attributes, animations, preference, target } = fixture();
   let finish;
-  animations.push({ finished: new Promise(resolve => { finish = resolve; }) });
+  animations.push({ animationName: "ae-route-neutral", finished: new Promise(resolve => { finish = resolve; }) });
   begin(target, "workspace");
   finish();
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(attributes.size, 0);
-  animations[0] = { finished: new Promise(() => {}) };
+  animations[0] = { animationName: "ae-route-neutral", finished: new Promise(() => {}) };
   begin(target, "workspace");
   preference.matches = true;
   preference.dispatchEvent(new Event("change"));
@@ -107,6 +107,24 @@ test("completion or a live OS reduced-motion change cleans up just the decorativ
 test("desktop motion test harness supports a Windows CRLF checkout", async () => {
   const begin = await entryPoint(true);
   const { attributes, target } = fixture();
+  assert.equal(begin(target, "workspace"), undefined);
+  assert.equal(attributes.size, 0);
+});
+
+test("the route marker waits only for its own CSS animation, never other effects", async () => {
+  const begin = await entryPoint();
+  const { animations, attributes, target } = fixture();
+  let finish;
+  const indefinite = new Promise(() => {});
+  animations.push({ finished: indefinite }, { animationName: "unrelated-ambient-pulse", finished: indefinite },
+    { animationName: "ae-route-neutral", finished: new Promise(resolve => { finish = resolve; }) });
+  begin(target, "workspace");
+  assert.equal(attributes.get("data-ae-route-enter"), "neutral");
+  finish();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(attributes.size, 0);
+  animations.pop();
   assert.equal(begin(target, "workspace"), undefined);
   assert.equal(attributes.size, 0);
 });

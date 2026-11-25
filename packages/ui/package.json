@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "@aerift/app-contract": "0.1.0",
-    "@aerift/gestures": "file:../gestures"
+    "@aerift/gestures": "file:../gestures",
+    "motion": "12.43.0"
   },
   "peerDependencies": {
     "react": ">=19 <20",
