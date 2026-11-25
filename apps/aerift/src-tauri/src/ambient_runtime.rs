@@ -310,6 +310,11 @@ impl AmbientRuntime {
         }
         let policy = camera_policy(&cfg, None);
         if policy.camera_mode() == CameraMode::Suspended {
+            // A declined camera permit must not invalidate a prior manual
+            // capture. Explicit lifecycle revocation still owns slot cleanup.
+            if expected.is_some() {
+                return;
+            }
             cfg.slot = None;
             emit(&cfg, CaptureView::Paused);
             return;
@@ -346,6 +351,11 @@ impl AmbientRuntime {
                     reason: "sensitive_context",
                 },
             );
+            return;
+        }
+        // Camera recognition is passive until a user reviews the result. A
+        // repeated/false gesture must never replace a still-reviewable capture.
+        if expected.is_some() && cfg.slot.as_ref().is_some_and(Self::slot_is_live) {
             return;
         }
         if self.0.working.swap(true, Ordering::AcqRel) {
@@ -448,7 +458,7 @@ impl AmbientRuntime {
         }
         if !cfg.slot.as_ref().is_some_and(|slot| {
             slot.id == capture_id
-                && slot.captured_at.elapsed() < Duration::from_secs(120)
+                && Self::slot_is_live(slot)
                 && slot.object.negotiate(ReceiverCapabilities::V1)
                     == Ok(Representation::SingleRawFile)
         }) {
@@ -457,6 +467,10 @@ impl AmbientRuntime {
         let object = cfg.slot.take().ok_or(ErrorCode::InvalidRequest)?.object;
         emit(&cfg, CaptureView::Idle);
         Ok(Arc::new(object))
+    }
+
+    fn slot_is_live(slot: &Slot) -> bool {
+        slot.captured_at.elapsed() < Duration::from_secs(120)
     }
 
     fn view(slot: &Slot) -> CaptureView {
@@ -502,7 +516,7 @@ impl AmbientRuntime {
                 } else if config
                     .slot
                     .as_ref()
-                    .is_some_and(|slot| slot.captured_at.elapsed() >= Duration::from_secs(120))
+                    .is_some_and(|slot| !Self::slot_is_live(slot))
                 {
                     config.slot = None;
                     emit(&config, CaptureView::Idle);

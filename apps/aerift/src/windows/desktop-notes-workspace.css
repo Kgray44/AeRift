@@ -1,0 +1,111 @@
+.aw-desktop-notes{
+  display:grid;grid-template-columns:minmax(15rem, .72fr) minmax(0, 2.1fr);
+  align-items:stretch;gap:clamp(.75rem,2vw,1.35rem);min-inline-size:0;
+  min-block-size:min(72vh,45rem);
+}
+.aw-desktop-notes-index{display:flex;flex-direction:column;gap:.62rem;min-inline-size:0}
+.aw-desktop-note-sheet{min-inline-size:0;min-block-size:100%;padding:clamp(1rem,2.65vw,2.2rem)}
+.aw-desktop-note-form{display:flex;flex-direction:column;gap:.9rem;min-block-size:100%}
+.aw-desktop-note-top{display:flex;align-items:end;gap:.8rem;justify-content:space-between;flex-wrap:wrap}
+.aw-note-title-field{display:block;flex:1 1 13rem;min-inline-size:0}
+.aw-note-title-field input{
+  color:var(--ae-text);font:inherit;font-size:clamp(1.55rem,3.6vw,2.4rem);font-weight:680;
+  letter-spacing:-.04em;min-inline-size:0;inline-size:100%;background:transparent;
+  border:0;border-radius:.55rem;padding:.28rem .3rem;box-sizing:border-box;
+}
+.aw-note-title-field input:focus-visible{outline:2px solid var(--ae-focus);outline-offset:-2px}
+.aw-note-category-form input{
+  color:var(--ae-text);background:var(--ae-field);border:1px solid var(--ae-control-edge);
+  min-block-size:2.5rem;border-radius:.8rem;padding:.38rem .55rem;max-inline-size:100%;
+}
+.aw-note-category-form,.aw-note-confirm{
+  min-inline-size:0;padding:.64rem;border:1px solid var(--ae-control-edge);border-radius:.85rem;
+}
+.aw-note-category-form label{display:grid;gap:.34rem}
+.aw-note-category-actions,.aw-note-confirm{display:flex;gap:.42rem;flex-wrap:wrap;align-items:center}
+.aw-note-category-form .aw-note-category-actions{margin-block-start:.4rem}
+.aw-note-confirm p{flex:1 0 100%;margin:0}
+.aw-desktop-note-empty{min-block-size:min(58vh,32rem);display:grid;place-content:center;justify-items:center;text-align:center;gap:.3rem}
+.aw-desktop-note-empty h4,.aw-desktop-note-empty p{margin:0}
+.aw-desktop-note-feedback{margin:.15rem 0 .55rem}
+.aw-desktop-note-form .aw-note-editor{flex:1;grid-template-rows:minmax(0,1fr) auto;gap:.44rem}
+.ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea,.aw-desktop-note-form .aw-note-preview{min-block-size:clamp(22rem,44vh,42rem)}
+.ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea{padding:1.05rem 1.16rem;line-height:1.62;resize:vertical}
+.aw-note-canvas{
+  position:relative;isolation:isolate;display:grid;grid-template-rows:auto minmax(0,1fr);
+  gap:.35rem;min-inline-size:0;padding:clamp(.42rem,1.2vw,.75rem);
+  border:1px solid var(--ae-control-edge);border-radius:1.2rem;
+  background:color-mix(in srgb,var(--ae-field) 28%,transparent);
+}
+.ae-theme .aw-note-canvas .aw-note-palette{
+  display:flex;flex-wrap:wrap;align-items:center;justify-self:start;align-self:start;
+  gap:.2rem;max-inline-size:100%;min-inline-size:0;box-sizing:border-box;
+  position:relative;z-index:1;padding:.24rem;border-radius:1rem;
+  box-shadow:0 .4rem 1rem rgb(5 13 30 / .16);
+}
+.ae-theme .aw-note-canvas .aw-note-tool{
+  flex:none;inline-size:2.75rem;block-size:2.75rem;min-inline-size:2.75rem;
+  min-block-size:2.75rem;padding:0;border-radius:.72rem;
+}
+.ae-theme .aw-note-canvas .aw-note-tool[aria-pressed="true"]{
+  color:var(--ae-accent);border-color:var(--ae-accent);
+}
+.aw-note-canvas .aw-note-preview{overflow-wrap:anywhere;min-inline-size:0}
+.aw-note-footer{justify-content:flex-end}
+.ae-theme .aw-note-tool{transition:transform var(--ae-fast,160ms) ease,background-color var(--ae-fast,160ms) ease,border-color var(--ae-fast,160ms) ease}
+@media(hover:hover){.ae-theme .aw-note-tool:not(:disabled):hover{transform:translateY(-2px);border-color:var(--ae-accent)}}
+.ae-theme .aw-note-tool:not(:disabled):active{transform:scale(var(--ae-press-scale,.96))}
+@media(max-width:780px){
+  .aw-desktop-notes{grid-template-columns:minmax(11rem,.8fr) minmax(0,1.6fr);gap:.64rem}
+  .aw-desktop-note-sheet{padding:.78rem}
+}
+@media(max-width:560px){
+  .aw-desktop-notes{grid-template-columns:1fr}
+  .aw-desktop-notes-index{max-block-size:18rem;overflow:auto}
+}
+@media(prefers-reduced-motion:reduce){.ae-theme .aw-note-tool{transition:none;transform:none!important}}
+.ae-theme[data-motion="reduce"] .aw-note-tool{transition:none;transform:none!important}
+.aw-mobile-notes{display:block;min-block-size:0}
+.aw-desktop-notes [hidden]{display:none}
+.aw-mobile-notes:not([data-view="editor"]) .aw-desktop-notes-index{max-block-size:none;overflow:visible}
+.aw-mobile-notes .ae-notes-sidebar{min-block-size:min(62vh,32rem)}
+.aw-mobile-notes[data-view="editor"] .aw-desktop-note-sheet{
+  min-block-size:calc(100dvh - 6.5rem);padding:.72rem .85rem 1.1rem
+}
+.ios-module-moment:has(.aw-mobile-notes[data-view="editor"])>.aw-category-heading{display:none}
+.ae-shell:has(.aw-mobile-notes[data-view="editor"]) .ios-dock{display:none}
+.aw-mobile-note-back{display:flex;align-items:center;gap:.4rem;margin-block-end:.45rem;color:var(--ae-muted)}
+.aw-mobile-notes .aw-desktop-note-top{align-items:center;gap:.3rem}
+.aw-mobile-notes .aw-note-title-field{flex:1 1 8rem}
+.ae-theme .aw-desktop-notes.aw-mobile-notes .aw-desktop-note-form .aw-note-editor textarea{min-block-size:45dvh;min-inline-size:0}
+
+/* The icon is in the palette; only opening it reveals the organizer. */
+.ae-theme .aw-note-canvas .aw-note-palette{overflow:visible}
+.aw-note-category-anchor{display:flex;flex:none}
+.ae-theme .aw-note-category-popover{
+  position:absolute;z-index:2;inset-inline-start:0;inset-block-start:calc(100% + .38rem);
+  inline-size:min(15rem,100%);box-sizing:border-box;max-block-size:min(16rem,40dvh);
+  overflow:auto;margin:0;padding:.4rem;border-radius:.9rem;
+  background:color-mix(in srgb,var(--ae-field) 90%,transparent);
+  box-shadow:0 .55rem 1.3rem rgb(5 13 30 / .25);
+}
+.aw-note-category-popover p{margin:.22rem .38rem .34rem;font-size:.78rem;color:var(--ae-muted)}
+.aw-note-category-choice{
+  display:flex;justify-content:space-between;align-items:center;gap:.5rem;
+  inline-size:100%;min-block-size:2.75rem;padding:.35rem .55rem;border:0;border-radius:.6rem;
+  color:var(--ae-text);background:transparent;font:inherit;text-align:start;overflow-wrap:anywhere
+}
+.aw-note-category-choice[aria-pressed="true"],.aw-note-category-choice:hover{
+  background:color-mix(in srgb,var(--ae-accent) 14%,transparent)
+}
+.aw-note-category-choice:focus-visible{outline:2px solid var(--ae-focus);outline-offset:-2px}
+@media(prefers-reduced-motion:no-preference){
+  .ae-theme:not([data-motion="reduce"]) .aw-note-category-popover{
+    transform-origin:top left;animation:aw-note-category-appear var(--ae-fast,160ms) ease-out both
+  }
+}
+@keyframes aw-note-category-appear{from{opacity:0;transform:translateY(-.25rem) scale(.98)}}
+
+.aw-category-choice-name{display:flex;align-items:center;gap:.42rem;min-inline-size:0}
+.aw-note-category-form{display:grid;gap:.54rem}
+.ae-theme .aw-note-category-toolbar{justify-self:start;align-self:start;inline-size:fit-content;max-inline-size:100%;padding:.3rem;border-radius:.82rem}
