@@ -241,6 +241,18 @@ impl Receiver {
             .collect()
     }
 
+    /// Native lookup of one verified regular receipt. No directory scan or
+    /// snapshot of unrelated transfers, and never returns an in-flight offer.
+    pub fn completed_receipt(&self, key: TransferKey) -> Option<IncomingTransfer> {
+        let entries = self.entries();
+        let receipt = &entries.get(&key)?.transfer;
+        (receipt.status.state == State::Completed
+            && receipt.status.error.is_none()
+            && receipt.status.bytes_transferred == receipt.offer.size_bytes
+            && receipt.saved_path.is_some())
+        .then(|| receipt.clone())
+    }
+
     pub fn respond(&self, key: TransferKey, accept: bool) -> Result<Status, TransferError> {
         self.respond_inner(key, accept, None)
     }
@@ -1135,8 +1147,25 @@ mod tests {
         );
         let final_path = directory.path().join("resume-fixture.bin");
         assert!(!final_path.exists());
+        assert!(rx.completed_receipt(key).is_none());
         assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
         assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
+        let receipt = rx.completed_receipt(key).unwrap();
+        // Windows can return a pinned long path while TEMP uses a short alias.
+        // Both must resolve to the expected published file.
+        assert_eq!(
+            receipt.saved_path.as_ref().unwrap().canonicalize().unwrap(),
+            final_path.canonicalize().unwrap()
+        );
+        assert_eq!(
+            receipt.offer.sha256,
+            format!("{:x}", Sha256::digest(&bytes))
+        );
+        let other = TransferKey {
+            peer: PeerId::from_tls_leaf(b"other peer"),
+            id: key.id,
+        };
+        assert!(rx.completed_receipt(other).is_none());
         assert_eq!(std::fs::read(final_path).unwrap(), bytes);
     }
 
