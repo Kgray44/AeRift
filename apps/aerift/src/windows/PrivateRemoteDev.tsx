@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
 import { PrivateRemoteFolders } from "./PrivateRemoteFolders";
 import { TransferIsland, type TransferIslandReceipt } from "@aerift/ui";
@@ -14,6 +14,7 @@ type Snapshot = {
 };
 
 export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
+  const recipientLabel = useId();
   const [folderOffers, setFolderOffers] = useState<readonly IncomingRemoteFolder[]>([]);
   const [fileProgress, setFileProgress] = useState<TransferIslandReceipt>();
   const [folderProgress, setFolderProgress] = useState<TransferIslandReceipt>();
@@ -178,8 +179,9 @@ export function PrivateRemoteDev({ product = false }: { product?: boolean }) {
               </button>
             </form>
             <h3>Send one file</h3>
-            <label>Authorized recipient
-              <select value={outgoingPeer} onChange={(event) => setOutgoingPeer(event.target.value)}>
+            <label>
+              <span id={recipientLabel}>Authorized recipient</span>
+              <select aria-labelledby={recipientLabel} value={outgoingPeer} onChange={(event) => setOutgoingPeer(event.target.value)}>
                 <option value="">Choose an authorized device</option>
                 {snapshot.peers.map((peer) => <option key={peer.id} value={peer.id}>{peer.name} · {peer.id.slice(0, 12)}</option>)}
               </select>

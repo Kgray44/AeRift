@@ -9,7 +9,11 @@ use std::{
 use aerift_transfer::{
     ErrorCode, Offer, PeerId, ReceiveLimits, Receiver, State, Status, TransferError,
 };
-use tokio::{net::TcpListener, sync::Mutex};
+use tokio::{
+    net::TcpListener,
+    sync::{Mutex, oneshot},
+    task::JoinSet,
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -41,6 +45,14 @@ impl FriendFileRoute {
     }
 }
 
+/// Private route provider owned by the native host. Implementations must
+/// supply only active endpoints authenticated and scoped to this relationship
+/// and device, never a public directory or renderer-provided addresses. Inner
+/// TLS still authenticates the device at delivery, claim and payload time.
+pub trait FriendFileRouteSource: Send + Sync {
+    fn verified_route(&self, person: PersonId, device: PeerId) -> Option<FriendFileRoute>;
+}
+
 pub struct FriendFileWindow {
     identity: Arc<Identity>,
     book: Arc<FriendBook>,
@@ -56,6 +68,19 @@ struct Outbound {
     source: PathBuf,
     recipients: Vec<(PeerId, FriendFileRoute)>,
     notified: usize,
+    automatic: bool,
+}
+
+struct PendingReadiness {
+    book: Arc<FriendBook>,
+    id: Uuid,
+    receive: oneshot::Receiver<PeerId>,
+}
+
+impl Drop for PendingReadiness {
+    fn drop(&mut self) {
+        self.book.disarm_person_ready(self.id);
+    }
 }
 
 impl Drop for FriendFileWindow {
@@ -161,8 +186,9 @@ impl FriendFileWindow {
         path: PathBuf,
         route: FriendFileRoute,
     ) -> Result<Uuid, TransferError> {
-        self.offer_to_routes(person, Some(device), path, &[(device, route)])
+        self.offer_to_routes(person, Some(device), path, &[(device, route)], false)
             .await
+            .map(|(id, _)| id)
     }
 
     /// One offer addressed to a verified person. The routes are explicitly
@@ -174,7 +200,171 @@ impl FriendFileWindow {
         path: PathBuf,
         routes: &[(PeerId, FriendFileRoute)],
     ) -> Result<Uuid, TransferError> {
-        self.offer_to_routes(person, None, path, routes).await
+        self.offer_to_routes(person, None, path, routes, false)
+            .await
+            .map(|(id, _)| id)
+    }
+
+    /// Resolve routes only for this verified person, before a file picker opens.
+    fn person_targets(
+        &self,
+        person: PersonId,
+        source: &dyn FriendFileRouteSource,
+    ) -> Result<Vec<(PeerId, FriendFileRoute)>, TransferError> {
+        self.ensure_open()?;
+        let friend = self
+            .book
+            .contacts()?
+            .into_iter()
+            .find(|friend| friend.person == person)
+            .ok_or(ErrorCode::PeerUntrusted)?;
+        let mut routes = Vec::new();
+        for device in friend.devices {
+            if let Some(route) = source.verified_route(person, device) {
+                routes.push((device, FriendFileRoute::new(route.offers, route.payload)?));
+            }
+        }
+        if routes.is_empty() {
+            return Err(ErrorCode::PeerUnavailable.into());
+        }
+        Ok(routes)
+    }
+
+    pub fn check_person_targets(
+        &self,
+        person: PersonId,
+        source: &dyn FriendFileRouteSource,
+    ) -> Result<(), TransferError> {
+        self.person_targets(person, source).map(|_| ())
+    }
+
+    /// Refresh native routes after the picker, and recheck authorization at
+    /// delivery. This never falls back to explicit-device or Nearby routing.
+    pub async fn offer_contact(
+        self: &Arc<Self>,
+        person: PersonId,
+        path: PathBuf,
+        source: &dyn FriendFileRouteSource,
+    ) -> Result<Uuid, TransferError> {
+        let targets = self.person_targets(person, source)?;
+        let (id, ready) = self
+            .offer_to_routes(person, None, path, &targets, true)
+            .await?;
+        let mut ready = ready.ok_or(ErrorCode::InternalError)?;
+        let stop = self.stop.clone();
+        let window = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let winner = tokio::select! {
+                biased;
+                _ = stop.cancelled() => return,
+                result = &mut ready.receive => match result {
+                    Ok(winner) => winner,
+                    Err(_) => return,
+                },
+            };
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            // Losing devices receive only their own terminal disposition.
+            // Unreachable endpoints fall back to scoped reconciliation.
+            let losers = targets.into_iter().filter(|(peer, _)| *peer != winner);
+            let dismissed = async {
+                let mut tasks = JoinSet::new();
+                for (peer, route) in losers {
+                    let window = window.clone();
+                    tasks.spawn(async move {
+                        tokio::select! {
+                            _ = window.stop.cancelled() => {},
+                            _ = FriendOfferEndpoint::dismiss_losing_offer(
+                                &window.identity, &window.book, id, peer, route.offers,
+                            ) => {},
+                        }
+                    });
+                }
+                while tasks.join_next().await.is_some() {}
+            };
+            let _ = tokio::join!(window.send_inner(id, Some(winner)), dismissed);
+        });
+        Ok(id)
+    }
+
+    fn incoming_by_id(&self, id: Uuid) -> Result<FriendIncomingOffer, TransferError> {
+        let mut matches = self.incoming()?.into_iter().filter(|offer| {
+            offer.id() == id
+                && offer.recipient() == self.identity.id()
+                && offer.decision() != FriendDecision::Withdrawn
+        });
+        let incoming = matches.next().ok_or(ErrorCode::InvalidRequest)?;
+        if matches.next().is_some() {
+            return Err(ErrorCode::Conflict.into());
+        }
+        Ok(incoming)
+    }
+
+    fn incoming_route(
+        &self,
+        id: Uuid,
+        source: &dyn FriendFileRouteSource,
+    ) -> Result<(PeerId, SocketAddr), TransferError> {
+        let incoming = self.incoming_by_id(id)?;
+        let (person, peer) = (incoming.sender(), incoming.issuer());
+        if !self.book.may_receive_from(person, peer)? {
+            return Err(ErrorCode::PeerUntrusted.into());
+        }
+        let route = source
+            .verified_route(person, peer)
+            .ok_or(ErrorCode::PeerUnavailable)?;
+        Ok((
+            peer,
+            FriendFileRoute::new(route.offers, route.payload)?.offers,
+        ))
+    }
+
+    pub async fn accept_contact_offer(
+        &self,
+        id: Uuid,
+        source: &dyn FriendFileRouteSource,
+    ) -> Result<(), TransferError> {
+        let (peer, route) = self.incoming_route(id, source)?;
+        self.accept(peer, id, route).await?;
+        self.signal_ready(peer, id, route).await
+    }
+
+    async fn signal_ready(
+        &self,
+        peer: PeerId,
+        id: Uuid,
+        route: SocketAddr,
+    ) -> Result<(), TransferError> {
+        let now = self.ensure_open()?;
+        let routes = [route];
+        tokio::select! {
+            result = FriendOfferEndpoint::ready_received(&self.identity, &self.book, &routes, peer, id, now) => result,
+            _ = self.stop.cancelled() => Err(ErrorCode::Cancelled.into()),
+        }
+    }
+
+    pub async fn reconcile_contact_offer(
+        &self,
+        id: Uuid,
+        source: &dyn FriendFileRouteSource,
+    ) -> Result<FriendDecision, TransferError> {
+        let (peer, route) = self.incoming_route(id, source)?;
+        let decision = self.reconcile(peer, id, route).await?;
+        if decision == FriendDecision::Granted {
+            self.signal_ready(peer, id, route).await?;
+        }
+        Ok(decision)
+    }
+
+    pub async fn decline_contact_offer(&self, id: Uuid) -> Result<(), TransferError> {
+        let incoming = self.incoming_by_id(id)?;
+        self.book.decline_open(
+            incoming.issuer(),
+            self.identity.id(),
+            id,
+            self.ensure_open()?,
+        )
     }
 
     async fn offer_to_routes(
@@ -183,7 +373,8 @@ impl FriendFileWindow {
         device: Option<PeerId>,
         path: PathBuf,
         routes: &[(PeerId, FriendFileRoute)],
-    ) -> Result<Uuid, TransferError> {
+        automatic: bool,
+    ) -> Result<(Uuid, Option<PendingReadiness>), TransferError> {
         self.ensure_open()?;
         if routes.is_empty() || routes.len() > 32 {
             return Err(ErrorCode::InvalidRequest.into());
@@ -221,6 +412,21 @@ impl FriendFileWindow {
             self.expires,
         )
         .await?;
+        let ready = if automatic {
+            match self.book.arm_person_ready(manifest.id) {
+                Ok(receive) => Some(PendingReadiness {
+                    book: self.book.clone(),
+                    id: manifest.id,
+                    receive,
+                }),
+                Err(error) => {
+                    self.book.withdraw(manifest.id)?;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         let mut last_error = None;
         let mut notified = 0;
         for (device, route) in routes {
@@ -248,8 +454,9 @@ impl FriendFileWindow {
             source: path,
             recipients: routes.to_vec(),
             notified,
+            automatic,
         });
-        Ok(id)
+        Ok((id, ready))
     }
 
     /// Poll only the exact known offer over that issuer's pinned control lane.
@@ -335,7 +542,10 @@ impl FriendFileWindow {
     pub fn can_release(&self, id: Uuid) -> Result<bool, TransferError> {
         self.ensure_open()?;
         let pending = self.pending.try_lock().map_err(|_| ErrorCode::Conflict)?;
-        let Some(entry) = pending.as_ref().filter(|entry| entry.manifest.id == id) else {
+        let Some(entry) = pending
+            .as_ref()
+            .filter(|entry| entry.manifest.id == id && !entry.automatic)
+        else {
             return Ok(false);
         };
         let Some(winner) = self.book.winner(id)? else {
@@ -347,13 +557,24 @@ impl FriendFileWindow {
     }
 
     pub async fn send(&self, id: Uuid) -> Result<Status, TransferError> {
+        self.send_inner(id, None).await
+    }
+
+    async fn send_inner(
+        &self,
+        id: Uuid,
+        auto_winner: Option<PeerId>,
+    ) -> Result<Status, TransferError> {
         self.ensure_open()?;
         let mut pending = self.pending.try_lock().map_err(|_| ErrorCode::Conflict)?;
         let entry = pending
             .as_ref()
-            .filter(|entry| entry.manifest.id == id)
+            .filter(|entry| entry.manifest.id == id && entry.automatic == auto_winner.is_some())
             .ok_or(ErrorCode::InvalidRequest)?;
         let winner = self.book.winner(id)?.ok_or(ErrorCode::TransferRejected)?;
+        if auto_winner.is_some_and(|ack| ack != winner) {
+            return Err(ErrorCode::TransferRejected.into());
+        }
         let route = entry
             .recipients
             .iter()
@@ -384,9 +605,12 @@ impl FriendFileWindow {
         if pending.as_ref().is_none_or(|entry| entry.manifest.id != id) {
             return Err(ErrorCode::InvalidRequest.into());
         }
-        self.book.withdraw(id)?;
-        *pending = None;
-        Ok(())
+        let withdrawal = self.book.withdraw(id);
+        if withdrawal.is_ok() || pending.as_ref().is_some_and(|entry| entry.automatic) {
+            self.book.disarm_person_ready(id);
+            *pending = None;
+        }
+        withdrawal
     }
 
     /// Cancels active sends and listener tasks; old rows remain non-replayable.
@@ -395,6 +619,7 @@ impl FriendFileWindow {
         if let Ok(mut pending) = self.pending.try_lock() {
             if let Some(offer) = pending.take() {
                 let _ = self.book.withdraw(offer.manifest.id);
+                self.book.disarm_person_ready(offer.manifest.id);
             }
         }
     }

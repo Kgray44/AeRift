@@ -39,3 +39,12 @@ test("frontend closes file and folder channels with the invoked operation", () =
   assert.match(folder, /action\.action === "pick_send" \? upload\.begin\(\) : undefined/);
   assert.match(folder, /command\(action, transfer\?\.updates\)[\s\S]+finally\(\(\) => \{ transfer\?\.close\(\)/);
 });
+
+test("both Remote send pickers have exact accessible names independent of option text", () => {
+  const file = read("apps/aerift/src/windows/PrivateRemoteDev.tsx");
+  const folder = read("apps/aerift/src/windows/PrivateRemoteFolders.tsx");
+  for (const [source, caption] of [[file, "Authorized recipient"], [folder, "Folder recipient"]]) {
+    assert.match(source, /const recipientLabel = useId\(\)/);
+    assert.match(source, new RegExp(`<span id=\\{recipientLabel\\}>${caption}</span>\\s*<select aria-labelledby=\\{recipientLabel\\}`));
+  }
+});

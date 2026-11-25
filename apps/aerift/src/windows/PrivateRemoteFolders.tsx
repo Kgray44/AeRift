@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
 import { invoke, type Channel } from "@tauri-apps/api/core";
 import type { TransferIslandReceipt } from "@aerift/ui";
@@ -18,6 +18,7 @@ export function PrivateRemoteFolders({ peers, endpoint, onIncomingChange, onOutg
   onIncomingChange?: (offers: readonly IncomingRemoteFolder[]) => void;
   onOutgoingChange?: (receipt: TransferIslandReceipt | undefined) => void;
 }) {
+  const recipientLabel = useId();
   const upload = usePrivateRemoteUpload("folder", onOutgoingChange);
   const [peerId, setPeerId] = useState("");
   const [incoming, setIncoming] = useState<readonly FolderItem[]>(noIncoming);
@@ -66,10 +67,13 @@ export function PrivateRemoteFolders({ peers, endpoint, onIncomingChange, onOutg
   return <section aria-labelledby="remote-folder-heading">
     <h2 id="remote-folder-heading">Folders</h2>
     <p>Choose an authorized device. The recipient must approve the folder before it transfers.</p>
-    <label>Folder recipient <select value={peerId} onChange={(event) => setPeerId(event.target.value)}>
-      <option value="">Select an authorized Remote device</option>
-      {peers.map((peer) => <option key={peer.id} value={peer.id}>{peer.name} · {peer.id.slice(0, 12)}</option>)}
-    </select></label>
+    <label>
+      <span id={recipientLabel}>Folder recipient</span>
+      <select aria-labelledby={recipientLabel} value={peerId} onChange={(event) => setPeerId(event.target.value)}>
+        <option value="">Select an authorized Remote device</option>
+        {peers.map((peer) => <option key={peer.id} value={peer.id}>{peer.name} · {peer.id.slice(0, 12)}</option>)}
+      </select>
+    </label>
     <button disabled={busy || !endpoint.trim() || !peers.some((peer) => peer.id === peerId)}
       onClick={() => run({ action: "pick_send", peerId, endpoint: endpoint.trim() })}>Choose folder to send</button>
     {message && <p role="status">{message}</p>}

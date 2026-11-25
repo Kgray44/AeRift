@@ -331,8 +331,15 @@ try {
   await remote.getByLabel("Other device’s VPN address and port").fill("100.88.1.2:48888");
   for (const kind of ["file", "folder"]) {
     const recipientLabel = kind === "file" ? "Authorized recipient" : "Folder recipient";
-    await remote.getByLabel(recipientLabel, { exact: true }).selectOption({ index: 1 });
-    await button(remote, "Choose " + kind + " to send").click();
+    const recipient = remote.getByRole("combobox", { name: recipientLabel, exact: true });
+    const send = button(remote, "Choose " + kind + " to send");
+    assert.equal(await send.isDisabled(), true, "an unselected recipient cannot send");
+    const eligible = recipient.getByRole("option", { name: /^Studio PC/ });
+    await eligible.waitFor({ state: "attached" });
+    const eligibleValue = await eligible.getAttribute("value");
+    await remote.getByLabel(recipientLabel, { exact: true }).selectOption(eligibleValue);
+    assert.equal(await recipient.inputValue(), eligibleValue, "the exact eligible device is selected");
+    await send.click();
     const progress = (state, bytes) => remote.evaluate(([phase, n]) => window.remoteUploadFixture.progress(phase, n), [state, bytes]);
     assert.equal(await progress("accepted", 0), true);
     assert.equal(await activeRemote.count(), 0);

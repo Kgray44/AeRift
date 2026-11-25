@@ -5,6 +5,7 @@ mod authority;
 mod book;
 mod file_window;
 mod payload;
+mod profile;
 mod wire;
 
 pub use authority::{
@@ -19,4 +20,9 @@ pub use book::{
 pub use payload::FriendPayloadEndpoint;
 pub use wire::FriendOfferEndpoint;
 
-pub use file_window::{FriendFileRoute, FriendFileWindow};
+pub use file_window::{FriendFileRoute, FriendFileRouteSource, FriendFileWindow};
+
+pub use profile::{
+    FRIEND_PROFILE_RGB_EDGE, FriendGlassPreset, FriendProfileAvatar, FriendProfileCursor,
+    SharedFriendProfile, VerifiedFriendProfile,
+};

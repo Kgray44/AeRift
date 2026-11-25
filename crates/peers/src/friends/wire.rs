@@ -24,6 +24,8 @@ const ALPN: &[u8] = b"aerift-friends-offer/1";
 const DELIVER: &str = "/friends/v1/deliver";
 const ACCEPT: &str = "/friends/v1/accept";
 const DECISION: &str = "/friends/v1/decision";
+const READY: &str = "/friends/v1/ready";
+const WITHDRAW: &str = "/friends/v1/withdraw";
 const CONTROL_LIMIT: usize = 2048;
 const BUDGET: Duration = Duration::from_secs(10);
 
@@ -98,6 +100,52 @@ impl FriendOfferEndpoint {
             return Err(ErrorCode::TransferRejected.into());
         }
         Ok(accepted)
+    }
+
+    pub(super) async fn ready_received(
+        identity: &Identity,
+        book: &FriendBook,
+        routes: &[SocketAddr],
+        issuer: PeerId,
+        id: Uuid,
+        now: u64,
+    ) -> Result<(), TransferError> {
+        let notice = book.incoming_exact(issuer, identity.id(), id, now)?;
+        if notice.decision() != FriendDecision::Granted {
+            return Err(ErrorCode::TransferRejected.into());
+        }
+        client(
+            identity,
+            routes,
+            issuer,
+            READY,
+            Control {
+                id,
+                digest: notice.digest(),
+                ticket: notice.ticket(),
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn dismiss_losing_offer(
+        identity: &Identity,
+        book: &FriendBook,
+        id: Uuid,
+        device: PeerId,
+        route: SocketAddr,
+    ) -> Result<(), TransferError> {
+        let Some((digest, ticket)) = book.loser_notice(id, device)? else {
+            return Ok(());
+        };
+        client(
+            identity,
+            &[route],
+            device,
+            WITHDRAW,
+            Control { id, digest, ticket },
+        )
+        .await
     }
 
     /// Poll the pinned issuer when reachable. Does not automatically accept.
@@ -229,10 +277,12 @@ async fn dispatch(
     let fail = |code: ErrorCode| response::<()>(Err(code.into()));
     let accept = request.uri().path() == ACCEPT;
     let deliver = request.uri().path() == DELIVER;
+    let ready = request.uri().path() == READY;
+    let withdraw = request.uri().path() == WITHDRAW;
     if request.method() != Method::POST
         || request.version() != Version::HTTP_11
         || request.uri().query().is_some()
-        || (!deliver && !accept && request.uri().path() != DECISION)
+        || (!deliver && !accept && !ready && !withdraw && request.uri().path() != DECISION)
     {
         return fail(ErrorCode::InvalidRequest);
     }
@@ -265,6 +315,19 @@ async fn dispatch(
             Ok(now) => response(book.claim_at(id, peer, digest, Some(ticket), now)),
             Err(error) => response::<()>(Err(error)),
         }
+    } else if ready {
+        response(book.note_person_ready(id, peer, digest, ticket))
+    } else if withdraw {
+        let result = (|| {
+            let now = wall_clock()?;
+            let offer = book.incoming_exact(peer, local, id, now)?;
+            if offer.digest() != digest || offer.ticket() != ticket {
+                return Err(ErrorCode::TransferRejected.into());
+            }
+            book.update_decision(peer, local, id, now, FriendDecision::Withdrawn)
+                .map(|_| ())
+        })();
+        response(result)
     } else {
         response(book.decision(id, peer, digest, ticket))
     }
