@@ -116,10 +116,7 @@ impl FolderReadGrant {
             return Err(io::ErrorKind::PermissionDenied.into());
         }
         self.expected = None;
-        let pages = self
-            .pages
-            .as_mut()
-            .ok_or(io::ErrorKind::PermissionDenied)?;
+        let pages = self.pages.as_mut().ok_or(io::ErrorKind::PermissionDenied)?;
         match pages.next() {
             Ok(Some(entries)) => {
                 self.expected = Some(uuid::Uuid::new_v4());
