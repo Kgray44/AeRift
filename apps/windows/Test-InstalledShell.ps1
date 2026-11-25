@@ -133,7 +133,25 @@ document.querySelector('#aerift-desktop-destination')?.textContent === 'Rift' &&
 '@
     Wait-AppCondition $socket ([ref]$id) $rift $deadline.Token 'The production Rift or native picker did not become available.'
 
-    Invoke-AppExpression $socket ([ref]$id) "document.querySelector('.ae-control-gear').click()" $deadline.Token | Out-Null
+    $openSettings = @'
+(() => {
+  const orbit = document.querySelector('.ae-orbit-trigger');
+  if (orbit?.getAttribute('aria-expanded') === 'false') orbit.click();
+  return true;
+})()
+'@
+    Invoke-AppExpression $socket ([ref]$id) $openSettings $deadline.Token | Out-Null
+    $chooseSettings = @'
+(() => {
+  const settings = [...document.querySelectorAll('nav[aria-label="Desktop navigation"] button')]
+    .find(button => !button.closest('[inert]') &&
+      (button.getAttribute('aria-label') === 'Settings' || button.textContent.trim() === 'Settings'));
+  if (!settings) return false;
+  settings.click();
+  return true;
+})()
+'@
+    Wait-AppCondition $socket ([ref]$id) $chooseSettings $deadline.Token 'Settings was not available through desktop navigation.'
     $settings = @'
 document.querySelector('#aerift-desktop-destination')?.textContent === 'Settings' &&
 !!document.querySelector('[aria-label="Settings categories"] button[aria-pressed="true"]') &&
