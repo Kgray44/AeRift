@@ -7,7 +7,7 @@ const { chromium } = await import(module ? pathToFileURL(module).href : "playwri
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
 const evidence = process.env.AERIFT_WORKSPACE_EVIDENCE;
 if (evidence) await mkdir(evidence, { recursive: true });
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.AERIFT_CHROMIUM ? { executablePath: process.env.AERIFT_CHROMIUM } : {});
 const snapped = async (page, name) => {
   if (!evidence) return;
   await page.screenshot({ path: join(evidence, name + ".png"), animations: "disabled" });
@@ -16,7 +16,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
 const assertFloatingNoteTools = async (editor, required) => {
-  assert.equal(await editor.getByRole("combobox").count(), 0, "no always-visible category dropdown");
+  assert.equal(await editor.getByRole("combobox", { name: /category/i }).count(), 0, "no always-visible category dropdown");
   const canvas = editor.locator(".aw-note-canvas");
   const tools = canvas.getByRole("group", { name: "Note tools", exact: true });
   for (const name of required) {
