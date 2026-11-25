@@ -77,6 +77,8 @@ try {
   await sidebar.getByRole("button", { name: /^All Notes/ }).click();
   await button(sidebar, "New note").click();
   await first.fill("Newer note");
+  assert.equal(await button(editor, "Save note").isDisabled(), true, "a title alone is incomplete");
+  await editor.getByRole("textbox", { name: "Note", exact: true }).fill("Second note text");
   await button(editor, "Save note").click();
   await sidebar.getByRole("button", { name: /Newer note/ }).waitFor();
   await sidebar.getByRole("button", { name: /^Recents/ }).click();
@@ -223,6 +225,7 @@ try {
     await button(mobileEditor, "Preview").click();
     await mobileEditor.getByRole("region", { name: "Note preview" }).getByText("☐ Pick up lumber").waitFor();
     await button(mobileEditor, "Save note").click();
+    await mobileEditor.getByText("Note saved.", { exact: true }).waitFor();
     await button(mobileEditor, "Back to notes").click();
     await mobileNotes.getByRole("searchbox", { name: "Search notes" }).fill("lumber");
     await mobileNotes.getByRole("button", { name: /Weekend plan/ }).waitFor();

@@ -128,8 +128,8 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
   async function saveNote(then?: () => void) {
     if (!draft || processing.current || disabled) return;
     const name = noteTitle(draft, titleLimit);
-    if (!name || draft.text.length > workspaceNoteLimit) {
-      setError("Enter a title or some note text before saving.");
+    if (!name || !draft.text.trim() || draft.text.length > workspaceNoteLimit) {
+      setError("Write some note text before saving.");
       return;
     }
     const pending: Note = { id: draft.id, kind: "note", ownership: "local", schemaVersion: 1, name,
@@ -254,7 +254,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
             <label className="aw-note-title-field">Title<input ref={title} value={draft.name} maxLength={titleLimit}
               placeholder="Untitled note" disabled={locked} onChange={event => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
             <div className="ae-actions" role="group" aria-label="Note actions">
-              <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !noteTitle(draft, titleLimit)} />
+              <NoteIconButton type="submit" label="Save note" icon="save" disabled={locked || !dirty || !draft.text.trim()} />
               {saved && onCollectionSelect && <NoteIconButton label="Select note for collection" icon="folder" disabled={locked}
                 aria-pressed={collectionSelection.includes(saved.id)}
                 onClick={() => onCollectionSelect(saved.id, !collectionSelection.includes(saved.id))} />}
