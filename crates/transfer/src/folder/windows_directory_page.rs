@@ -130,7 +130,11 @@ fn read_metadata_page(
 fn pinned_metadata_paging_reads_only_the_chosen_directory_level_and_releases_it() {
     use std::{collections::BTreeSet, fs};
 
-    let temp = tempfile::tempdir().unwrap();
+    // The default ".tmp" prefix is deliberately not a valid pinned path leaf.
+    let temp = tempfile::Builder::new()
+        .prefix("aerift-folder-page-")
+        .tempdir()
+        .unwrap();
     let chosen = temp.path().join("chosen");
     let sibling = temp.path().join("sibling");
     fs::create_dir(&chosen).unwrap();
