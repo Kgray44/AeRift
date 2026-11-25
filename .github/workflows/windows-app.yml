@@ -176,6 +176,22 @@ jobs:
             Write-Host $_
             $qualificationFailed = $true
           }
+          try {
+            Invoke-QualifiedTests -CargoArgs @('test', '--locked', '--manifest-path', $app,
+              '--lib', 'person_actions_admit_only_person_and_offer_identifiers') -Expected @(
+              'person_actions_admit_only_person_and_offer_identifiers')
+          } catch {
+            Write-Host $_
+            $qualificationFailed = $true
+          }
+          try {
+            Invoke-QualifiedTests -CargoArgs @('test', '--locked', '--manifest-path', $app,
+              '--lib', 'friends_windows_profile_revision_reopens_and_revocation_erases_presentation') -Expected @(
+              'friends_windows_profile_revision_reopens_and_revocation_erases_presentation')
+          } catch {
+            Write-Host $_
+            $qualificationFailed = $true
+          }
           if ($qualificationFailed) { throw 'One or more mandatory native fixture groups failed.' }
       - name: Compile the standard Windows app without launching or publishing it
         if: ${{ !cancelled() && (steps.native_private_lanes.outcome == 'success' || steps.native_private_lanes.outcome == 'failure') }}

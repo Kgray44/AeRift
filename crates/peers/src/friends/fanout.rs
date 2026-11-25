@@ -136,6 +136,9 @@ impl FriendIncomingOffer {
     pub fn object(&self) -> &FriendControlObject {
         &self.notice.metadata
     }
+    pub(in crate::friends) fn recipient(&self) -> PeerId {
+        self.notice.recipient_device
+    }
     pub(in crate::friends) fn ticket(&self) -> Uuid {
         self.notice.ticket
     }
@@ -421,6 +424,19 @@ impl FriendBook {
         })
     }
 
+    /// A recipient's decline is local to this exact offer/device. It must
+    /// not race with a sent consent claim or undo a committed acceptance.
+    pub(in crate::friends) fn decline_open(
+        &self,
+        issuer: PeerId,
+        local: PeerId,
+        id: Uuid,
+        now: u64,
+    ) -> Result<(), TransferError> {
+        self.update_decision_inner(issuer, local, id, now, FriendDecision::Withdrawn, true)
+            .map(|_| ())
+    }
+
     pub(in crate::friends) fn update_decision(
         &self,
         issuer: PeerId,
@@ -428,6 +444,18 @@ impl FriendBook {
         id: Uuid,
         now: u64,
         decision: FriendDecision,
+    ) -> Result<FriendDecision, TransferError> {
+        self.update_decision_inner(issuer, local, id, now, decision, false)
+    }
+
+    fn update_decision_inner(
+        &self,
+        issuer: PeerId,
+        local: PeerId,
+        id: Uuid,
+        now: u64,
+        decision: FriendDecision,
+        open_only: bool,
     ) -> Result<FriendDecision, TransferError> {
         self.mutate(|state| {
             let offer = state
@@ -446,6 +474,9 @@ impl FriendBook {
                     && friend.receive_allowed
                     && friend.devices.contains(&issuer)
             }) {
+                return Err(ErrorCode::TransferRejected.into());
+            }
+            if open_only && (offer.decision != FriendDecision::Open || offer.consent_intent) {
                 return Err(ErrorCode::TransferRejected.into());
             }
             if decision == FriendDecision::Granted && !offer.consent_intent {

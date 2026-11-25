@@ -63,10 +63,10 @@ pub struct FriendRecord {
 
 pub struct FriendAuthority(Ed25519KeyPair);
 
-fn canonical(value: impl Serialize) -> Result<Vec<u8>, TransferError> {
+pub(super) fn canonical(value: impl Serialize) -> Result<Vec<u8>, TransferError> {
     serde_json::to_vec(&value).map_err(|_| ErrorCode::InvalidRequest.into())
 }
-fn verify(key: PersonId, bytes: &[u8], encoded: &str) -> Result<(), TransferError> {
+pub(super) fn verify(key: PersonId, bytes: &[u8], encoded: &str) -> Result<(), TransferError> {
     if encoded.len() != 86 {
         return Err(ErrorCode::PairingRejected.into());
     }
@@ -228,7 +228,7 @@ impl FriendAuthority {
         PersonId(key)
     }
 
-    fn sign(&self, bytes: &[u8]) -> String {
+    pub(super) fn sign(&self, bytes: &[u8]) -> String {
         URL_SAFE_NO_PAD.encode(self.0.sign(bytes))
     }
 

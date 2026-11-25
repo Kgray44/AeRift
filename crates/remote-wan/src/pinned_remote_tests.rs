@@ -376,10 +376,54 @@ async fn native_session_moves_accepted_bytes_and_joins_shutdown() {
     .unwrap();
 }
 
+// macOS commonly places TMPDIR under /var, which is a symlink. Only the
+// synthetic fixture root is normalized; the real picker/capture must continue
+// rejecting any symlink or reparse point in a picked path.
+fn fixture_root(temporary: &tempfile::TempDir) -> std::path::PathBuf {
+    temporary
+        .path()
+        .canonicalize()
+        .expect("resolve synthetic fixture root")
+}
+
+#[cfg(unix)]
+#[test]
+fn synthetic_picker_fixture_root_is_normalized_without_relaxing_capture() {
+    use aerift_transfer::ambient::{Candidate, CaptureContext, CaptureLimits, freeze};
+    let real = tempfile::tempdir().unwrap();
+    let aliases = tempfile::tempdir().unwrap();
+    let alias = aliases.path().join("temporary-root");
+    std::os::unix::fs::symlink(real.path(), &alias).unwrap();
+
+    let fixture = tempfile::tempdir_in(&alias).unwrap();
+    fs::write(fixture.path().join("source.txt"), b"synthetic").unwrap();
+    let capture = |source| {
+        freeze(
+            CaptureContext {
+                explicit_selection: vec![Candidate::path(source)],
+                ..Default::default()
+            },
+            CaptureLimits::default(),
+        )
+    };
+    assert!(capture(fixture.path().join("source.txt")).is_err());
+    assert!(capture(fixture_root(&fixture).join("source.txt")).is_ok());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn qualification_commands_pair_pick_accept_and_decline_over_private_relay() {
     use crate::{QualificationController, QualificationReply};
     use serde_json::{Value, json};
+    use tokio::time::{Instant, timeout_at};
+
+    async fn within<T>(deadline: Instant, phase: &str, operation: impl Future<Output = T>) -> T {
+        timeout_at(
+            deadline.min(Instant::now() + Duration::from_secs(5)),
+            operation,
+        )
+        .await
+        .unwrap_or_else(|_| panic!("qualification timed out in {phase}"))
+    }
 
     async fn perform(ctl: &QualificationController, wire: Value) -> Result<Value, TransferError> {
         let result = ctl
@@ -402,64 +446,164 @@ async fn qualification_commands_pair_pick_accept_and_decline_over_private_relay(
         }
     }
 
-    tokio::time::timeout(Duration::from_secs(15), async {
-        let (relay, _url, a_wan, b_wan) = tests::private_relay_fixture().await;
-        let temp = tempfile::tempdir().unwrap();
-        let a_dir = temp.path().join("a");
-        let b_dir = temp.path().join("b");
-        let a = QualificationController::new(WanSession::from_bound(node("A", &a_dir), a_wan, tempfile::tempfile().unwrap()));
-        let b = QualificationController::new(WanSession::from_bound(node("B", &b_dir), b_wan, tempfile::tempfile().unwrap()));
-        let a_card = snapshot(&a).await["card"].clone();
-        let b_card = snapshot(&b).await["card"].clone();
-        assert!(perform(&a, json!({"type":"createInvite","card":b_card,"verified":false})).await.is_err());
-        let invitation = perform(&a, json!({"type":"createInvite","card":b_card,"verified":true})).await.unwrap();
-        assert!(!snapshot(&a).await.to_string().contains(invitation["code"].as_str().unwrap()));
+    let end = Instant::now() + Duration::from_secs(15);
+    let (relay, _url, a_wan, b_wan) = within(
+        end,
+        "relay and endpoint readiness",
+        tests::private_relay_fixture(),
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let root = fixture_root(&temp);
+    let a_dir = root.join("a");
+    let b_dir = root.join("b");
+    let a = QualificationController::new(WanSession::from_bound(
+        node("A", &a_dir),
+        a_wan,
+        tempfile::tempfile().unwrap(),
+    ));
+    let b = QualificationController::new(WanSession::from_bound(
+        node("B", &b_dir),
+        b_wan,
+        tempfile::tempfile().unwrap(),
+    ));
+    let a_card = snapshot(&a).await["card"].clone();
+    let b_card = snapshot(&b).await["card"].clone();
+    assert!(
+        perform(
+            &a,
+            json!({"type":"createInvite","card":b_card,"verified":false})
+        )
+        .await
+        .is_err()
+    );
+    let invitation = perform(
+        &a,
+        json!({"type":"createInvite","card":b_card,"verified":true}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !snapshot(&a)
+            .await
+            .to_string()
+            .contains(invitation["code"].as_str().unwrap())
+    );
 
-        let issuer_identity = a_card.as_str().unwrap().rsplit_once(':').unwrap().0;
-        let wrong_outer = b_card.as_str().unwrap().rsplit_once(':').unwrap().1;
-        let wrong_card = format!("{issuer_identity}:{wrong_outer}");
-        assert!(perform(&b, json!({"type":"redeem","issuerCard":wrong_card,
-            "code":invitation["code"],"verified":true})).await.is_err());
-        assert!(snapshot(&a).await["pending"].is_null());
+    let issuer_identity = a_card.as_str().unwrap().rsplit_once(':').unwrap().0;
+    let wrong_outer = b_card.as_str().unwrap().rsplit_once(':').unwrap().1;
+    let wrong_card = format!("{issuer_identity}:{wrong_outer}");
+    let mismatched = within(
+        end,
+        "mismatched card rejection",
+        perform(
+            &b,
+            json!({"type":"redeem","issuerCard":wrong_card,
+        "code":invitation["code"],"verified":true}),
+        ),
+    )
+    .await;
+    assert!(matches!(
+        mismatched,
+        Err(TransferError {
+            code: ErrorCode::PeerUntrusted
+        })
+    ));
+    assert!(snapshot(&a).await["pending"].is_null());
 
-        let redeem = perform(&b, json!({"type":"redeem","issuerCard":a_card,"code":invitation["code"],"verified":true}));
-        let approve = async {
-            let pending = wait_for(&a, |s| !s["pending"].is_null()).await;
-            let request = pending["pending"]["request"].clone();
-            perform(&a, json!({"type":"pairDecision","request":request,"allow":true})).await.unwrap();
-        };
-        let (result, _) = tokio::join!(redeem, approve);
-        assert_eq!(result.unwrap()["type"], "acknowledged");
-
-        for (sender, receiver, destination, name, accepted) in [
-            (&b, &a, &a_dir, "to-a.txt", true),
-            (&a, &b, &b_dir, "to-b.txt", true),
-            (&b, &a, &a_dir, "decline.txt", false),
-        ] {
-            let peer = snapshot(sender).await["devices"][0]["id"].clone();
-            let source = temp.path().join(name);
-            fs::write(&source, name.as_bytes()).unwrap();
-            let send = sender.execute(serde_json::from_value(json!({"type":"chooseAndSend","peer":peer})).unwrap(),
-                || async { Ok(Some(source)) });
-            let decide = async {
-                let state = wait_for(receiver, |state| state["offers"].as_array().unwrap()
-                    .iter().any(|offer| offer["state"] == "pending" && offer["name"] == name)).await;
-                let offer = state["offers"].as_array().unwrap().iter().find(|offer| offer["name"] == name).unwrap();
-                assert!(!destination.join(name).exists());
-                assert!(offer.get("savedPath").is_none());
-                perform(receiver, json!({"type":"offerDecision","peer":offer["peer"],"offer":offer["offer"],"allow":accepted})).await.unwrap();
-            };
-            let (sent, _) = tokio::join!(send, decide);
-            if accepted {
-                assert!(matches!(sent.unwrap(), QualificationReply::Sent { status } if status.state == State::Completed));
-                assert_eq!(fs::read(destination.join(name)).unwrap(), name.as_bytes());
-            } else {
-                assert!(!matches!(sent, Ok(QualificationReply::Sent { status }) if status.state == State::Completed));
-                assert!(!destination.join(name).exists());
-            }
+    let mut redeem = std::pin::pin!(perform(
+        &b,
+        json!({"type":"redeem","issuerCard":a_card,"code":invitation["code"],"verified":true})
+    ));
+    let pending = within(end, "pairing prompt before approval", async {
+        tokio::select! {
+            result = &mut redeem => match result {
+                Err(error) => panic!("redeem failed before approval: {:?}", error.code),
+                Ok(_) => panic!("redeem completed before explicit approval"),
+            },
+            pending = wait_for(&a, |s| !s["pending"].is_null()) => pending,
         }
-        a.stop().await.unwrap();
-        b.stop().await.unwrap();
-        relay.shutdown().await.unwrap();
-    }).await.unwrap();
+    })
+    .await;
+    within(
+        end,
+        "owner pairing approval",
+        perform(
+            &a,
+            json!({"type":"pairDecision","request":pending["pending"]["request"],"allow":true}),
+        ),
+    )
+    .await
+    .expect("owner approve the exact pairing request");
+    assert_eq!(
+        within(end, "signed redemption receipt", redeem)
+            .await
+            .expect("signed redemption receipt")["type"],
+        "acknowledged"
+    );
+
+    for (sender, receiver, destination, name, accepted) in [
+        (&b, &a, &a_dir, "to-a.txt", true),
+        (&a, &b, &b_dir, "to-b.txt", true),
+        (&b, &a, &a_dir, "decline.txt", false),
+    ] {
+        let peer = snapshot(sender).await["devices"][0]["id"].clone();
+        let source = root.join(name);
+        fs::write(&source, name.as_bytes()).unwrap();
+        let mut send = std::pin::pin!(sender.execute(
+            serde_json::from_value(json!({"type":"chooseAndSend","peer":peer})).unwrap(),
+            || async { Ok(Some(source)) },
+        ));
+        let state = within(end, &format!("{name}: pending offer after native pickup"), async {
+            tokio::select! {
+                result = &mut send => match result {
+                    Err(error) => panic!("{name}: send failed before pending offer: {:?}", error.code),
+                    Ok(_) => panic!("{name}: send completed before explicit receiver decision"),
+                },
+                state = wait_for(receiver, |state| state["offers"].as_array().unwrap().iter()
+                    .any(|offer| offer["state"] == "pending" && offer["name"] == name)) => state,
+            }
+        }).await;
+        let offer = state["offers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|offer| offer["name"] == name)
+            .unwrap();
+        assert!(!destination.join(name).exists());
+        assert!(offer.get("savedPath").is_none());
+        within(end, &format!("{name}: recipient decision"), perform(receiver, json!({
+            "type":"offerDecision","peer":offer["peer"],"offer":offer["offer"],"allow":accepted
+        }))).await.expect("record explicit recipient decision");
+        let sent = within(end, &format!("{name}: sender receipt"), send).await;
+        if accepted {
+            assert!(
+                matches!(sent.as_ref().expect("sender receipt"), QualificationReply::Sent { status } if status.state == State::Completed)
+            );
+            assert_eq!(fs::read(destination.join(name)).unwrap(), name.as_bytes());
+        } else {
+            assert!(
+                matches!(
+                    sent,
+                    Err(TransferError {
+                        code: ErrorCode::TransferRejected
+                    }) | Ok(QualificationReply::Sent {
+                        status: aerift_transfer::Status {
+                            state: State::Rejected,
+                            ..
+                        }
+                    })
+                ),
+                "{name}: expected explicit decline result"
+            );
+            assert!(!destination.join(name).exists());
+        }
+    }
+    within(end, "stop and join recipient", a.stop())
+        .await
+        .unwrap();
+    within(end, "stop and join sender", b.stop()).await.unwrap();
+    within(end, "stop loopback relay", relay.shutdown())
+        .await
+        .unwrap();
 }

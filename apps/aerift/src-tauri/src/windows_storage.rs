@@ -235,7 +235,7 @@ impl FriendStore for WindowsFriendStore {
 #[cfg(test)]
 mod friends_tests {
     use super::*;
-    use aerift_peers::{FriendClaim, FriendRecord};
+    use aerift_peers::{FriendClaim, FriendProfileAvatar, FriendRecord, SharedFriendProfile};
 
     #[test]
     fn friend_award_survives_profile_reopen_and_does_not_share_local_trust() {
@@ -295,6 +295,75 @@ mod friends_tests {
         assert!(
             open_friends(dir.path()).is_err(),
             "never replace a missing authority for an existing ledger"
+        );
+    }
+
+    #[test]
+    fn friends_windows_profile_revision_reopens_and_revocation_erases_presentation() {
+        let a_dir = tempfile::tempdir().unwrap();
+        let b_dir = tempfile::tempdir().unwrap();
+        let (a, a_book) = open_friends(a_dir.path()).unwrap();
+        let (b, b_book) = open_friends(b_dir.path()).unwrap();
+        let a_pin = PeerId::from_tls_leaf(b"profile-fixture-a");
+        let b_pin = PeerId::from_tls_leaf(b"profile-fixture-b");
+        let invite = a.invite(a_pin, b.id(), b_pin, 100).unwrap();
+        let consent = b.accept(&invite, a_pin, b_pin, 100).unwrap();
+        let approve = a.confirm(&invite, &consent, b_pin, 100).unwrap();
+        a_book
+            .add(
+                FriendRecord::verify(&invite, &consent, &approve, a.id(), a_pin, b_pin, 100)
+                    .unwrap(),
+                100,
+            )
+            .unwrap();
+        b_book
+            .add(
+                FriendRecord::verify(&invite, &consent, &approve, b.id(), b_pin, a_pin, 100)
+                    .unwrap(),
+                100,
+            )
+            .unwrap();
+
+        let title = "Synthetic UI-only profile";
+        let presentation =
+            SharedFriendProfile::new(title, None, FriendProfileAvatar::Initials).unwrap();
+        let wire = a
+            .share_profile(&a_book, a_pin, b.id(), b_pin, 1, 103, presentation, true)
+            .unwrap();
+        b_book
+            .apply_shared_profile(&wire, b_pin, a_pin, 104)
+            .unwrap();
+        let encrypted = fs::read(b_dir.path().join("friends-v1").join("book.dpapi")).unwrap();
+        assert!(
+            !encrypted
+                .windows(title.len())
+                .any(|bytes| bytes == title.as_bytes())
+        );
+        drop(b_book);
+        let (_, reopened) = open_friends(b_dir.path()).unwrap();
+        assert_eq!(
+            reopened
+                .shared_profile(a.id())
+                .unwrap()
+                .unwrap()
+                .profile
+                .display_name(),
+            title
+        );
+        assert!(
+            reopened
+                .apply_shared_profile(&wire, b_pin, a_pin, 105)
+                .is_err()
+        );
+        reopened.revoke_device(a.id(), a_pin).unwrap();
+        assert!(reopened.shared_profile(a.id()).unwrap().is_none());
+        drop(reopened);
+        let (_, reopened) = open_friends(b_dir.path()).unwrap();
+        assert!(reopened.shared_profile(a.id()).unwrap().is_none());
+        assert!(
+            reopened
+                .apply_shared_profile(&wire, b_pin, a_pin, 106)
+                .is_err()
         );
     }
 
