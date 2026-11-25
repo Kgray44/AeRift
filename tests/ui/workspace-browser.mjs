@@ -7,7 +7,7 @@ const { chromium } = await import(module ? pathToFileURL(module).href : "playwri
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
 const evidence = process.env.AERIFT_WORKSPACE_EVIDENCE;
 if (evidence) await mkdir(evidence, { recursive: true });
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.AERIFT_CHROMIUM ? { executablePath: process.env.AERIFT_CHROMIUM } : {});
 const snapped = async (page, name) => {
   if (!evidence) return;
   await page.screenshot({ path: join(evidence, name + ".png"), animations: "disabled" });
@@ -15,6 +15,20 @@ const snapped = async (page, name) => {
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
+const assertFloatingNoteTools = async (editor, required) => {
+  assert.equal(await editor.getByRole("combobox", { name: /category/i }).count(), 0, "no always-visible category dropdown");
+  const canvas = editor.locator(".aw-note-canvas");
+  const tools = canvas.getByRole("group", { name: "Note tools", exact: true });
+  for (const name of required) {
+    const icon = button(tools, name);
+    await icon.waitFor();
+    assert.equal(await icon.innerText(), "", name + " is an icon inside the writing surface");
+  }
+  const [bar, body] = await Promise.all([tools.boundingBox(),
+    canvas.getByRole("textbox", { name: "Note", exact: true }).boundingBox()]);
+  assert.ok(bar && body && bar.y + bar.height <= body.y + 1, "floating tools do not cover the first line");
+  assert.ok(await tools.evaluate(el => el.scrollWidth <= el.clientWidth + 1), "all icons fit without horizontal scrolling");
+};
 const open = async (page, name) => {
   await button(page, name).click();
   assert.equal(await focused(heading(page, name)), true, "focus lands in opened workspace");
@@ -61,7 +75,11 @@ try {
   const editor = desktop.getByRole("region", { name: "Note editor", exact: true });
   await button(sidebar, "New category").click();
   await desktop.getByRole("textbox", { name: "Category name" }).fill("Work projects");
+  await button(desktop, "Violet color").click();
+  await button(desktop, "Star icon").click();
   await button(desktop, "Save category").click();
+  const workCategory = sidebar.getByRole("button", { name: /^Work projects/ });
+  assert.equal(await workCategory.locator("svg").getAttribute("data-category-color"), "violet");
   await button(sidebar, "New note").click();
   const first = editor.getByRole("textbox", { name: "Title", exact: true });
   await first.fill("Door project");
@@ -93,12 +111,30 @@ try {
     return field && field.getBoundingClientRect().height >= 350;
   }, null, { timeout: 3000 });
   assert.ok((await largeEditor.boundingBox()).height >= 350, "Notes keeps a large desktop editor");
+  await assertFloatingNoteTools(editor, ["Bold", "Markdown", "Preview", "Move note to category", "Save note", "Delete note"]);
   await snapped(desktop, "desktop-notes-sidebar-editor");
+  const categoryIcon = button(editor, "Move note to category");
+  const categoryChoices = editor.getByRole("group", { name: "Move note to category", exact: true });
+  await categoryIcon.press("Enter");
+  const currentCategory = button(categoryChoices, "Work projects");
+  assert.equal(await currentCategory.getAttribute("aria-pressed"), "true");
+  await currentCategory.press("Escape");
+  assert.equal(await focused(categoryIcon), true);
+  assert.equal(await categoryChoices.count(), 0);
+  await categoryIcon.click();
+  await button(categoryChoices, "Uncategorized").click();
+  await categoryIcon.click();
+  assert.equal(await button(categoryChoices, "Uncategorized").getAttribute("aria-pressed"), "true");
+  await currentCategory.click();
   await sidebar.getByRole("searchbox", { name: "Search notes" }).fill("unrelated");
   await sidebar.getByText("No notes match this search.").waitFor();
   await desktop.reload();
   await open(desktop, "Notes");
-  await sidebar.getByRole("button", { name: /^Work projects/ }).click();
+  await workCategory.click();
+  await button(desktop, "Edit category").click();
+  assert.equal(await button(desktop, "Violet color").getAttribute("aria-pressed"), "true");
+  assert.equal(await button(desktop, "Star icon").getAttribute("aria-pressed"), "true");
+  await button(desktop, "Cancel category edit").click();
   await sidebar.getByRole("button", { name: /Door project/ }).waitFor();
   await desktop.close();
 
@@ -237,7 +273,13 @@ try {
     await snapped(page, platform + "-notes-list");
     await mobileNotes.getByRole("button", { name: /Weekend plan/ }).click();
     await mobileEditor.getByRole("textbox", { name: "Note", exact: true }).waitFor();
+    await assertFloatingNoteTools(mobileEditor, ["Bold", "Markdown", "Preview", "Move note to category", "Save note", "Delete note"]);
     await snapped(page, platform + "-notes-full-editor");
+    await button(mobileEditor, "Move note to category").click();
+    const categories = mobileEditor.getByRole("group", { name: "Move note to category", exact: true });
+    assert.equal(await button(categories, "Weekend").getAttribute("aria-pressed"), "true");
+    await button(categories, "Weekend").click();
+    assert.equal(await categories.count(), 0);
     await button(mobileEditor, "Back to notes").click();
     await back(page, "Notes");
     assert.equal(await button(page, "Clipboard").count(), 0, "Clipboard is not enabled by default");

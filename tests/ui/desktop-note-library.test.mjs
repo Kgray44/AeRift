@@ -101,3 +101,15 @@ test("a previously loaded view cannot overwrite a newer persisted category snaps
   assert.equal(saveDesktopNoteLibrary(source, createDesktopNoteCategory(oldView, "b", "B"), oldView), false);
   assert.deepEqual(loadDesktopNoteLibrary(source), winning);
 });
+
+test("category styles persist, are strictly allowlisted, and old category names still load", () => {
+  const store = storage();
+  const base = createDesktopNoteCategory(loadDesktopNoteLibrary(store), "work", "Work");
+  assert.equal(saveDesktopNoteLibrary(store, base), true);
+  assert.deepEqual(loadDesktopNoteLibrary(store).categories, [{ id: "work", name: "Work" }]);
+  const styled = renameDesktopNoteCategory(base, "work", "Work", { color: "violet", icon: "star" });
+  assert.equal(saveDesktopNoteLibrary(store, styled, base), true);
+  assert.deepEqual(loadDesktopNoteLibrary(store).categories[0].appearance, { color: "violet", icon: "star" });
+  assert.equal(renameDesktopNoteCategory(styled, "work", "Work", { color: "url(example)", icon: "star" }), styled);
+  assert.deepEqual(renameDesktopNoteCategory(styled, "work", "Renamed").categories[0].appearance, { color: "violet", icon: "star" });
+});

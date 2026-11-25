@@ -43,6 +43,8 @@ jobs:
             AERIFT_WORKSPACE_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
             node tests/ui/workspace-browser.mjs
           AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            node tests/ui/glass-scroll-browser.mjs
+          AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
             node tests/ui/trusted-browser-chromium.mjs
           AERIFT_FRIENDS_PLAYWRIGHT="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
             AERIFT_FRIENDS_URL=http://127.0.0.1:4175 \
