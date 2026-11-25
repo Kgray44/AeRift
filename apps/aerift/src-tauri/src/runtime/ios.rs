@@ -17,6 +17,17 @@ use tokio_util::sync::CancellationToken;
 use super::{lock, Session, RECEIVE_LIMITS};
 
 impl Session {
+    pub(crate) fn preview_received_text(
+        &self,
+        key: aerift_transfer::TransferKey,
+    ) -> Result<Option<String>, TransferError> {
+        let receipt = self
+            .receiver
+            .completed_receipt(key)
+            .ok_or(ErrorCode::InvalidRequest)?;
+        crate::ios_received_preview::text(&self.destination, &receipt)
+    }
+
     pub(super) async fn open_ios(
         app: &tauri::AppHandle,
         stop: CancellationToken,

@@ -392,6 +392,15 @@ impl AppRuntime {
             .map(Arc::clone)
     }
 
+    #[cfg(target_os = "ios")]
+    pub(crate) fn existing_ios_session(&self) -> Result<Arc<Session>, TransferError> {
+        self.session
+            .get()
+            .cloned()
+            .filter(|session| !session.stop.is_cancelled())
+            .ok_or_else(|| ErrorCode::PeerUnavailable.into())
+    }
+
     #[cfg(target_os = "android")]
     pub(crate) async fn android_session(
         &self,

@@ -36,6 +36,8 @@ export function createMobileOperations(platform: MobilePlatform, call: InvokeCom
     retryDiscovery: () => call<void>(`retry_${platform}_discovery`),
     presentSelection: (selectionId: string, action: MediaAction) => call<void>(`present_${platform}_selection`, { selectionId, action }),
     listReceived: platform === "android" ? () => call<readonly ReceivedCopy[]>("list_android_received") : undefined,
+    previewReceivedText: platform === "ios" ? (receiptId: string) =>
+      call<string | null>("preview_ios_received_text", { receiptId }) : undefined,
     presentReceived: platform === "android" ? (transferId: string, action: "preview" | "share") =>
       call<void>("present_android_received", { transferId, action }) : undefined,
     clipboardImageAvailable: () => call<boolean>(`${platform}_clipboard_image_available`),

@@ -324,7 +324,7 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
             </Button>
           </>}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
-          activityLibrary={<MobileReceivedActivity transfers={recentTransfers} operations={operations}
+          activityLibrary={<MobileReceivedActivity transfers={recentTransfers} liveTransfers={liveTransfers ?? []} operations={operations}
             receivedTip={copy.receivedTip} />}
           activityFooter={historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
           gesture={controls => <MobileGestureCamera platform={platform} controls={controls} enabled={preferences.gestures}
