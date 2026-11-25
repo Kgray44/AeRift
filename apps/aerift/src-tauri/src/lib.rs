@@ -178,6 +178,7 @@ pub fn run() {
             windows::transfer_app_file,
             windows::list_ambient_inbox,
             windows::verify_ambient_inbox_entry,
+            windows::preview_ambient_inbox_text,
             windows::save_ambient_inbox_entry,
             explorer_receive::arm_explorer_receive,
             explorer_receive::view_explorer_receive,
@@ -244,3 +245,4 @@ pub fn run() {
             }
         });
 }
+

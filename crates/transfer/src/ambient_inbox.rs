@@ -9,6 +9,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tempfile::{Builder, NamedTempFile};
 
@@ -16,6 +17,7 @@ const RECEIPT_BYTES: u64 = 4096;
 const SEALED_RECEIPT_BYTES: u64 = 16 * 1024;
 const VERSION: u8 = 1;
 const MAX_SCAN: usize = 1024;
+const TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
 const CONTENT: &str = "payload";
 const MARKER: &str = "verified.json";
 
@@ -35,6 +37,8 @@ struct Record {
     peer: PeerId,
     offer: Offer,
     requested_destination: FrozenDelivery,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    received_at_unix_ms: Option<u64>,
 }
 
 /// Opaque proof produced by the local inbox; not a network or UI deserialization type.
@@ -64,6 +68,8 @@ pub struct InboxCandidate {
     pub name: String,
     pub size_bytes: u64,
     pub requested_destination: FrozenDelivery,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub received_at_unix_ms: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -131,6 +137,57 @@ impl Inbox {
         let (dir, record) = self.read_record(key)?;
         verify_payload(&dir.join(CONTENT), &record.offer)?;
         Ok(VerifiedInboxReceipt(record))
+    }
+
+    /// Bounded, inert UTF-8 display for explicitly chosen text receipts.
+    /// Only the same-open bytes matching the sealed length and digest leave the inbox.
+    pub fn verified_text_preview(&self, key: TransferKey) -> Result<Option<String>, TransferError> {
+        let _job = self
+            .verification
+            .try_lock()
+            .map_err(|_| ErrorCode::Conflict)?;
+        let (dir, record) = self.read_record(key)?;
+        let offer = &record.offer;
+        let supported = Path::new(&offer.name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|ext| {
+                ["txt", "text", "md", "csv", "tsv", "log"]
+                    .iter()
+                    .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+            });
+        if !supported || offer.size_bytes > TEXT_PREVIEW_BYTES {
+            return Ok(None);
+        }
+        let path = dir.join(CONTENT);
+        regular(&path)?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_OPEN_REPARSE_POINT: never follow a substituted final entry.
+            options.custom_flags(0x0020_0000);
+        }
+        let file = options.open(path).map_err(storage)?;
+        let meta = file.metadata().map_err(storage)?;
+        if !meta.is_file() || redirected(&meta) || meta.len() != offer.size_bytes {
+            return Err(ErrorCode::IntegrityFailed.into());
+        }
+        let mut bytes = Vec::new();
+        file.take(TEXT_PREVIEW_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(storage)?;
+        if bytes.len() as u64 != offer.size_bytes
+            || format!("{:x}", Sha256::digest(&bytes)) != offer.sha256
+        {
+            return Err(ErrorCode::IntegrityFailed.into());
+        }
+        Ok(String::from_utf8(bytes).ok().filter(|text| {
+            !text
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+        }))
     }
 
     /// Deliberate local save. The native chooser, not the sender or webview,
@@ -228,6 +285,7 @@ impl Inbox {
                 name: record.offer.name,
                 size_bytes: record.offer.size_bytes,
                 requested_destination: record.requested_destination,
+                received_at_unix_ms: record.received_at_unix_ms,
             });
         }
         entries.sort_by(|a, b| {
@@ -310,6 +368,13 @@ impl Inbox {
                 peer: key.peer,
                 offer: offer.clone(),
                 requested_destination,
+                // Local metadata only, inside the authenticated receipt.
+                // This marker is not visible until verified publication.
+                received_at_unix_ms: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .ok()
+                    .and_then(|value| u64::try_from(value.as_millis()).ok())
+                    .filter(|value| *value > 0 && *value <= 8_640_000_000_000_000),
             })
             .map_err(|_| ErrorCode::StorageFailed)?;
             if body.is_empty() || body.len() as u64 > RECEIPT_BYTES {
@@ -493,12 +558,101 @@ mod receipt_seal_tests {
                 peer: key.peer,
                 offer: forged,
                 requested_destination: FrozenDelivery::Inbox,
+                received_at_unix_ms: None,
             })
             .unwrap(),
         )
         .unwrap();
         assert!(opened.verified_receipt(key).is_err());
         assert!(opened.recovery_candidates("").unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn dated_receipts_round_trip_and_sealed_legacy_receipts_stay_undated() {
+        let temp = tempfile::tempdir().unwrap();
+        let protector = Arc::new(TestSeal(Mutex::new(None)));
+        let inbox = Inbox::open_sealed(temp.path(), protector.clone()).unwrap();
+        let key = TransferKey {
+            peer: hex_peer(),
+            id: uuid::Uuid::new_v4(),
+        };
+        let offer = Offer {
+            id: key.id,
+            name: "dated.txt".into(),
+            size_bytes: 5,
+            sha256: format!("{:x}", Sha256::digest(b"proof")),
+        };
+        let mut payload = inbox.tempfile().unwrap();
+        payload.write_all(b"proof").unwrap();
+        inbox
+            .publish(key, &offer, FrozenDelivery::Inbox, payload)
+            .unwrap();
+        let list = inbox.recovery_candidates("").unwrap();
+        let time = list.entries[0].received_at_unix_ms.unwrap();
+        assert!(time >= 1_577_836_800_000);
+        let value = serde_json::to_value(&list.entries[0]).unwrap();
+        assert_eq!(value["receivedAtUnixMs"].as_u64(), Some(time));
+
+        // Model a v1 receipt written by a pre-Activity release and sealed by
+        // the same native owner, not a plaintext receipt or a migration.
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(protector.0.lock().unwrap().as_ref().unwrap()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("received_at_unix_ms");
+        protector
+            .seal(&serde_json::to_vec(&legacy).unwrap())
+            .unwrap();
+        assert!(inbox.verified_receipt(key).is_ok());
+        let list = inbox.recovery_candidates("").unwrap();
+        assert_eq!(list.entries[0].received_at_unix_ms, None);
+        assert!(serde_json::to_value(&list.entries[0])
+            .unwrap()
+            .get("receivedAtUnixMs")
+            .is_none());
+    }
+
+    #[test]
+    fn text_preview_requires_the_exact_verified_bytes_and_never_returns_other_types() {
+        let temp = tempfile::tempdir().unwrap();
+        let protector = Arc::new(TestSeal(Mutex::new(None)));
+        let inbox = Inbox::open_sealed(temp.path(), protector).unwrap();
+        let key = TransferKey {
+            peer: hex_peer(),
+            id: uuid::Uuid::new_v4(),
+        };
+        let body = b"<script>not executable in the preview</script>";
+        let mut offer = Offer {
+            id: key.id,
+            name: "plain.txt".into(),
+            size_bytes: body.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(body)),
+        };
+        let mut payload = inbox.tempfile().unwrap();
+        payload.write_all(body).unwrap();
+        inbox
+            .publish(key, &offer, FrozenDelivery::Inbox, payload)
+            .unwrap();
+        assert_eq!(
+            inbox.verified_text_preview(key).unwrap().as_deref(),
+            Some(std::str::from_utf8(body).unwrap())
+        );
+        fs::write(inbox.entry(key).join(CONTENT), vec![b'x'; body.len()]).unwrap();
+        assert!(inbox.verified_text_preview(key).is_err());
+
+        let key = TransferKey {
+            peer: hex_peer(),
+            id: uuid::Uuid::new_v4(),
+        };
+        offer.id = key.id;
+        offer.name = "not-a-text-file.html".into();
+        let mut payload = inbox.tempfile().unwrap();
+        payload.write_all(body).unwrap();
+        inbox
+            .publish(key, &offer, FrozenDelivery::Inbox, payload)
+            .unwrap();
+        assert!(inbox.verified_text_preview(key).unwrap().is_none());
     }
 
     fn hex_peer() -> PeerId {
@@ -562,3 +716,4 @@ mod inbox_export_tests {
         assert_eq!(destination.path().read_dir().unwrap().count(), 1);
     }
 }
+

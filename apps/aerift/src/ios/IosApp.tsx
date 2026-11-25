@@ -11,6 +11,7 @@ import { FriendsWorkspace } from "../FriendsWorkspace";
 import { DeviceTrust } from "../DeviceTrust";
 import { nativeAppPort, command } from "../nativeAppPort";
 import { MobileGestureCamera, mobileCameraPermission, type MobileCameraPermission } from "./IosGestureCamera";
+import { MobileReceivedActivity } from "./MobileReceivedActivity";
 import { MobileNavigation } from "./MobileNavigation";
 import { observeMobileMedia } from "./mobile-media-observer";
 import type { MobileMediaPort } from "./mobile-media";
@@ -323,10 +324,9 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
             </Button>
           </>}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
-          activityFooter={<>
-            <p>{copy.receivedTip}</p>
-            {historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
-          </>}
+          activityLibrary={<MobileReceivedActivity transfers={recentTransfers} operations={operations}
+            receivedTip={copy.receivedTip} />}
+          activityFooter={historyError && <p role="alert">AeRift couldn't update saved Activity.</p>}
           gesture={controls => <MobileGestureCamera platform={platform} controls={controls} enabled={preferences.gestures}
             actionsBlocked={settingsOpen} retryKey={cameraRetry} onStatus={setCameraStatus} />}
           mobile={{
@@ -467,3 +467,4 @@ function MobileApp({ platform, port = nativeAppPort, media, pick }: MobileAppOve
     </ThemeProvider>
   </div>;
 }
+

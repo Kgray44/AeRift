@@ -297,7 +297,8 @@ export function DesktopApp() {
           watchSelection={watchSelection}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
           allowInbox
-          activityFooter={route === "activity" && <>{folder?.active && <p>The regular receive folder is {folder.active}.</p>}<DesktopInbox contextualEnabled={captureEnabled} /></>}
+          activityLibrary={<DesktopInbox contextualEnabled={captureEnabled} />}
+          activityFooter={route === "activity" && folder?.active && <p>The regular receive folder is {folder.active}.</p>}
           gesture={controls => <GestureCamera controls={controls} shortcut={settings.cameraShortcut}
             enabled={settings.gestures} actionsBlocked={route !== "rift"} source={settings.cameraId || undefined}
             retryKey={cameraRetry} onStatus={setCameraStatus} />}
@@ -306,3 +307,4 @@ export function DesktopApp() {
     </AppShell>
   </ThemeProvider>;
 }
+

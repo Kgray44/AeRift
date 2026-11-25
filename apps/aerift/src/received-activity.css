@@ -1,0 +1,89 @@
+.aw-received-activity {
+  min-inline-size: 0;
+  padding: 1rem;
+}
+.aw-received-activity .aw-received-header,
+.aw-received-activity .aw-received-header form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+}
+.aw-received-activity .aw-received-query,
+.aw-received-activity .aw-received-list small,
+.aw-received-activity .aw-received-timeline small {
+  display: block;
+  color: var(--ae-muted);
+}
+.aw-received-activity .aw-received-query input {
+  display: block;
+  inline-size: min(100%, 14rem);
+}
+.aw-received-activity .aw-received-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: .8rem;
+}
+.aw-received-activity .aw-received-list {
+  min-inline-size: 0;
+}
+.aw-received-activity .aw-received-file-link {
+  display: block;
+  text-align: start;
+  overflow-wrap: anywhere;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  min-block-size: 2.75rem;
+  padding: .3rem .1rem;
+  border: 0;
+  background: transparent;
+}
+.aw-received-activity .aw-received-file-link:hover,
+.aw-received-activity .aw-received-file-link[aria-current] {
+  text-decoration: underline;
+}
+.aw-received-activity :is(.aw-received-file-link, .aw-received-detail):focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: .12rem;
+  border-radius: .25rem;
+}
+.aw-received-activity .aw-received-detail {
+  padding: .7rem;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.aw-received-activity .aw-received-detail dl div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .35rem;
+}
+.aw-received-activity .aw-received-detail dd {
+  margin-inline-start: 0;
+}
+.aw-received-activity .aw-received-timeline li {
+  overflow-wrap: anywhere;
+  margin-block: .3rem;
+}
+@media (max-width: 680px) {
+  .aw-received-activity .aw-received-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.aw-received-activity .aw-received-actions {
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  margin-block: .65rem;
+  padding: .3rem;
+  border-radius: 1.8rem;
+}
+.aw-received-activity .aw-received-text {
+  max-block-size: 22rem;
+  min-inline-size: 0;
+  padding: .55rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}

@@ -1,5 +1,6 @@
 import { friendsFixture } from "./friends-fixture";
 import { createRoot } from "react-dom/client";
+import { mockIPC } from "@tauri-apps/api/mocks";
 import type { AppPort, AppSnapshot, Transfer } from "@aerift/app-contract";
 import { installMotionFixture, installTransferIslandFixture, respondToMotionReceipt } from "./motion-fixture";
 import "../../apps/aerift/public/appearance-bootstrap.css";
@@ -101,6 +102,19 @@ const media: MobileMediaPort = {
   async present() { return { ok: true, value: undefined }; },
 };
 
+if (new URLSearchParams(location.search).get("receivedFixture") === "1") {
+  const id = "received-" + "a".repeat(64);
+  mockIPC((cmd, args) => {
+    if (cmd === "list_android_received") return [{id, name: "Received chart.pdf", sizeBytes: 38413}];
+    if (cmd === "present_android_received") {
+      const { transferId, action } = args as { transferId: string; action: string };
+      if (transferId !== id || action !== "preview") throw { code: "invalid_request" };
+      return undefined;
+    }
+    return undefined;
+  }, { shouldMockEvents: true });
+}
+
 const App = new URLSearchParams(location.search).get("platform") === "android" ? AndroidApp : IosApp;
 
 createRoot(document.getElementById("root")!).render(
@@ -109,3 +123,4 @@ createRoot(document.getElementById("root")!).render(
     return { ok: true, value: selection };
   }} />,
 );
+
