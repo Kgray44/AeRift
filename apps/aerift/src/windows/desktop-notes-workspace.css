@@ -29,8 +29,8 @@
 .aw-desktop-note-empty h4,.aw-desktop-note-empty p{margin:0}
 .aw-desktop-note-feedback{margin:.15rem 0 .55rem}
 .aw-desktop-note-form .aw-note-editor{flex:1;grid-template-rows:auto auto minmax(18rem,1fr) auto;gap:.44rem}
-.aw-desktop-note-form .aw-note-editor textarea,.aw-desktop-note-form .aw-note-preview{min-block-size:clamp(22rem,44vh,42rem)}
-.aw-desktop-note-form .aw-note-editor textarea{padding:1.05rem 1.16rem;line-height:1.62;resize:vertical}
+.ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea,.aw-desktop-note-form .aw-note-preview{min-block-size:clamp(22rem,44vh,42rem)}
+.ae-theme .aw-desktop-notes .aw-desktop-note-form .aw-note-editor textarea{padding:1.05rem 1.16rem;line-height:1.62;resize:vertical}
 .aw-desktop-note-form .aw-note-toolbar{gap:.3rem;padding:.35rem .08rem}
 .ae-theme .aw-note-tool{transition:transform var(--ae-fast,160ms) ease,background-color var(--ae-fast,160ms) ease,border-color var(--ae-fast,160ms) ease}
 @media(hover:hover){.ae-theme .aw-note-tool:not(:disabled):hover{transform:translateY(-2px);border-color:var(--ae-accent)}}
@@ -57,4 +57,4 @@
 .aw-mobile-note-back{display:flex;align-items:center;gap:.4rem;margin-block-end:.45rem;color:var(--ae-muted)}
 .aw-mobile-notes .aw-desktop-note-top{align-items:center;gap:.3rem}
 .aw-mobile-notes .aw-note-title-field{flex:1 1 8rem}
-.aw-mobile-notes .aw-desktop-note-form .aw-note-editor textarea{min-block-size:45dvh;min-inline-size:0}
+.ae-theme .aw-desktop-notes.aw-mobile-notes .aw-desktop-note-form .aw-note-editor textarea{min-block-size:45dvh;min-inline-size:0}

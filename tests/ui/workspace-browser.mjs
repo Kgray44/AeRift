@@ -87,7 +87,12 @@ try {
   assert.equal(await sidebar.getByRole("button", { name: /Newer note/ }).count(), 0);
   await sidebar.getByRole("button", { name: /Door project/ }).click();
   assert.equal(await first.inputValue(), "Door project");
-  assert.ok((await editor.getByRole("textbox", { name: "Note", exact: true }).boundingBox()).height >= 350);
+  const largeEditor = editor.getByRole("textbox", { name: "Note", exact: true });
+  await desktop.waitForFunction(() => {
+    const field = document.querySelector(".aw-desktop-note-form textarea:not([hidden])");
+    return field && field.getBoundingClientRect().height >= 350;
+  }, null, { timeout: 3000 });
+  assert.ok((await largeEditor.boundingBox()).height >= 350, "Notes keeps a large desktop editor");
   await snapped(desktop, "desktop-notes-sidebar-editor");
   await sidebar.getByRole("searchbox", { name: "Search notes" }).fill("unrelated");
   await sidebar.getByText("No notes match this search.").waitFor();
