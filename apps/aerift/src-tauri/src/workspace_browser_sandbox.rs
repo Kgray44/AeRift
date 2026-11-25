@@ -111,7 +111,6 @@ impl WorkspaceBrowserSandbox {
         let fixture = observations.map(|value| ClosedFixture::new(&view, value));
         install_native_guards(&view, profile.path(), policy.clone(), #[cfg(test)] fixture)?;
         view.load_url(destination.as_str()).map_err(|_| SandboxError::BrowserUnavailable)?;
-        view.set_visible(true).map_err(|_| SandboxError::BrowserUnavailable)?;
         Ok(Self { view, _profile: profile, policy })
     }
 
@@ -122,6 +121,13 @@ impl WorkspaceBrowserSandbox {
 
     pub(crate) fn set_bounds(&self, trusted_bounds: Rect) -> Result<(), SandboxError> {
         self.view.set_bounds(trusted_bounds).map_err(|_| SandboxError::BrowserUnavailable)
+    }
+
+    /// Present only after trusted native layout admission; never focus the child.
+    pub(crate) fn present_at(&self, trusted_bounds: Rect) -> Result<(), SandboxError> {
+        self.hide()?;
+        self.set_bounds(trusted_bounds)?;
+        self.view.set_visible(true).map_err(|_| SandboxError::BrowserUnavailable)
     }
 
     pub(crate) fn hide(&self) -> Result<(), SandboxError> {

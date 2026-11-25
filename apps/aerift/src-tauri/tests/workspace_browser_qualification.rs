@@ -8,6 +8,10 @@ mod workspace_browser_policy;
 #[path = "../src/workspace_browser_sandbox.rs"]
 mod workspace_browser_sandbox;
 
+#[allow(dead_code)]
+#[path = "../src/workspace_browser_viewport.rs"]
+mod workspace_browser_viewport;
+
 #[test]
 fn isolation_source_has_no_app_bridge_registration() {
     let source = include_str!("../src/workspace_browser_sandbox.rs");
@@ -43,6 +47,7 @@ fn native_closed_fixture_has_no_bridge_and_denies_unlisted_resource() {
     };
     use workspace_browser_fixture::Observations;
     use workspace_browser_sandbox::{SandboxError, WorkspaceBrowserSandbox};
+    use workspace_browser_viewport::{ClientRect, TrustedViewport, ViewportLayout, ViewportState};
     use wry::{Rect, dpi::{PhysicalPosition, PhysicalSize}};
 
     assert_eq!(std::env::var("AERIFT_ISOLATED_WEBVIEW_FIXTURE").as_deref(), Ok("1"),
@@ -81,6 +86,13 @@ fn native_closed_fixture_has_no_bridge_and_denies_unlisted_resource() {
     let view = WorkspaceBrowserSandbox::open_fixture(&parent, scratch.path(), bounds, observations.clone())
         .expect("create a guarded fixture view");
     assert!(matches!(view.navigate(workspace_browser_fixture::DENIED), Err(SandboxError::NotApproved)));
+    let mut viewport = TrustedViewport::from_hidden(view);
+    let slot = ClientRect { left: 20, top: 72, right: 620, bottom: 450 };
+    let layout = ViewportLayout {
+        client: ClientRect { left: 0, top: 0, right: 640, bottom: 480 },
+        reserved: slot, chrome_bottom: 72, active: true, minimized: false, obstructed: false,
+    };
+    assert_eq!(viewport.layout(layout).expect("present fixture child"), ViewportState::Visible(slot));
     let deadline = Instant::now() + Duration::from_secs(18);
     while Instant::now() < deadline {
         // Bounded dispatch prevents continuous synthetic messages keeping the
@@ -97,6 +109,9 @@ fn native_closed_fixture_has_no_bridge_and_denies_unlisted_resource() {
     assert!(observations.script.get() > 0, "the fixture script was served");
     assert!(observations.marker.get() > 0, "fixture observed no AeRift IPC or postMessage bridge");
     assert!(observations.denied.get() > 0, "the inert unlisted image request got a denied response");
-    view.hide().expect("hide fixture child");
-    drop(view);
+    assert_eq!(viewport.layout(ViewportLayout { obstructed: true, ..layout }).expect("hide for popup"),
+        ViewportState::Hidden);
+    assert!(matches!(viewport.navigate(workspace_browser_fixture::START), Err(SandboxError::NotApproved)));
+    viewport.close();
+    assert_eq!(viewport.state(), ViewportState::Closed);
 }
