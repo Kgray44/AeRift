@@ -9,6 +9,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tempfile::{Builder, NamedTempFile};
 
@@ -16,8 +17,12 @@ const RECEIPT_BYTES: u64 = 4096;
 const SEALED_RECEIPT_BYTES: u64 = 16 * 1024;
 const VERSION: u8 = 1;
 const MAX_SCAN: usize = 1024;
+const TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
 const CONTENT: &str = "payload";
 const MARKER: &str = "verified.json";
+const CLOCK_MARKER: &str = "received-time.sealed";
+const CLOCK_FORMAT: &str = "aerift-inbox-clock-v1";
+const MAX_DATE_MS: u64 = 8_640_000_000_000_000;
 
 /// A deliberately conservative snapshot of the local destination at acceptance.
 /// An external context is advisory only and may not cause an automatic write.
@@ -35,6 +40,22 @@ struct Record {
     peer: PeerId,
     offer: Offer,
     requested_destination: FrozenDelivery,
+}
+
+/// Optional derivative display metadata. Never used for grant or payload checks.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReceiptClock {
+    format: String,
+    peer: PeerId,
+    id: uuid::Uuid,
+    digest: String,
+    size_bytes: u64,
+    received_at_unix_ms: u64,
+}
+
+fn valid_clock(value: u64) -> bool {
+    value > 0 && value <= MAX_DATE_MS
 }
 
 /// Opaque proof produced by the local inbox; not a network or UI deserialization type.
@@ -64,6 +85,8 @@ pub struct InboxCandidate {
     pub name: String,
     pub size_bytes: u64,
     pub requested_destination: FrozenDelivery,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub received_at_unix_ms: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -131,6 +154,57 @@ impl Inbox {
         let (dir, record) = self.read_record(key)?;
         verify_payload(&dir.join(CONTENT), &record.offer)?;
         Ok(VerifiedInboxReceipt(record))
+    }
+
+    /// Bounded, inert UTF-8 display for explicitly chosen text receipts.
+    /// Only the same-open bytes matching the sealed length and digest leave the inbox.
+    pub fn verified_text_preview(&self, key: TransferKey) -> Result<Option<String>, TransferError> {
+        let _job = self
+            .verification
+            .try_lock()
+            .map_err(|_| ErrorCode::Conflict)?;
+        let (dir, record) = self.read_record(key)?;
+        let offer = &record.offer;
+        let supported = Path::new(&offer.name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|ext| {
+                ["txt", "text", "md", "csv", "tsv", "log"]
+                    .iter()
+                    .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+            });
+        if !supported || offer.size_bytes > TEXT_PREVIEW_BYTES {
+            return Ok(None);
+        }
+        let path = dir.join(CONTENT);
+        regular(&path)?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_OPEN_REPARSE_POINT: never follow a substituted final entry.
+            options.custom_flags(0x0020_0000);
+        }
+        let file = options.open(path).map_err(storage)?;
+        let meta = file.metadata().map_err(storage)?;
+        if !meta.is_file() || redirected(&meta) || meta.len() != offer.size_bytes {
+            return Err(ErrorCode::IntegrityFailed.into());
+        }
+        let mut bytes = Vec::new();
+        file.take(TEXT_PREVIEW_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(storage)?;
+        if bytes.len() as u64 != offer.size_bytes
+            || format!("{:x}", Sha256::digest(&bytes)) != offer.sha256
+        {
+            return Err(ErrorCode::IntegrityFailed.into());
+        }
+        Ok(String::from_utf8(bytes).ok().filter(|text| {
+            !text
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+        }))
     }
 
     /// Deliberate local save. The native chooser, not the sender or webview,
@@ -222,12 +296,14 @@ impl Inbox {
             {
                 continue;
             }
+            let received_at_unix_ms = self.receipt_time(&dir, &record);
             entries.push(InboxCandidate {
                 peer,
                 id,
                 name: record.offer.name,
                 size_bytes: record.offer.size_bytes,
                 requested_destination: record.requested_destination,
+                received_at_unix_ms,
             });
         }
         entries.sort_by(|a, b| {
@@ -275,6 +351,67 @@ impl Inbox {
             return Err(ErrorCode::StorageFailed.into());
         }
         Ok((dir, record))
+    }
+
+    fn receipt_time(&self, dir: &Path, record: &Record) -> Option<u64> {
+        let seal = self.seal.as_ref()?;
+        let path = dir.join(CLOCK_MARKER);
+        let metadata = regular(&path).ok()?;
+        if metadata.len() > SEALED_RECEIPT_BYTES {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        File::open(path)
+            .ok()?
+            .take(SEALED_RECEIPT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.is_empty() || bytes.len() as u64 > SEALED_RECEIPT_BYTES {
+            return None;
+        }
+        let body = seal.unseal(&bytes).ok()?;
+        if body.is_empty() || body.len() as u64 > RECEIPT_BYTES {
+            return None;
+        }
+        let clock: ReceiptClock = serde_json::from_slice(&body).ok()?;
+        (clock.format == CLOCK_FORMAT
+            && clock.peer == record.peer
+            && clock.id == record.offer.id
+            && clock.digest == record.offer.sha256
+            && clock.size_bytes == record.offer.size_bytes
+            && valid_clock(clock.received_at_unix_ms))
+        .then_some(clock.received_at_unix_ms)
+    }
+
+    fn write_clock(&self, dir: &Path, key: TransferKey, offer: &Offer) -> Option<()> {
+        let seal = self.seal.as_ref()?;
+        let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+        let received_at_unix_ms = u64::try_from(elapsed.as_millis()).ok()?;
+        if !valid_clock(received_at_unix_ms) {
+            return None;
+        }
+        let body = serde_json::to_vec(&ReceiptClock {
+            format: CLOCK_FORMAT.to_owned(),
+            peer: key.peer,
+            id: key.id,
+            digest: offer.sha256.clone(),
+            size_bytes: offer.size_bytes,
+            received_at_unix_ms,
+        })
+        .ok()?;
+        if body.is_empty() || body.len() as u64 > RECEIPT_BYTES {
+            return None;
+        }
+        let sealed = seal.seal(&body).ok()?;
+        if sealed.is_empty() || sealed.len() as u64 > SEALED_RECEIPT_BYTES {
+            return None;
+        }
+        let mut stage = Builder::new().tempfile_in(dir).ok()?;
+        stage.write_all(&sealed).ok()?;
+        stage.flush().ok()?;
+        stage.as_file().sync_all().ok()?;
+        stage.persist_noclobber(dir.join(CLOCK_MARKER)).ok()?;
+        Some(())
     }
 
     fn entry(&self, key: TransferKey) -> PathBuf {
@@ -327,6 +464,9 @@ impl Inbox {
             marker.as_file().sync_all().map_err(storage)?;
             file.persist_noclobber(&saved_path)
                 .map_err(|error| storage(error.error))?;
+            // This optional, separately bound metadata stays invisible until the
+            // original strict v1 receipt is published. Failure leaves no guessed date.
+            let _ = self.write_clock(&dir, key, offer);
             sync_directory(&dir)?;
             sync_directory(&self.root)?;
             marker
@@ -339,6 +479,7 @@ impl Inbox {
             // Remove only exact names we own inside the directory exclusively
             // created by this transaction, never recursively delete anything.
             let _ = fs::remove_file(dir.join(MARKER));
+            let _ = fs::remove_file(dir.join(CLOCK_MARKER));
             let _ = fs::remove_file(&saved_path);
             let _ = fs::remove_dir(&dir);
         }
@@ -433,31 +574,34 @@ fn storage(_: io::Error) -> TransferError {
 mod receipt_seal_tests {
     use super::*;
 
-    // This boundary test uses an in-memory seal service, not a cryptographic
-    // replacement for the native current-user certificate.
-    struct TestSeal(Mutex<Option<Vec<u8>>>);
+    use std::collections::BTreeMap;
+
+    // Opaque test-only handles; not a replacement for the native seal provider.
+    #[derive(Default)]
+    struct TestSeal(Mutex<BTreeMap<Vec<u8>, Vec<u8>>>);
     impl InboxReceiptSeal for TestSeal {
         fn seal(&self, bytes: &[u8]) -> io::Result<Vec<u8>> {
-            *self.0.lock().unwrap() = Some(bytes.to_vec());
-            Ok(b"test-only-authenticated-handle".to_vec())
+            let handle = Sha256::digest(bytes).to_vec();
+            self.0
+                .lock()
+                .unwrap()
+                .insert(handle.clone(), bytes.to_vec());
+            Ok(handle)
         }
         fn unseal(&self, bytes: &[u8]) -> io::Result<Vec<u8>> {
-            if bytes == b"test-only-authenticated-handle" {
-                return self
-                    .0
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .ok_or(io::ErrorKind::InvalidData.into());
-            }
-            Err(io::ErrorKind::InvalidData.into())
+            self.0
+                .lock()
+                .unwrap()
+                .get(bytes)
+                .cloned()
+                .ok_or(io::ErrorKind::InvalidData.into())
         }
     }
 
     #[test]
     fn restored_native_receipt_requires_its_seal_and_payload() {
         let temp = tempfile::tempdir().unwrap();
-        let protector = std::sync::Arc::new(TestSeal(Mutex::new(None)));
+        let protector = std::sync::Arc::new(TestSeal::default());
         let inbox = Inbox::open_sealed(temp.path(), protector.clone()).unwrap();
         let key = TransferKey {
             peer: hex_peer(),
@@ -499,6 +643,119 @@ mod receipt_seal_tests {
         .unwrap();
         assert!(opened.verified_receipt(key).is_err());
         assert!(opened.recovery_candidates("").unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn dated_receipts_round_trip_and_sealed_legacy_receipts_stay_undated() {
+        let temp = tempfile::tempdir().unwrap();
+        let protector = Arc::new(TestSeal::default());
+        let inbox = Inbox::open_sealed(temp.path(), protector.clone()).unwrap();
+        let key = TransferKey {
+            peer: hex_peer(),
+            id: uuid::Uuid::new_v4(),
+        };
+        let offer = Offer {
+            id: key.id,
+            name: "dated.txt".into(),
+            size_bytes: 5,
+            sha256: format!("{:x}", Sha256::digest(b"proof")),
+        };
+        let mut payload = inbox.tempfile().unwrap();
+        payload.write_all(b"proof").unwrap();
+        inbox
+            .publish(key, &offer, FrozenDelivery::Inbox, payload)
+            .unwrap();
+        let list = inbox.recovery_candidates("").unwrap();
+        let time = list.entries[0].received_at_unix_ms.unwrap();
+        assert!(time >= 1_577_836_800_000);
+        let value = serde_json::to_value(&list.entries[0]).unwrap();
+        assert_eq!(value["receivedAtUnixMs"].as_u64(), Some(time));
+
+        let dir = inbox.entry(key);
+        let original = protector
+            .unseal(&fs::read(dir.join(MARKER)).unwrap())
+            .unwrap();
+        let original: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        assert_eq!(original.as_object().unwrap().len(), 4);
+        assert!(
+            !original
+                .as_object()
+                .unwrap()
+                .contains_key("received_at_unix_ms")
+        );
+
+        // A time sidecar signed for a different receipt never supplies chronology.
+        let forged = ReceiptClock {
+            format: CLOCK_FORMAT.to_owned(),
+            peer: key.peer,
+            id: uuid::Uuid::new_v4(),
+            digest: offer.sha256.clone(),
+            size_bytes: offer.size_bytes,
+            received_at_unix_ms: time,
+        };
+        let wrong = protector
+            .seal(&serde_json::to_vec(&forged).unwrap())
+            .unwrap();
+        fs::write(dir.join(CLOCK_MARKER), wrong).unwrap();
+        assert!(
+            inbox.recovery_candidates("").unwrap().entries[0]
+                .received_at_unix_ms
+                .is_none()
+        );
+
+        // Legacy releases stored only the original marker and payload.
+        fs::remove_file(dir.join(CLOCK_MARKER)).unwrap();
+        assert!(inbox.verified_receipt(key).is_ok());
+        let list = inbox.recovery_candidates("").unwrap();
+        assert_eq!(list.entries[0].received_at_unix_ms, None);
+        assert!(
+            serde_json::to_value(&list.entries[0])
+                .unwrap()
+                .get("receivedAtUnixMs")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn text_preview_requires_the_exact_verified_bytes_and_never_returns_other_types() {
+        let temp = tempfile::tempdir().unwrap();
+        let protector = Arc::new(TestSeal::default());
+        let inbox = Inbox::open_sealed(temp.path(), protector).unwrap();
+        let key = TransferKey {
+            peer: hex_peer(),
+            id: uuid::Uuid::new_v4(),
+        };
+        let body = b"<script>not executable in the preview</script>";
+        let mut offer = Offer {
+            id: key.id,
+            name: "plain.txt".into(),
+            size_bytes: body.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(body)),
+        };
+        let mut payload = inbox.tempfile().unwrap();
+        payload.write_all(body).unwrap();
+        inbox
+            .publish(key, &offer, FrozenDelivery::Inbox, payload)
+            .unwrap();
+        assert_eq!(
+            inbox.verified_text_preview(key).unwrap().as_deref(),
+            Some(std::str::from_utf8(body).unwrap())
+        );
+        fs::write(inbox.entry(key).join(CONTENT), vec![b'x'; body.len()]).unwrap();
+        assert!(inbox.verified_text_preview(key).is_err());
+
+        let key = TransferKey {
+            peer: hex_peer(),
+            id: uuid::Uuid::new_v4(),
+        };
+        offer.id = key.id;
+        offer.name = "not-a-text-file.html".into();
+        let mut payload = inbox.tempfile().unwrap();
+        payload.write_all(body).unwrap();
+        inbox
+            .publish(key, &offer, FrozenDelivery::Inbox, payload)
+            .unwrap();
+        assert!(inbox.verified_text_preview(key).unwrap().is_none());
     }
 
     fn hex_peer() -> PeerId {

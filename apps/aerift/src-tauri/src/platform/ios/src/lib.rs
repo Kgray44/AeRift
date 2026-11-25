@@ -4,6 +4,8 @@ mod camera_commands;
 mod discovery;
 mod keychain;
 mod peer_storage;
+mod receipts;
+pub use receipts::{CompletionReceipts, VerifiedReceipt};
 
 pub use discovery::{
     start_discovery, stop_discovery, BonjourEndpoint, BonjourPeer, BonjourState, BonjourUpdate,

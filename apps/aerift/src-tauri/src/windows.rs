@@ -146,6 +146,20 @@ pub(crate) async fn verify_ambient_inbox_entry(
 }
 
 #[tauri::command]
+pub(crate) async fn preview_ambient_inbox_text(
+    window: tauri::WebviewWindow,
+    peer: PeerId,
+    id: Uuid,
+) -> Result<Option<String>, TransferError> {
+    let inbox = session(&window).await?.inbox()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        inbox.verified_text_preview(aerift_transfer::TransferKey { peer, id })
+    })
+    .await
+    .map_err(|_| ErrorCode::InternalError)?
+}
+
+#[tauri::command]
 pub(crate) async fn save_ambient_inbox_entry(
     window: tauri::WebviewWindow,
     peer: PeerId,
@@ -231,3 +245,4 @@ pub(crate) fn handle_webview_event(webview: &Webview<Wry>, event: &WebviewEvent)
             .select(revision, &path, true);
     });
 }
+

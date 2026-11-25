@@ -21,6 +21,7 @@ use std::{fmt, ptr};
 const SERVICE: &str = "com.kgamazing44.aerift.peers.v1";
 const IDENTITY: &str = "identity";
 const TRUST: &str = "trust";
+const RECEIPTS: &str = "verified-receipts-v1";
 
 // These documented Security.framework attributes are not exported by the
 // security-framework-sys item module.
@@ -64,30 +65,42 @@ impl IosKeychain {
         read(TRUST)
     }
 
+    pub(crate) fn load_receipts(&self) -> Result<Option<Vec<u8>>, KeychainError> {
+        read(RECEIPTS)
+    }
+
+    pub(crate) fn replace_receipts(&self, bytes: &[u8]) -> Result<(), KeychainError> {
+        replace(RECEIPTS, bytes)
+    }
+
     /// Publishes the complete trust snapshot in one Keychain update. The shared
     /// engine serializes any read-modify-write of this snapshot.
     pub fn replace_trust(&self, bytes: &[u8]) -> Result<(), KeychainError> {
-        if insert(TRUST, bytes)? {
-            return Ok(());
-        }
-        let matching = CFDictionary::from_CFType_pairs(&attributes(TRUST));
-        // SAFETY: kSecValueData is a Security.framework CFString constant.
-        let key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
-        let changes =
-            CFDictionary::from_CFType_pairs(&[(key, CFData::from_buffer(bytes).into_CFType())]);
+        replace(TRUST, bytes)
+    }
+}
 
-        // SAFETY: Both Core Foundation dictionaries are retained for the call.
-        let status = unsafe {
-            SecItemUpdate(
-                matching.as_concrete_TypeRef(),
-                changes.as_concrete_TypeRef(),
-            )
-        };
-        if status == SUCCESS {
-            Ok(())
-        } else {
-            Err(KeychainError::Access(status))
-        }
+fn replace(account: &str, bytes: &[u8]) -> Result<(), KeychainError> {
+    if insert(account, bytes)? {
+        return Ok(());
+    }
+    let matching = CFDictionary::from_CFType_pairs(&attributes(account));
+    // SAFETY: kSecValueData is a Security.framework CFString constant.
+    let key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
+    let changes =
+        CFDictionary::from_CFType_pairs(&[(key, CFData::from_buffer(bytes).into_CFType())]);
+
+    // SAFETY: Both Core Foundation dictionaries are retained for the call.
+    let status = unsafe {
+        SecItemUpdate(
+            matching.as_concrete_TypeRef(),
+            changes.as_concrete_TypeRef(),
+        )
+    };
+    if status == SUCCESS {
+        Ok(())
+    } else {
+        Err(KeychainError::Access(status))
     }
 }
 
