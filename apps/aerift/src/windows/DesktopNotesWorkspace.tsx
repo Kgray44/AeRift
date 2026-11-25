@@ -8,6 +8,8 @@ import {
   renameDesktopNoteCategory, saveDesktopNoteLibrary, setDesktopNoteCategory, sortDesktopNotes, touchDesktopNote,
   type DesktopNoteLibrary,
 } from "../desktop-note-library";
+import { CategoryGlyph, CategoryStyleFields } from "../CategoryStyleFields";
+import { defaultCategoryStyle, type CategoryStyle } from "../category-style";
 import { DesktopNotesSidebar, type DesktopNotesScope } from "./DesktopNotesSidebar";
 import "./desktop-notes-workspace.css";
 
@@ -74,10 +76,10 @@ function NoteCategoryPicker({ value, categories, disabled, onChange }: {
       }} />
     {open && <GlassSurface className="aw-note-category-popover" material="control" role="group" id={id} aria-label="Move note to category">
       <p>Move to category</p>
-      {[{ id: null, name: "Uncategorized" }, ...categories].map(category => (
+      {[{ id: null, name: "Uncategorized", appearance: undefined }, ...categories].map(category => (
         <button key={category.id ?? "uncategorized"} type="button" className="aw-note-category-choice"
           aria-pressed={category.id === value} disabled={disabled} onClick={() => { onChange(category.id); close(true); }}>
-          <span>{category.name}</span>{category.id === value && <span aria-hidden="true">✓</span>}
+          <span className="aw-category-choice-name"><CategoryGlyph appearance={category.appearance} />{category.name}</span>{category.id === value && <span aria-hidden="true">✓</span>}
         </button>
       ))}
     </GlassSurface>}
@@ -106,7 +108,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
   const processing = useRef(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
-  const [categoryForm, setCategoryForm] = useState<{ id?: string; name: string }>();
+  const [categoryForm, setCategoryForm] = useState<{ id?: string; name: string; appearance: CategoryStyle }>();
   const [removeCategory, setRemoveCategory] = useState(false);
   const [removeNote, setRemoveNote] = useState(false);
   const [leave, setLeave] = useState<(() => void)>();
@@ -226,7 +228,7 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
       return;
     }
     const next = categoryForm.id
-      ? renameDesktopNoteCategory(prior, id, name) : createDesktopNoteCategory(prior, id, name);
+      ? renameDesktopNoteCategory(prior, id, name, categoryForm.appearance) : createDesktopNoteCategory(prior, id, name, categoryForm.appearance);
     if (!next.categories.some(item => item.id === id)) {
       setError("Could not add another category.");
       return;
@@ -258,19 +260,21 @@ export function DesktopNotesWorkspace({ notes, disabled, onSave, onRemove, onBac
       <div className="aw-desktop-notes-index" hidden={mobileEditor}>
         <DesktopNotesSidebar notes={rows} categories={library.categories} scope={scope} selectedNoteId={draft?.id ?? null}
           onScopeChange={next => { setScope(next); setCategoryForm(undefined); setRemoveCategory(false); }}
-          onSelectNote={chooseNote} onNewNote={newNote} onNewCategory={() => { setRemoveCategory(false); setCategoryForm({ name: "" }); }} />
-        {category && !categoryForm && <div className="aw-note-category-actions" aria-label="Category tools" role="group">
-          <NoteIconButton label="Rename category" icon="edit" disabled={locked}
-            onClick={() => setCategoryForm({ id: category.id, name: category.name })} />
+          onSelectNote={chooseNote} onNewNote={newNote} onNewCategory={() => { setRemoveCategory(false); setCategoryForm({ name: "", appearance: defaultCategoryStyle }); }} />
+        {category && !categoryForm && <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="control" aria-label="Category tools" role="group">
+          <NoteIconButton label="Edit category" icon="edit" disabled={locked}
+            onClick={() => setCategoryForm({ id: category.id, name: category.name, appearance: category.appearance ?? defaultCategoryStyle })} />
           <NoteIconButton label="Remove category" icon="trash" disabled={locked} onClick={() => setRemoveCategory(true)} />
-        </div>}
+        </GlassSurface>}
         {categoryForm && <form className="aw-note-category-form" onSubmit={commitCategory}>
           <label>Category name<input autoFocus value={categoryForm.name} required maxLength={48}
             onChange={event => setCategoryForm({ ...categoryForm, name: event.currentTarget.value })} /></label>
-          <div className="aw-note-category-actions">
+          <CategoryStyleFields appearance={categoryForm.appearance} disabled={locked}
+            onChange={appearance => setCategoryForm(current => current ? { ...current, appearance } : current)} />
+          <GlassSurface className="aw-note-category-actions aw-note-category-toolbar" material="control" role="group" aria-label="Save category changes">
             <NoteIconButton type="submit" label="Save category" icon="save" disabled={locked || !categoryForm.name.trim()} />
             <NoteIconButton label="Cancel category edit" icon="close" onClick={() => setCategoryForm(undefined)} />
-          </div>
+          </GlassSurface>
         </form>}
         {removeCategory && <div className="aw-note-confirm" role="group" aria-label="Remove category confirmation">
           <p>Remove this category? Its notes will stay in All Notes.</p>

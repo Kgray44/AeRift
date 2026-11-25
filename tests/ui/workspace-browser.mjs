@@ -75,7 +75,11 @@ try {
   const editor = desktop.getByRole("region", { name: "Note editor", exact: true });
   await button(sidebar, "New category").click();
   await desktop.getByRole("textbox", { name: "Category name" }).fill("Work projects");
+  await button(desktop, "Violet color").click();
+  await button(desktop, "Star icon").click();
   await button(desktop, "Save category").click();
+  const workCategory = sidebar.getByRole("button", { name: /^Work projects/ });
+  assert.equal(await workCategory.locator("svg").getAttribute("data-category-color"), "violet");
   await button(sidebar, "New note").click();
   const first = editor.getByRole("textbox", { name: "Title", exact: true });
   await first.fill("Door project");
@@ -126,7 +130,11 @@ try {
   await sidebar.getByText("No notes match this search.").waitFor();
   await desktop.reload();
   await open(desktop, "Notes");
-  await sidebar.getByRole("button", { name: /^Work projects/ }).click();
+  await workCategory.click();
+  await button(desktop, "Edit category").click();
+  assert.equal(await button(desktop, "Violet color").getAttribute("aria-pressed"), "true");
+  assert.equal(await button(desktop, "Star icon").getAttribute("aria-pressed"), "true");
+  await button(desktop, "Cancel category edit").click();
   await sidebar.getByRole("button", { name: /Door project/ }).waitFor();
   await desktop.close();
 

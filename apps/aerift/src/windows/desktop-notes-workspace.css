@@ -105,3 +105,7 @@
   }
 }
 @keyframes aw-note-category-appear{from{opacity:0;transform:translateY(-.25rem) scale(.98)}}
+
+.aw-category-choice-name{display:flex;align-items:center;gap:.42rem;min-inline-size:0}
+.aw-note-category-form{display:grid;gap:.54rem}
+.ae-theme .aw-note-category-toolbar{justify-self:start;align-self:start;inline-size:fit-content;max-inline-size:100%;padding:.3rem;border-radius:.82rem}
