@@ -1,9 +1,11 @@
 import { IconAction } from "@aerift/ui";
 import { useId, useMemo, useState } from "react";
+import { CategoryGlyph } from "../CategoryStyleFields";
+import type { DesktopNoteCategory } from "../desktop-note-library";
 import "./desktop-notes-sidebar.css";
 
 export type DesktopNotesScope = { kind: "all" | "recent" } | { kind: "category"; id: string };
-export type DesktopNotesCategory = { id: string; name: string };
+
 export type DesktopNotesListItem = {
   id: string;
   title: string;
@@ -15,7 +17,7 @@ export type DesktopNotesListItem = {
 
 type DesktopNotesSidebarProps = {
   notes: readonly DesktopNotesListItem[];
-  categories: readonly DesktopNotesCategory[];
+  categories: readonly DesktopNoteCategory[];
   scope: DesktopNotesScope;
   selectedNoteId: string | null;
   onScopeChange: (scope: DesktopNotesScope) => void;
@@ -81,10 +83,10 @@ export function DesktopNotesSidebar({
   const scopeLabel = scope.kind === "category" ? categories.find(category => category.id === scope.id)?.name ?? "Category"
     : scope.kind === "recent" ? "Recents" : "All Notes";
 
-  function scopeRow(target: DesktopNotesScope, label: string, count: number, active: boolean) {
+  function scopeRow(target: DesktopNotesScope, label: string, count: number, active: boolean, category?: DesktopNoteCategory) {
     return <button type="button" className="ae-note-scope" aria-current={active ? "true" : undefined}
       onClick={() => onScopeChange(target)} title={label}>
-      <NotesScopeIcon kind={target.kind} />
+      {category ? <CategoryGlyph appearance={category.appearance} /> : <NotesScopeIcon kind={target.kind} />}
       <span className="ae-note-sidebar-truncate">{label}</span>
       <span className="ae-note-sidebar-count">{count}</span>
     </button>;
@@ -104,7 +106,7 @@ export function DesktopNotesSidebar({
         <li>{scopeRow({ kind: "recent" }, "Recents", Math.min(notes.length, recentLimit), scope.kind === "recent")}</li>
         {categories.map(category => <li key={category.id}>
           {scopeRow({ kind: "category", id: category.id }, category.name, counts.get(category.id) ?? 0,
-            scope.kind === "category" && scope.id === category.id)}
+            scope.kind === "category" && scope.id === category.id, category)}
         </li>)}
       </ul>
     </nav>

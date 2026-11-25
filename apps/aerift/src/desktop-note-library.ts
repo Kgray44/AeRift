@@ -1,3 +1,5 @@
+import { decodeCategoryStyle, type CategoryStyle } from "./category-style.ts";
+
 /** Presentation metadata only. Note objects and the existing store are unchanged. */
 export const desktopNoteLibraryKey = "aerift.desktop.notes-library.v1";
 export const desktopNoteCategoryLimit = 24;
@@ -8,6 +10,7 @@ const maxSnapshotCharacters = 512 * 1024;
 export interface DesktopNoteCategory {
   readonly id: string;
   readonly name: string;
+  readonly appearance?: CategoryStyle;
 }
 
 export interface DesktopNoteLibrary {
@@ -61,10 +64,12 @@ function validate(value: unknown): DesktopNoteLibrary | undefined {
   const categoryIds = new Set<string>();
   const categoryNames = new Set<string>();
   for (const category of value.categories as unknown[]) {
-    if (!record(category) || Object.keys(category).length !== 2 || !validId(category.id)) return;
+    if (!record(category) || Object.keys(category).some(key => !["id", "name", "appearance"].includes(key)) || !validId(category.id)) return;
+    const appearance = decodeCategoryStyle(category.appearance);
+    if (Object.hasOwn(category, "appearance") && !appearance) return;
     const name = safeName(category.name);
     if (!name || categoryIds.has(category.id) || categoryNames.has(nameKey(name))) return;
-    categories.push({ id: category.id, name });
+    categories.push({ id: category.id, name, ...(appearance ? { appearance } : {}) });
     categoryIds.add(category.id);
     categoryNames.add(nameKey(name));
   }
@@ -123,18 +128,23 @@ export function saveDesktopNoteLibrary(storage: WriteStorage | undefined, librar
   }
 }
 
-export function createDesktopNoteCategory(library: DesktopNoteLibrary, id: string, value: string): DesktopNoteLibrary {
+export function createDesktopNoteCategory(library: DesktopNoteLibrary, id: string, value: string, requestedStyle?: CategoryStyle): DesktopNoteLibrary {
   const name = safeName(value);
+  const appearance = decodeCategoryStyle(requestedStyle);
+  if (requestedStyle && !appearance) return library;
   if (!validId(id) || !name || library.categories.length >= desktopNoteCategoryLimit ||
     library.categories.some(category => category.id === id || nameKey(category.name) === nameKey(name))) return library;
-  return { ...library, categories: [...library.categories, { id, name }] };
+  return { ...library, categories: [...library.categories, { id, name, ...(appearance ? { appearance } : {}) }] };
 }
 
-export function renameDesktopNoteCategory(library: DesktopNoteLibrary, id: string, value: string): DesktopNoteLibrary {
+export function renameDesktopNoteCategory(library: DesktopNoteLibrary, id: string, value: string, requestedStyle?: CategoryStyle): DesktopNoteLibrary {
   const name = safeName(value);
-  if (!name || !library.categories.some(category => category.id === id && category.name !== name) ||
+  const appearance = decodeCategoryStyle(requestedStyle);
+  if (requestedStyle && !appearance) return library;
+  if (!name || !library.categories.some(category => category.id === id && (category.name !== name || (appearance &&
+    (category.appearance?.color !== appearance.color || category.appearance?.icon !== appearance.icon)))) ||
     library.categories.some(category => category.id !== id && nameKey(category.name) === nameKey(name))) return library;
-  return { ...library, categories: library.categories.map(category => category.id === id ? { id, name } : category) };
+  return { ...library, categories: library.categories.map(category => category.id === id ? { ...category, name, ...(appearance ? { appearance } : {}) } : category) };
 }
 
 export function removeDesktopNoteCategory(library: DesktopNoteLibrary, id: string): DesktopNoteLibrary {

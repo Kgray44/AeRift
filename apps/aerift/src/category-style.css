@@ -1,0 +1,18 @@
+[data-category-color="default"]{--aw-category-tone:var(--ae-accent)}
+[data-category-color="blue"]{--aw-category-tone:light-dark(#1664bf,#8ec5ff)}
+[data-category-color="violet"]{--aw-category-tone:light-dark(#6535a8,#c1a2ff)}
+[data-category-color="rose"]{--aw-category-tone:light-dark(#a83359,#ff9bb8)}
+[data-category-color="amber"]{--aw-category-tone:light-dark(#8a4c00,#ffca79)}
+[data-category-color="mint"]{--aw-category-tone:light-dark(#057454,#80e5c0)}
+.ae-theme .aw-category-glyph{color:var(--aw-category-tone,var(--ae-accent));flex:none}
+.aw-category-swatch{inline-size:1rem;block-size:1rem;border-radius:50%;background:var(--aw-category-tone);border:1px solid var(--ae-control-edge)}
+.aw-category-style-fields{display:grid;gap:.42rem}
+.ae-theme .aw-category-style-options{display:flex;flex-wrap:wrap;gap:.15rem;padding:.25rem;border-radius:.82rem}
+.aw-category-style-option{display:grid;place-items:center;inline-size:2.6rem;block-size:2.6rem;border:1px solid transparent;
+  border-radius:.65rem;background:transparent;color:var(--ae-text);cursor:pointer}
+.aw-category-style-option[aria-pressed="true"]{border-color:var(--ae-accent);background:var(--ae-field)}
+.aw-category-style-option:focus-visible{outline:2px solid var(--ae-focus)}
+@media(prefers-reduced-motion:no-preference){
+  .ae-theme:not([data-motion="reduce"]) .aw-category-style-option{transition:transform var(--ae-fast,160ms) ease}
+  .ae-theme:not([data-motion="reduce"]) .aw-category-style-option:not(:disabled):active{transform:scale(.94)}
+}
