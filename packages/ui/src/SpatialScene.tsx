@@ -28,6 +28,8 @@ const icons = {
   workspace: <><circle cx="12" cy="12" r="2.5" /><circle cx="12" cy="12" r="8.5" /><path d="M12 1v2.5m0 17V23M1 12h2.5m17 0H23" /></>,
   drop: <><path d="M12 3v12m-4-4 4 4 4-4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" /></>,
   chevron: <path d="m9 6 6 6-6 6" />,
+  minimize: <path d="M5 12h14" />,
+  maximize: <><path d="M5 10V5h5m4 0h5v5m0 4v5h-5m-4 0H5v-5" /></>,
   retry: <><path d="M21 4v5h-5M3 20v-5h5m12.4-6a8.5 8.5 0 0 0-14.6-3.3L3 9m18 6-2.8 3.3A8.5 8.5 0 0 1 3.6 15" /></>,
 };
 

@@ -4,6 +4,7 @@ import type {
 } from "@aerift/app-contract";
 import { automaticGestureTarget } from "@aerift/gestures";
 import { Button, GlassSurface, TransferProgress } from "./components";
+import { TransferIsland } from "./TransferIsland";
 import { Sheet, Toast } from "./overlays";
 import { PairingPanel, type PairingAction } from "./PairingPanel";
 import { offerTransfer, type TransferIntent } from "./send-action";
@@ -740,6 +741,9 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
           return current === "approve" || current === "deny" ? current : undefined;
         }} onPair={pair} status={pairStatus} error={pairError} />}
     </Sheet>
+
+    {(hosted || mobile) && <TransferIsland transfers={snapshot?.transfers} mobile={!!mobile}
+      suppressed={pairingOpen} />}
     <Toast message={toast?.message} kind={toast?.kind} onDismiss={() => setToast(undefined)} />
   </>;
 }

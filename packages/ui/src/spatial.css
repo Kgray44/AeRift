@@ -436,3 +436,10 @@
 .ae-manual-transfer-heading h3 { margin: 0; font-size: .96rem; }
 .ae-manual-transfer-heading p { margin: .18rem 0 .25rem; font-size: .82rem; color: var(--ae-muted); }
 .ae-transfer-dock .ae-button { min-block-size: 44px; }
+
+/* Icon shortcuts retain a full keyboard/pointer target without label chrome. */
+.ae-button.ae-icon-action {
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding-inline: .45rem;
+}

@@ -228,6 +228,7 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     let frame = 0, timer = 0, lastAdvanced = 0, phase = 0, deadline = 0, faulted = false;
     let atmosphere = atmosphereTarget();
     let output: ImageData | undefined;
+    let observedIsland: HTMLElement | null = null;
     const tag = (sampled: Set<HTMLElement>, local: Set<HTMLElement> = new Set()) => {
       for (const element of marked) if (!sampled.has(element) && !local.has(element)) {
         delete element.dataset.aeLens;
@@ -265,18 +266,29 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
       const originX = bounds.left + left, originY = bounds.top + top;
       const elements = new Map<HTMLElement, Surface>();
       const local = new Set<HTMLElement>();
+      const island = shell.querySelector<HTMLElement>(".ae-transfer-island[data-visible='true']");
+      if (observedIsland !== island) {
+        if (observedIsland) resize?.unobserve(observedIsland);
+        if (island) resize?.observe(island);
+        observedIsland = island;
+      }
+      const pixelBox = (box: DOMRect, corner: number, kind: Surface["kind"]): Surface => ({
+        x: (box.left - originX) * scale, y: (box.top - originY) * scale,
+        width: box.width * scale, height: box.height * scale,
+        radius: Math.min(Number.isFinite(corner) ? corner : R.radius, box.height / 2, box.width / 2) * scale, kind,
+      });
       const movingNodes = new Map<Element, boolean>();
       const movingGeometry = (element: Element | null) => {
         if (!element || !element.getAnimations) return false;
         if (!movingNodes.has(element)) movingNodes.set(element, element.getAnimations().some(animation => {
           const property = (animation as Partial<CSSTransition>).transitionProperty;
-          return (!property || /^(transform|scale|translate|opacity|clip-path)$/.test(property)) &&
+          return (!property || /^(transform|scale|translate|opacity|clip-path|inline-size|width|grid-template-rows|display)$/.test(property)) &&
             (animation.pending || animation.playState === "running");
         }));
         return movingNodes.get(element);
       };
       for (const element of shell.querySelectorAll<HTMLElement>(lensSelector)) {
-        if (elements.size + local.size >= 32) break;
+        if (elements.size + local.size >= (island ? 31 : 32)) break;
         if (element.closest("dialog, .ae-popover, .ae-toast, .ios-dock, .ae-surface[data-material=overlay]")) continue;
         const bb = element.getBoundingClientRect();
         if (bb.width < 2 || bb.height < 2 || bb.right <= originX || bb.bottom <= originY
@@ -299,9 +311,7 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         const corner = ordinaryCard ? appearance.radius : Number.parseFloat(style.borderTopLeftRadius);
         const kind = element.matches(".ae-file-slot, [data-ae-lens-role=orb], .ae-spatial-glyph") ? "stage" :
           !element.matches(".ae-button, .ae-nav-indicator, [data-ae-lens-role=control]:not(.ae-surface)") ? "panel" : "control";
-        elements.set(element, { x: (bb.left - originX) * scale, y: (bb.top - originY) * scale,
-          width: bb.width * scale, height: bb.height * scale,
-          radius: Math.min(Number.isFinite(corner) ? corner : R.radius, bb.height / 2, bb.width / 2) * scale, kind });
+        elements.set(element, pixelBox(bb, corner, kind));
       }
       try {
         const light = explicit.appearance === "light";
@@ -328,6 +338,31 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
         // works against the original scene; later DOM children own their rims.
         for (const box of elements.values()) shadeLens(output.data, source, pw, ph, box, scale, t, appearance);
         ctx.putImageData(output, 0, 0);
+        if (island) {
+          const islandRaster = island.querySelector<HTMLCanvasElement>(".ae-transfer-island-optical");
+          const box = island.getBoundingClientRect();
+          const movingIsland = !reduced && (movingGeometry(island?.parentElement) ||
+            movingGeometry(island) || movingGeometry(island.querySelector(".ae-transfer-island-details")));
+          if (box.width >= 2 && box.height >= 2) {
+            if (movingIsland || !islandRaster) local.add(island);
+            else {
+              const islandBox = pixelBox(box, Number.parseFloat(getComputedStyle(island).borderTopLeftRadius), "panel");
+              const x = Math.floor(islandBox.x), y = Math.floor(islandBox.y);
+              const width = Math.ceil(islandBox.x + islandBox.width) - x;
+              const height = Math.ceil(islandBox.y + islandBox.height) - y;
+              const layer = islandRaster.getContext("2d", { alpha: false });
+              if (layer && x >= 0 && y >= 0 && x + width <= pw && y + height <= ph) {
+                // Same recipe and artwork as the shell. Copy only this bounded sample
+                // above the page so underlying type cannot obscure foreground controls.
+                shadeLens(output.data, source, pw, ph, islandBox, scale, t, appearance);
+                if (islandRaster.width !== width) islandRaster.width = width;
+                if (islandRaster.height !== height) islandRaster.height = height;
+                layer.putImageData(output, -x, -y, x, y, width, height);
+                elements.set(island, islandBox);
+              } else local.add(island);
+            }
+          }
+        }
         const shadow = clamp(appearance.shadow / 100);
         shell.style.setProperty("--ae-lab-radius", `${appearance.radius}px`);
         shell.style.setProperty("--ae-lab-shadow-y", `${2 + 4 * shadow}px`);
@@ -375,7 +410,8 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     const onScroll = () => queue();
     const geometryEvent = (event: Event) => {
       if (event.target instanceof Element && event.target.matches(
-        "[data-ae-route-enter], .ae-workspace-view, .ae-orbit-choice, .ae-orbit-orb, .ae-spatial-glyph, .ae-button")) settle();
+        "[data-ae-route-enter], .ae-workspace-view, .ae-orbit-choice, .ae-orbit-orb, .ae-spatial-glyph, .ae-button, " +
+        ".ae-transfer-island-frame, .ae-transfer-island, .ae-transfer-island-details")) settle();
     };
     const geometryEvents = ["animationstart", "animationend", "animationcancel", "transitionrun", "transitionend", "transitioncancel"];
     const changes = new MutationObserver(records => {
@@ -385,7 +421,7 @@ export function GlassOptics({ appearanceRecipe }: { appearanceRecipe?: Partial<G
     changes.observe(theme, { attributes: true, attributeFilter: ["data-ae-theme", "data-appearance", "data-contrast", "data-transparency", "data-motion"] });
     changes.observe(shell, { childList: true, subtree: true, attributes: true,
       attributeFilter: ["aria-current", "aria-disabled", "data-destination", "data-selected", "data-open", "data-morphing", "hidden", "disabled",
-        "data-ae-route-enter", "data-experience-phase", "data-experience-progress", "data-experience-x", "data-experience-y"] });
+        "data-ae-route-enter", "data-collapsed", "data-visible", "data-experience-phase", "data-experience-progress", "data-experience-x", "data-experience-y"] });
     const resize = typeof ResizeObserver !== "undefined" ? new ResizeObserver(settle) : undefined;
     resize?.observe(shell);
     for (const mq of media) {

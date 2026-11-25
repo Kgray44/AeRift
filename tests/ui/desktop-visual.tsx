@@ -3,7 +3,7 @@ import type { FriendsRequest } from "@aerift/app-contract/friends";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { AppSnapshot, FileSelection, TransferRequest } from "@aerift/app-contract";
-import { installMotionFixture, respondToMotionReceipt } from "./motion-fixture";
+import { installMotionFixture, installTransferIslandFixture, respondToMotionReceipt } from "./motion-fixture";
 import { DesktopApp } from "../../apps/aerift/src/windows/DesktopApp";
 import "@aerift/ui/styles.css";
 import "../../apps/aerift/public/appearance-bootstrap.css";
@@ -22,8 +22,9 @@ const first = { id: "iphone", name: "Mira’s iPhone", paired: true, online: tru
 const second = { id: "laptop", name: "Travel laptop", paired: true, online: false, platform: "windows" } as const;
 const file: FileSelection = { selectionId: "visual-fixture", name: "Harbor survey.pdf", sizeBytes: 36812 };
 const motionFixture = query.get("motionFixture") === "1";
+const islandFixture = query.get("islandFixture") === "1";
 let snapshot: AppSnapshot = { version: 1, devices: state === "empty" ? [] : [first, second], pendingPairing: [],
-  transfers: state === "empty" || motionFixture ? [] : [
+  transfers: state === "empty" || motionFixture || islandFixture ? [] : [
     { id: "current", deviceId: first.id, direction: "outgoing", state: "transferring", bytesTransferred: 15273, file },
     { id: "received", deviceId: first.id, direction: "incoming", state: "completed", bytesTransferred: 211400,
       file: { name: "Harbor aerial.heic", sizeBytes: 211400 } },
@@ -42,6 +43,7 @@ function broadcast(value: AppSnapshot) {
   for (const id of subscribers.keys()) emit(id, value);
 }
 if (motionFixture) installMotionFixture(first.id, () => snapshot, broadcast);
+if (islandFixture) installTransferIslandFixture(first.id, () => snapshot, broadcast);
 const friends = query.get("friendsFixture") === "1" ? friendsFixture(() => snapshot, broadcast) : undefined;
 mockIPC((cmd, args) => {
   if (friends && cmd === "friends_create_contact_card") return friends.createContactCard().then(result => {
