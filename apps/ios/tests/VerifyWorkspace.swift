@@ -20,8 +20,11 @@ do {
 let visible = (request.results ?? [])
     .compactMap { $0.topCandidates(1).first?.string.lowercased() }
     .joined(separator: " ")
-let expectedControls = ["aerift", "home", "workspace", "rift", "devices", "activity"]
-let missing = expectedControls.filter { !visible.contains($0) }
+let visibleWords = Set(visible.split(whereSeparator: { !$0.isLetter }).map(String.init))
+// The centered brand is an image rather than OCR text. Each dock label
+// must be its own recognized word: "rift" cannot match inside a logo.
+let expectedControls = ["home", "workspace", "rift", "devices", "activity"]
+let missing = expectedControls.filter { !visibleWords.contains($0) }
 if !missing.isEmpty {
     fputs("Missing iPhone workspace controls: \(missing.joined(separator: ", "))\n", stderr)
     exit(EXIT_FAILURE)

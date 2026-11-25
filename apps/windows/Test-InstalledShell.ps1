@@ -99,7 +99,10 @@ try {
 
     $socket.ConnectAsync([uri]$target.webSocketDebuggerUrl, $deadline.Token).GetAwaiter().GetResult() | Out-Null
     $homeCheck = @'
-document.querySelector('h1')?.textContent === 'AeRift' &&
+(() => {
+    const mark = document.querySelector('h1.ae-compact-header-mark > img[alt="AeRift"]');
+    return !!mark && mark.complete && mark.naturalWidth > 0 && mark.getBoundingClientRect().width > 0;
+})() &&
 document.querySelector('#aerift-desktop-destination')?.textContent === 'Home' &&
 !!document.querySelector('.ae-orbit-trigger')
 '@
