@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const read = path => readFileSync(new URL("../../" + path, import.meta.url), "utf8");
 
@@ -48,6 +49,24 @@ test("the installed volume comparison observes the real app-created stage after 
   assert.match(harness, /Check-Label 'Enable private folder transfers'[\s\S]*?Authorized folder lane did not activate\.[\s\S]*?\$stage = Join-Path \$profile 'PrivateRemoteFolderQualification[\\/]Stage'[\s\S]*?Get-Volume -FilePath \$stageFixture[\s\S]*?PAIR PRIVATE FIXTURE/);
   assert.doesNotMatch(harness, /Get-Volume [^\r\n]*windows-private-remote-mode-v1/);
   assert.doesNotMatch(docs, /--features private-remote-folder-qualification/);
+});
+
+test("the installed fixture reads the fingerprint beside the pairing section inside the fieldset", () => {
+  const harness = read("apps/windows/Test-InstalledRemoteFolders.ps1");
+  const remote = read("apps/aerift/src/windows/PrivateRemoteDev.tsx");
+  assert.match(remote, /<fieldset[\s\S]*?<p>Device fingerprint: <code>\{snapshot.identity\}<\/code><\/p>\s*<section aria-labelledby="remote-pair-heading">/);
+  const js = harness.match(/\$issuer = Wait-For \{\s+Js "([^"\r\n]+)"/)?.[1];
+  assert.ok(js, "fingerprint read must wait for the installed UI");
+  const fingerprint = "a1".repeat(32);
+  const run = paragraph => runInNewContext(js, { document: { querySelector(selector) {
+    assert.equal(selector, "section[aria-labelledby=remote-pair-heading]");
+    return paragraph ? { previousElementSibling: paragraph } : null;
+  } } });
+  const p = (text, id) => ({ tagName: "P", textContent: text + id, querySelector: () => ({ textContent: id }) });
+  assert.equal(run(p("Device fingerprint: ", fingerprint)), fingerprint);
+  assert.equal(run(p("Selected private endpoint: ", fingerprint)), null);
+  assert.equal(run(p("Device fingerprint: ", "pending")), null);
+  assert.equal(run(null), null);
 });
 
 test("the installed fixture starts only from the exact owned draft, with no release authority", () => {

@@ -258,8 +258,9 @@ try {
         throw 'Fixture target must be on the same owned NTFS volume as protected staging.'
     }
     Write-Host 'Synthetic destination and protected stage share one owned NTFS volume.'
-    $issuer = Js "[...document.querySelectorAll('main > p')].find(p=>p.textContent.startsWith('Device fingerprint:'))?.querySelector('code')?.textContent"
-    if ($issuer -notmatch '^[0-9a-f]{64}$') { throw 'Missing installed identity.' }
+    $issuer = Wait-For {
+        Js "(() => { const p = document.querySelector('section[aria-labelledby=remote-pair-heading]')?.previousElementSibling; const id = p?.querySelector('code')?.textContent?.trim(); return p?.tagName === 'P' && p.textContent.trim().startsWith('Device fingerprint:') && /^[0-9a-f]{64}$/.test(id ?? '') ? id : null; })()"
+    } 'Missing installed identity before the pairing section.'
     $peerJson = ConvertTo-Json -InputObject $fingerprint -Compress
     Js "(() => { const i = document.querySelector('#remote-pair-heading').parentElement.querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,$peerJson); i.dispatchEvent(new Event('input',{bubbles:true})); })()" | Out-Null
     Button 'Create five-minute invitation'
