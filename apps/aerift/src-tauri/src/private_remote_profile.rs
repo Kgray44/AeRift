@@ -38,6 +38,15 @@ impl PrivateRemoteProfile {
         aerift_peers::load_wan_endpoint_seed(&self.wan_seed, owner.id())
     }
 
+    /// No transport, receiver or trust-store read. Profile lock remains held
+    /// by self for the protected initialization and public derivation.
+    #[cfg(feature = "private-remote-wan-host")]
+    pub(crate) fn offline_wan_card(&self) -> Result<String, TransferError> {
+        let identity = Identity::load_or_create(&self.identity)?.id();
+        let seed = aerift_peers::load_wan_endpoint_seed(&self.wan_seed, identity)?;
+        Ok(aerift_remote_wan::DeviceCard::derive_offline(identity, seed)?.public_text())
+    }
+
     /// Future optional host integration consumes this exact profile, not an
     /// externally chosen seed or independently opened profile directory.
     #[allow(dead_code)]

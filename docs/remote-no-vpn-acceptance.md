@@ -235,3 +235,39 @@ the same command shapes with a DOM/IPC fixture. The new WebView,
 Windows picker and DPAPI scope test still require fresh exact-revision
 Windows qualification; #103 does not certify these changes. No operator
 service has been configured or qualified, and this is not real WAN evidence.
+
+### Offline device cards for a restricted two-device pilot
+
+An operator can collect the two public endpoint identities for a private relay
+allowlist **before either device connects to the relay**. In an approved,
+disposable Windows test profile, build the existing gated example without a
+configured relay, and run it with exactly:
+
+```powershell
+private_remote_wan_host.exe --show-wan-device-card-offline
+```
+
+The only successful output is the canonical public device card. The other
+participant and the relay operator do not need a seed, TLS private key,
+invitation, path, or address. Share the card only through the approved private
+channel; the app never sends the card itself. Normal AeRift, Nearby, VPN Remote
+and the ordinary installer have no invocation for this mode.
+
+The mode uses the Windows LocalAppData known folder and the same app bundle
+identifier as the normal runtime, failing on an unexpected drive or reparse
+ancestor rather than accepting a supplied path. It holds the existing
+exclusive native profile lock through public derivation and printing. A
+fresh profile may create only its directory, session lock, and the existing
+current-user DPAPI identity and endpoint seed files. It does not construct
+a Tauri app, start a transport, read relay policy, create the receive
+directory, use a trust grant, or write a new trust record. Running another
+AeRift host against that profile must prevent the offline command.
+
+Native qualification without owning a publicly reachable server: run
+`cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-host --lib offline_wan_card_uses_only_protected_identity_and_lock`
+on isolated Windows CI with the relay variable unset. That test uses a
+synthetic disposable directory and checks stable public output, lock
+contention, scope and the exact created-file inventory. A separately approved
+isolated no-network launch test can also capture stdout and confirm one
+public card and no relay/WebView startup. This gate is separate from approved
+relay configuration and independent-uplink transfer.

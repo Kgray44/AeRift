@@ -3,10 +3,27 @@ use std::ffi::OsString;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 const EXPLICIT_START: &str = "--start-approved-wan-qualification";
+const OFFLINE_CARD: &str = "--show-wan-device-card-offline";
 
-pub(crate) fn admitted_args(args: impl IntoIterator<Item = OsString>) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchMode {
+    Start,
+    OfflineCard,
+}
+
+pub(crate) fn admitted_mode(args: impl IntoIterator<Item = OsString>) -> Option<LaunchMode> {
     let mut args = args.into_iter();
-    args.next().is_some_and(|arg| arg == EXPLICIT_START) && args.next().is_none()
+    let requested = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    if requested == EXPLICIT_START {
+        Some(LaunchMode::Start)
+    } else if requested == OFFLINE_CARD {
+        Some(LaunchMode::OfflineCard)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -43,14 +60,24 @@ mod tests {
     #[test]
     fn native_opt_in_accepts_only_the_exact_start_flag() {
         let args = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
-        assert!(admitted_args(args(&[EXPLICIT_START])));
-        assert!(!admitted_args(args(&[])));
-        assert!(!admitted_args(args(&["--private-remote-dev"])));
-        assert!(!admitted_args(args(&[
-            EXPLICIT_START,
-            "https://untrusted.invalid"
-        ])));
-        assert!(!admitted_args(args(&["--relay", EXPLICIT_START])));
+        assert_eq!(
+            admitted_mode(args(&[EXPLICIT_START])),
+            Some(LaunchMode::Start)
+        );
+        assert_eq!(
+            admitted_mode(args(&[OFFLINE_CARD])),
+            Some(LaunchMode::OfflineCard)
+        );
+        for denied in [
+            vec![],
+            vec!["--private-remote-dev"],
+            vec![EXPLICIT_START, "https://untrusted.invalid"],
+            vec![OFFLINE_CARD, EXPLICIT_START],
+            vec![OFFLINE_CARD, r"C:\fixture"],
+            vec!["--relay", EXPLICIT_START],
+        ] {
+            assert_eq!(admitted_mode(args(&denied)), None);
+        }
     }
 
     #[test]

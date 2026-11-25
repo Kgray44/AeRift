@@ -109,3 +109,16 @@ test("assets are embedded only in the dedicated Windows feature, with no externa
   assert.doesNotMatch(read("remote-wan.html"), /(?:href|src)=["']https?:/);
   assert.doesNotMatch(read("remote-wan.js"), /innerHTML|localStorage|sessionStorage|indexedDB|console\./);
 });
+
+test("offline card diverts before relay or app construction and exposes no renderer command", () => {
+  const native = readFileSync(new URL("../private_remote_wan_qualification.rs", assets), "utf8");
+  const run = native.slice(native.indexOf("pub(crate) fn run()"));
+  const branch = run.indexOf("Some(LaunchMode::OfflineCard) => return show_offline_device_card()");
+  assert.ok(branch >= 0 && branch < run.indexOf("OPERATOR_RELAY") && branch < run.indexOf("tauri::Builder"));
+  const offline = native.slice(native.indexOf("fn show_offline_device_card()"), native.indexOf("fn start_in_profile"));
+  assert.match(offline, /native_app_local_data_base\(\)/);
+  assert.match(offline, /derive_offline_in_profile\(&root\)/);
+  assert.match(offline, /writeln!\(io::stdout\(\)\.lock\(\), "\{public_card\}"\)/);
+  assert.doesNotMatch(offline, /OperatorRelay|WanSession|RECEIVE_DIRECTORY|\.trust|tauri::Builder/);
+  assert.doesNotMatch(read("remote-wan.js"), /show_offline_device_card|show-wan-device-card-offline/);
+});

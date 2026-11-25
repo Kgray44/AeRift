@@ -1,9 +1,10 @@
 //! Native Windows qualification window, unreachable from normal app startup.
 use std::{
     borrow::Cow,
-    env, fs, io,
-    os::windows::fs::MetadataExt,
-    path::Path,
+    env, fs,
+    io::{self, Write},
+    os::windows::{ffi::OsStrExt, fs::MetadataExt},
+    path::{Component, Path, PathBuf, Prefix},
     sync::{Arc, Mutex},
 };
 
@@ -17,15 +18,24 @@ use tauri::{
     AppHandle, Assets, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry,
 };
 use tauri_plugin_dialog::DialogExt;
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Storage::FileSystem::GetDriveTypeW,
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath, KF_FLAG_DONT_VERIFY},
+    },
+};
 
 use crate::{
     private_remote_profile::PrivateRemoteProfile,
-    wan_qualification_gate::{admitted_args, ExitAction, ExitGate},
+    wan_qualification_gate::{admitted_mode, ExitAction, ExitGate, LaunchMode},
 };
 
 // One trusted build input. No runtime environment, files, URLs, or relay
 // addresses from the CLI or a webview are accepted. Never print this value.
 const OPERATOR_RELAY: Option<&str> = option_env!("AERIFT_TRUSTED_QUALIFICATION_RELAY");
+const APPLICATION_ID: &str = "com.kgamazing44.aerift";
 const RECEIVE_DIRECTORY: &str = "RemoteWanQualificationReceived";
 
 const WINDOW: &str = "private-wan-qualification";
@@ -120,6 +130,78 @@ fn normal_local_directory(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn native_app_local_data_base() -> io::Result<PathBuf> {
+    // Same LocalAppData known folder used by Tauri's Windows path resolver.
+    // No CLI or environment override may substitute the root.
+    let buffer = unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, None) }
+        .map_err(io::Error::other)?;
+    if buffer.is_null() {
+        return Err(io::ErrorKind::NotFound.into());
+    }
+    // The Windows API allocates a NUL-terminated string owned by our caller.
+    let result = unsafe { buffer.to_string() }
+        .map(PathBuf::from)
+        .map_err(io::Error::other);
+    unsafe { CoTaskMemFree(Some(buffer.0.cast())) };
+    let path = result?;
+    require_local_profile_base(&path)?;
+    Ok(path)
+}
+
+fn require_local_profile_base(path: &Path) -> io::Result<()> {
+    if !path.is_absolute()
+        || !matches!(path.components().next(), Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+    {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let ancestors: Vec<_> = path.ancestors().collect();
+    let drive = ancestors.last().ok_or(io::ErrorKind::InvalidInput)?;
+    let wide = drive
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    // DRIVE_FIXED is 3. Reject mapped, removable and unknown hosts before filesystem I/O.
+    const DRIVE_FIXED: u32 = 3;
+    if unsafe { GetDriveTypeW(PCWSTR(wide.as_ptr())) } != DRIVE_FIXED {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    for ancestor in ancestors.into_iter().rev() {
+        normal_local_directory(ancestor)?;
+    }
+    Ok(())
+}
+
+fn derive_offline_in_profile(root: &Path) -> Result<(PrivateRemoteProfile, String), ()> {
+    normal_local_directory(root).map_err(|_| ())?;
+    let locked = PrivateRemoteProfile::open(root).map_err(|_| ())?;
+    let card = locked.offline_wan_card().map_err(|_| ())?;
+    Ok((locked, card))
+}
+
+fn show_offline_device_card() -> i32 {
+    let card = (|| -> Result<(PrivateRemoteProfile, String), ()> {
+        let root = native_app_local_data_base()
+            .map_err(|_| ())?
+            .join(APPLICATION_ID);
+        // First use may initialize the profile + protected identity only.
+        match fs::create_dir(&root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err(()),
+        }
+        derive_offline_in_profile(&root)
+    })();
+    if let Ok((_locked, public_card)) = card {
+        if writeln!(io::stdout().lock(), "{public_card}").is_ok() {
+            return 0;
+        }
+    }
+    eprintln!("Could not display the offline public device card. Close AeRift and try again.");
+    2
+}
+
 fn start_in_profile(root: &Path, relay: OperatorRelay) -> Result<WanSession, ()> {
     normal_local_directory(root).map_err(|_| ())?;
     // This is the same lock used by Nearby and the manually configured VPN
@@ -176,9 +258,13 @@ fn shutdown_after_join(
 
 /// Direct example entry; the ordinary app launcher does not call it.
 pub(crate) fn run() -> i32 {
-    if !admitted_args(env::args_os().skip(1)) {
-        eprintln!("Explicit Windows WAN qualification start is required.");
-        return 2;
+    match admitted_mode(env::args_os().skip(1)) {
+        Some(LaunchMode::OfflineCard) => return show_offline_device_card(),
+        Some(LaunchMode::Start) => {}
+        None => {
+            eprintln!("Explicit Windows WAN qualification mode is required.");
+            return 2;
+        }
     }
     let Some(relay) =
         OPERATOR_RELAY.and_then(|value| OperatorRelay::from_operator_config(value).ok())
@@ -245,6 +331,52 @@ pub(crate) fn run() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn offline_wan_card_uses_only_protected_identity_and_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        require_local_profile_base(root).unwrap();
+        let card = derive_offline_in_profile(root).unwrap().1;
+        assert!(card.starts_with("aerift-card-v1:"));
+        assert_eq!(
+            card.split(':').map(str::len).collect::<Vec<_>>(),
+            [14, 64, 64]
+        );
+        assert_eq!(derive_offline_in_profile(root).unwrap().1, card);
+        let held = crate::windows_storage::lock_profile(root).unwrap();
+        assert!(derive_offline_in_profile(root).is_err());
+        drop(held);
+        let names: std::collections::BTreeSet<_> = fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "identity.dpapi",
+                "remote-wan-endpoint-v1.dpapi",
+                "session.lock",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+        );
+        // Bad grant records would fail a trust-store read. Offline public
+        // derivation must ignore them once the existing identity is present.
+        for record in ["remote-trust-v1.dpapi", "remote-wan-trust-v1.dpapi"] {
+            let file = root.join(record);
+            fs::write(&file, b"synthetic invalid grant").unwrap();
+            assert_eq!(derive_offline_in_profile(root).unwrap().1, card);
+            assert_eq!(fs::read(file).unwrap(), b"synthetic invalid grant");
+        }
+        let context: tauri::Context<Wry> = tauri::generate_context!();
+        assert_eq!(context.config().identifier, APPLICATION_ID);
+        assert!(context.config().app.app_directories_override.is_none());
+        for nonlocal in [r"\\remote.invalid\share", "relative"] {
+            assert!(require_local_profile_base(Path::new(nonlocal)).is_err());
+        }
+    }
+
     #[test]
     fn qualification_command_accepts_only_its_exact_embedded_document() {
         for allowed in [

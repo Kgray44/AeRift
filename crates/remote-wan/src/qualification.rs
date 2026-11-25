@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{future::Future, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::{DeviceCard, EndpointId, WanSession};
+use crate::{DeviceCard, EndpointId, SecretKey, WanSession};
 
 const CARD_PREFIX: &str = "aerift-card-v1:";
 
@@ -114,7 +114,7 @@ impl QualificationController {
         let session = &self.session;
         match action {
             A::Snapshot {} => Ok(QualificationReply::Snapshot {
-                card: encode_card(session.card()),
+                card: session.card().public_text(),
                 devices: session.connected_devices(),
                 pending: session
                     .subscribe_pairing()
@@ -215,8 +215,22 @@ impl QualificationController {
     }
 }
 
-fn encode_card(card: DeviceCard) -> String {
-    format!("{CARD_PREFIX}{}:{}", card.identity, card.endpoint)
+impl DeviceCard {
+    /// Derive only the two public identifiers, without creating an endpoint.
+    /// Seed persistence and profile locking stay in the native caller.
+    pub fn derive_offline(identity: PeerId, seed: [u8; 32]) -> Result<Self, TransferError> {
+        if seed == [0; 32] {
+            return Err(ErrorCode::StorageFailed.into());
+        }
+        Ok(Self {
+            identity,
+            endpoint: SecretKey::from_bytes(&seed).public(),
+        })
+    }
+
+    pub fn public_text(self) -> String {
+        format!("{CARD_PREFIX}{}:{}", self.identity, self.endpoint)
+    }
 }
 
 fn parse_card(value: &str) -> Result<DeviceCard, TransferError> {
@@ -234,7 +248,7 @@ fn parse_card(value: &str) -> Result<DeviceCard, TransferError> {
             .parse::<EndpointId>()
             .map_err(|_| ErrorCode::InvalidRequest)?,
     };
-    if encode_card(card) != value {
+    if card.public_text() != value {
         return Err(ErrorCode::InvalidRequest.into());
     }
     Ok(card)
@@ -243,6 +257,21 @@ fn parse_card(value: &str) -> Result<DeviceCard, TransferError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_card_uses_the_same_canonical_public_wire_shape() {
+        let identity = PeerId::from_tls_leaf(b"synthetic cert");
+        let seed = [7; 32];
+        let card = DeviceCard::derive_offline(identity, seed).unwrap();
+        assert_eq!(card.endpoint, SecretKey::from_bytes(&seed).public());
+        let encoded = card.public_text();
+        let parsed = parse_card(&encoded).unwrap();
+        assert_eq!(parsed.identity, identity);
+        assert_eq!(parsed.endpoint, card.endpoint);
+        assert_eq!(parsed.public_text(), encoded);
+        assert!(!encoded.contains(&"07".repeat(32)));
+        assert!(DeviceCard::derive_offline(identity, [0; 32]).is_err());
+    }
 
     #[test]
     fn action_schema_does_not_accept_paths_relays_or_extra_fields() {

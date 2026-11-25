@@ -220,7 +220,7 @@ jobs:
           $app = 'apps/aerift/src-tauri/Cargo.toml'
           cargo check --locked --manifest-path $app --features private-remote-wan-host --example private_remote_wan_host
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          foreach ($name in @('qualification_command_accepts_only_its_exact_embedded_document','wan_qualification_grants_cannot_cross_into_the_vpn_profile')) {
+          foreach ($name in @('qualification_command_accepts_only_its_exact_embedded_document','wan_qualification_grants_cannot_cross_into_the_vpn_profile','offline_wan_card_uses_only_protected_identity_and_lock')) {
             $nativeLines = & cargo test --locked --manifest-path $app --features private-remote-wan-host --lib $name -- --test-threads=1 2>&1
             $nativeStatus = $LASTEXITCODE
             $nativeLines | ForEach-Object { Write-Host $_ }
