@@ -26,6 +26,8 @@ use crate::ambient_context::{self, CaptureAnchor, ContextError, ExplorerContext}
 
 #[cfg(feature = "ambient-media-qualification")]
 mod explorer_gesture;
+#[cfg(feature = "ambient-media-qualification")]
+mod explorer_camera_session;
 mod nearby_actions;
 
 struct NativePickupGuard {
@@ -87,6 +89,8 @@ struct Supervisor {
     generation: AtomicU64,
     working: AtomicBool,
     lifecycle_wake: LifecycleWake,
+    #[cfg(feature = "ambient-media-qualification")]
+    explorer_camera_owned: AtomicBool,
 }
 
 #[derive(Clone, Default)]

@@ -208,6 +208,12 @@ jobs:
           if ($code -ne 0 -or -not ($lines -match 'test result: ok\. 6 passed; 0 failed')) {
             throw 'Expected all six synthetic Explorer gesture admission tests.'
           }
+          $ownerLines = & cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features ambient-media-qualification --lib ambient_runtime::explorer_camera_session::tests 2>&1
+          $ownerCode = $LASTEXITCODE
+          $ownerLines | ForEach-Object { Write-Host $_ }
+          if ($ownerCode -ne 0 -or -not ($ownerLines -match 'test result: ok\. 2 passed; 0 failed')) {
+            throw 'Expected both synthetic Explorer camera owner authorization tests.'
+          }
       - name: Compile the standard Windows app without launching or publishing it
         if: ${{ !cancelled() && (steps.native_private_lanes.outcome == 'success' || steps.native_private_lanes.outcome == 'failure') }}
         shell: pwsh

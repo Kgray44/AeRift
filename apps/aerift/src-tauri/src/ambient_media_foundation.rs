@@ -55,7 +55,7 @@ impl NativeCameraGrant {
         })
     }
 
-    fn allowed(&self) -> Result<(), CameraIssue> {
+    pub(crate) fn allowed(&self) -> Result<(), CameraIssue> {
         (self.permission_now)()
             .then_some(())
             .ok_or(CameraIssue::PermissionDenied)
@@ -75,11 +75,11 @@ pub(crate) struct WindowsCameraProvider<M, I> {
 
 impl<M: RgbLandmarker, I: NativeIndicator> WindowsCameraProvider<M, I> {
     pub(crate) fn new(model: M, indicator: I, grant: NativeCameraGrant) -> Self {
-        Self {
-            model: Arc::new(Mutex::new(model)),
-            indicator,
-            grant: Arc::new(grant),
-        }
+        Self::with_shared_grant(model, indicator, Arc::new(grant))
+    }
+
+    pub(crate) fn with_shared_grant(model: M, indicator: I, grant: Arc<NativeCameraGrant>) -> Self {
+        Self { model: Arc::new(Mutex::new(model)), indicator, grant }
     }
 }
 
