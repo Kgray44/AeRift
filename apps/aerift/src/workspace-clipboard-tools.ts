@@ -31,7 +31,7 @@ export function browseClipboardEntries<T>(
   options: ClipboardOptions,
 ): T[] {
   const terms = options.query.slice(0, clipboardQueryLimit).toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
-  const results = entries.flatMap((entry, index) => {
+  const results = entries.flatMap<{ entry: T; index: number; detail: ClipboardEntryDescription | undefined }>((entry, index) => {
     const detail = describe(entry);
     // A dangling pin has no text to search or copy, but remains visible in the
     // unfiltered list so the owner can still remove it.
