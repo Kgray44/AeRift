@@ -122,3 +122,17 @@ test("offline card diverts before relay or app construction and exposes no rende
   assert.doesNotMatch(offline, /OperatorRelay|WanSession|RECEIVE_DIRECTORY|\.trust|tauri::Builder/);
   assert.doesNotMatch(read("remote-wan.js"), /show_offline_device_card|show-wan-device-card-offline/);
 });
+
+test("the native WebView smoke is ignored, test-only, and has no online fixture", () => {
+  const native = readFileSync(new URL("../private_remote_wan_qualification.rs", assets), "utf8");
+  const smoke = readFileSync(new URL("../private_remote_wan_windows_smoke.rs", assets), "utf8");
+  assert.match(native, /#\[cfg\(test\)\]\s*#\[path = "private_remote_wan_windows_smoke.rs"\]\s*mod windows_smoke;/);
+  assert.match(native, /#\[cfg\(test\)\]\s*OfflineSmoke \{/);
+  assert.doesNotMatch(native, /private_wan_smoke_report|AERIFT_DISPOSABLE_WINDOWS_WAN_SMOKE/);
+  assert.match(smoke, /#\[ignore = /);
+  assert.match(smoke, /OPERATOR_RELAY\.is_none\(\)/);
+  assert.match(smoke, /AppDirectoriesOverride::Root/);
+  assert.match(smoke, /\.data_directory\(temp\.path\(\)\.join\("webview-data"\)\)/);
+  assert.match(smoke, /run_qualification_app/);
+  assert.doesNotMatch(smoke, /WanSession::start|WanEndpoint::bind|https?:\/\//);
+});

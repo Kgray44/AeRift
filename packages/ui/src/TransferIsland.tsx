@@ -1,21 +1,20 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Transfer } from "@aerift/app-contract";
 import { GlassSurface } from "./components";
 import { IconAction } from "./IconAction";
 import { SpatialIcon } from "./SpatialScene";
 import {
   activeIslandTransfers, formatIslandRate, formatIslandTime, observeIslandTransfers, readIslandMetrics,
-  transferIslandSummary, transferMetricStaleMs, type TransferMetricSample,
+  transferIslandSummary, transferMetricStaleMs, type TransferIslandReceipt, type TransferMetricSample,
 } from "./transfer-island-metrics";
 import "./transfer-island.css";
 
-const noTransfers: readonly Transfer[] = [];
+const noTransfers: readonly TransferIslandReceipt[] = [];
 const noSamples: ReadonlyMap<string, TransferMetricSample> = new Map();
 const emptyMeasurement = { now: 0, samples: noSamples };
 
 export function TransferIsland({ transfers = noTransfers, mobile = false, suppressed = false }: {
-  transfers?: readonly Transfer[];
+  transfers?: readonly TransferIslandReceipt[];
   mobile?: boolean;
   suppressed?: boolean;
 }) {
@@ -76,6 +75,8 @@ export function TransferIsland({ transfers = noTransfers, mobile = false, suppre
     setCollapsed(!collapsed);
   }
 
+  const folders = current.filter(receipt => receipt.kind === "folder").length;
+  const unit = folders > 0 ? (folders === count ? "folder" : "item") : "file";
   const direction = incoming && outgoing ? "Sending and receiving" : incoming ? "Receiving" : "Sending";
   return <>
     <span hidden ref={mounted} />
@@ -90,8 +91,8 @@ export function TransferIsland({ transfers = noTransfers, mobile = false, suppre
             </span>
             <div className="ae-transfer-island-summary-copy">
               <span className="ae-transfer-island-heading"><strong>{count > 0 ? direction : ""}</strong>
-                {count > 0 && <small>{count} {count === 1 ? "file" : "files"}</small>}</span>
-              {typeof percent === "number" && <small className="ae-transfer-island-overall">{percent}% of file data</small>}
+                {count > 0 && <small>{count} {unit}{count === 1 ? "" : "s"}</small>}</span>
+              {typeof percent === "number" && <small className="ae-transfer-island-overall">{percent}% of transfer data</small>}
             </div>
             <IconAction icon={collapsed ? "maximize" : "minimize"} ref={toggle}
               label={collapsed ? "Expand transfer island" : "Minimize transfer island"} onClick={toggleDetails}
@@ -101,10 +102,12 @@ export function TransferIsland({ transfers = noTransfers, mobile = false, suppre
           </div>
           <div id={detailsId} className="ae-transfer-island-details" inert={collapsed}
             aria-hidden={collapsed || undefined}>
-            <ol aria-label="Files in progress">{current.map(receipt => {
+            <ol aria-label="Items in progress">{current.map(receipt => {
               const metrics = readIslandMetrics(receipt, measurement.samples.get(receipt.id), measurement.now);
               const sending = receipt.direction === "outgoing";
               const progress = metrics.percent;
+              const verification = receipt.kind !== "folder" ? "Awaiting verification" :
+                sending ? "Recipient checking staged bytes · export is separate" : "Checking staged bytes · save separately";
               return <li key={receipt.id} className="ae-transfer-island-row">
                 <SpatialIcon name={sending ? "send" : "drop"} size={18} />
                 <div className="ae-transfer-island-file">
@@ -117,7 +120,7 @@ export function TransferIsland({ transfers = noTransfers, mobile = false, suppre
                     data-indeterminate={progress === undefined || undefined}>
                     <span style={progress === undefined ? undefined : { transform: `scaleX(${progress / 100})` }} />
                   </div>
-                  {progress === 100 ? <small>Awaiting verification</small> :
+                  {progress === 100 ? <small>{verification}</small> :
                     metrics.bytesPerSecond !== undefined && metrics.seconds !== undefined ?
                       <small>{sending ? "Upload" : "Download"} {formatIslandRate(metrics.bytesPerSecond)}
                         {" · "}{formatIslandTime(metrics.seconds)} left</small> :

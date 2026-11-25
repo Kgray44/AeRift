@@ -15,7 +15,8 @@ use aerift_remote_wan::{
 use aerift_transfer::{ErrorCode, ReceiveLimits, TransferError};
 use tauri::{
     utils::assets::{AssetKey, AssetsIter, CspHash},
-    AppHandle, Assets, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry,
+    App, AppHandle, Assets, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Wry,
 };
 use tauri_plugin_dialog::DialogExt;
 use windows::{
@@ -88,6 +89,28 @@ fn allowed_document(url: &tauri::Url) -> bool {
         && url.fragment().is_none()
 }
 
+enum PreviewController {
+    Live(QualificationController),
+    #[cfg(test)]
+    OfflineSmoke {
+        profile: Mutex<Option<PrivateRemoteProfile>>,
+        card: String,
+    },
+}
+
+impl PreviewController {
+    async fn stop(&self) -> io::Result<()> {
+        match self {
+            Self::Live(live) => live.stop().await,
+            #[cfg(test)]
+            Self::OfflineSmoke { profile, .. } => {
+                drop(profile.lock().map_err(|_| io::ErrorKind::Other)?.take());
+                Ok(())
+            }
+        }
+    }
+}
+
 #[tauri::command]
 async fn private_wan_action(
     window: WebviewWindow,
@@ -96,29 +119,40 @@ async fn private_wan_action(
     if window.label() != WINDOW || !window.url().is_ok_and(|value| allowed_document(&value)) {
         return Err(ErrorCode::InvalidRequest.into());
     }
-    let controller = window
-        .state::<Arc<QualificationController>>()
-        .inner()
-        .clone();
-    controller
-        .execute(action, || async move {
-            let display = window.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                display
-                    .dialog()
-                    .file()
-                    .set_parent(&display)
-                    .blocking_pick_file()
-                    .map(|file| {
-                        file.into_path()
-                            .map_err(|_| TransferError::from(ErrorCode::InvalidRequest))
-                    })
-                    .transpose()
-            })
-            .await
-            .map_err(|_| TransferError::from(ErrorCode::InternalError))?
+    let controller = window.state::<Arc<PreviewController>>().inner().clone();
+    let live = match controller.as_ref() {
+        PreviewController::Live(live) => live,
+        #[cfg(test)]
+        PreviewController::OfflineSmoke { card, .. } => {
+            return match action {
+                QualificationAction::Snapshot {} => Ok(QualificationReply::Snapshot {
+                    card: card.clone(),
+                    devices: vec![],
+                    pending: None,
+                    offers: vec![],
+                }),
+                _ => Err(ErrorCode::PeerUnavailable.into()),
+            }
+        }
+    };
+    live.execute(action, || async move {
+        let display = window.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            display
+                .dialog()
+                .file()
+                .set_parent(&display)
+                .blocking_pick_file()
+                .map(|file| {
+                    file.into_path()
+                        .map_err(|_| TransferError::from(ErrorCode::InvalidRequest))
+                })
+                .transpose()
         })
         .await
+        .map_err(|_| TransferError::from(ErrorCode::InternalError))?
+    })
+    .await
 }
 
 fn normal_local_directory(path: &Path) -> io::Result<()> {
@@ -231,7 +265,7 @@ fn start_in_profile(root: &Path, relay: OperatorRelay) -> Result<WanSession, ()>
         .map_err(|_| ())
 }
 
-type ActiveSession = Arc<Mutex<Option<Arc<QualificationController>>>>;
+type ActiveSession = Arc<Mutex<Option<Arc<PreviewController>>>>;
 
 fn shutdown_after_join(
     handle: AppHandle<Wry>,
@@ -256,6 +290,45 @@ fn shutdown_after_join(
     });
 }
 
+fn private_context() -> tauri::Context<Wry> {
+    let mut context = tauri::generate_context!();
+    context.config_mut().app.windows.clear();
+    context.config_mut().build.dev_url = None;
+    context.set_assets(Box::new(QualificationAssets));
+    context
+}
+
+fn private_window(app: &App<Wry>) -> WebviewWindowBuilder<'_, Wry, App<Wry>> {
+    WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::App(DOCUMENT.into()))
+        .title("AeRift Remote · Private Preview")
+        .inner_size(720.0, 720.0)
+        .min_inner_size(420.0, 460.0)
+        .on_navigation(allowed_document)
+}
+
+fn run_qualification_app(app: App<Wry>, session: ActiveSession, gate: Arc<ExitGate>) -> i32 {
+    app.run_return(move |app, event| match event {
+        RunEvent::ExitRequested { api, code, .. } => match gate.requested() {
+            ExitAction::Allow => {}
+            ExitAction::WaitForShutdown => api.prevent_exit(),
+            ExitAction::StartShutdown => {
+                api.prevent_exit();
+                shutdown_after_join(
+                    app.clone(),
+                    Arc::clone(&gate),
+                    &session,
+                    code.unwrap_or_default(),
+                );
+            }
+        },
+        _ => {}
+    })
+}
+
+#[cfg(test)]
+#[path = "private_remote_wan_windows_smoke.rs"]
+mod windows_smoke;
+
 /// Direct example entry; the ordinary app launcher does not call it.
 pub(crate) fn run() -> i32 {
     match admitted_mode(env::args_os().skip(1)) {
@@ -273,14 +346,10 @@ pub(crate) fn run() -> i32 {
         return 2;
     };
 
-    let mut context = tauri::generate_context!();
-    context.config_mut().app.windows.clear();
-    context.config_mut().build.dev_url = None;
-    context.set_assets(Box::new(QualificationAssets));
     let Ok(app) = tauri::Builder::<Wry>::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![private_wan_action])
-        .build(context)
+        .build(private_context())
     else {
         eprintln!("WAN qualification application could not start.");
         return 2;
@@ -294,38 +363,17 @@ pub(crate) fn run() -> i32 {
         return 2;
     };
 
-    let controller = Arc::new(QualificationController::new(session));
+    let controller = Arc::new(PreviewController::Live(QualificationController::new(
+        session,
+    )));
     app.manage(Arc::clone(&controller));
-    if WebviewWindowBuilder::new(&app, WINDOW, WebviewUrl::App(DOCUMENT.into()))
-        .title("AeRift Remote · Private Preview")
-        .inner_size(720.0, 720.0)
-        .min_inner_size(420.0, 460.0)
-        .on_navigation(allowed_document)
-        .build()
-        .is_err()
-    {
+    if private_window(&app).build().is_err() {
         let _ = tauri::async_runtime::block_on(controller.stop());
         eprintln!("WAN qualification window could not open.");
         return 2;
     }
     let session = Arc::new(Mutex::new(Some(controller)));
-    let gate = Arc::new(ExitGate::default());
-    app.run_return(move |app, event| match event {
-        RunEvent::ExitRequested { api, code, .. } => match gate.requested() {
-            ExitAction::Allow => {}
-            ExitAction::WaitForShutdown => api.prevent_exit(),
-            ExitAction::StartShutdown => {
-                api.prevent_exit();
-                shutdown_after_join(
-                    app.clone(),
-                    Arc::clone(&gate),
-                    &session,
-                    code.unwrap_or_default(),
-                );
-            }
-        },
-        _ => {}
-    })
+    run_qualification_app(app, session, Arc::new(ExitGate::default()))
 }
 
 #[cfg(test)]

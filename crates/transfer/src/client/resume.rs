@@ -66,6 +66,29 @@ impl<C: super::Connector> Sender<C> {
         cancel: CancellationToken,
         progress: impl Fn(Uuid, Status) + Send + Sync + 'static,
     ) -> Result<Status, TransferError> {
+        self.send_resumable_file_with_manifest_progress(
+            id,
+            path,
+            name,
+            cancel,
+            move |manifest, status| {
+                progress(manifest.id, status);
+            },
+        )
+        .await
+    }
+
+    /// Share the validated manifest with an invocation-local progress observer.
+    /// The recipient's acknowledged status and the same opened source are used;
+    /// no second path lookup or alternate transport is introduced.
+    pub async fn send_resumable_file_with_manifest_progress(
+        &self,
+        id: Uuid,
+        path: &Path,
+        name: &str,
+        cancel: CancellationToken,
+        progress: impl Fn(&Offer, Status) + Send + Sync + 'static,
+    ) -> Result<Status, TransferError> {
         if id.get_version() != Some(uuid::Version::Random)
             || id.get_variant() != uuid::Variant::RFC4122
         {
@@ -79,8 +102,11 @@ impl<C: super::Connector> Sender<C> {
             _ = cancel.cancelled() => return Err(ErrorCode::Cancelled.into()),
             result = prepare(id, path, name) => result?,
         };
-        self.send_resumable_source(offer, ResumeSource::File(file), cancel, progress)
-            .await
+        let manifest = offer.clone();
+        self.send_resumable_source(offer, ResumeSource::File(file), cancel, move |_, status| {
+            progress(&manifest, status);
+        })
+        .await
     }
 
     pub(crate) async fn send_folder_with_id(
@@ -404,6 +430,7 @@ mod tests {
 
     #[derive(Default)]
     struct SimulatedRecipient {
+        offer: Option<Offer>,
         bytes: Vec<u8>,
         put_offsets: Vec<u64>,
         committed: bool,
@@ -437,7 +464,9 @@ mod tests {
                         let mut state = state.lock().unwrap();
                         let mut reply = StatusCode::OK;
                         if method == Method::POST && path == RESUMABLE_ROUTE {
-                            assert!(serde_json::from_slice::<Offer>(&body).unwrap().size_bytes > 0);
+                            let offer = serde_json::from_slice::<Offer>(&body).unwrap();
+                            assert!(offer.size_bytes > 0);
+                            state.offer = Some(offer);
                             reply = StatusCode::CREATED;
                         } else if method == Method::PUT {
                             let (_, offset) = path.split_once("/chunks/").unwrap();
@@ -548,6 +577,50 @@ mod tests {
                 (State::Transferring, source.len() as u64),
                 (State::Completed, source.len() as u64),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn observed_manifest_is_the_exact_offer_sent_with_acknowledged_checkpoints() {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(SimulatedRecipient::default()));
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = observed.clone();
+        let sender = Sender::new(
+            InProcessConnector(state.clone()),
+            Duration::from_secs(3),
+            Duration::from_secs(3),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("native-source.bin");
+        let data = vec![84; RESUMABLE_CHUNK_SIZE + 31];
+        tokio::fs::write(&path, &data).await.unwrap();
+        let id = Uuid::new_v4();
+        let result = sender
+            .send_resumable_file_with_manifest_progress(
+                id,
+                &path,
+                "verified-label.bin",
+                CancellationToken::new(),
+                move |offer, status| sink.lock().unwrap().push((offer.clone(), status)),
+            )
+            .await
+            .unwrap();
+        let native = state.lock().unwrap();
+        let offered = native.offer.as_ref().unwrap();
+        let events = observed.lock().unwrap();
+        assert_eq!(result.state, State::Completed);
+        assert_eq!(offered.id, id);
+        assert_eq!(offered.name, "verified-label.bin");
+        assert_eq!(offered.size_bytes, data.len() as u64);
+        assert_eq!(native.bytes, data);
+        assert!(events.iter().all(|(manifest, _)| manifest == offered));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(_, status)| status.state == State::Transferring)
+                .map(|(_, status)| status.bytes_transferred)
+                .collect::<Vec<_>>(),
+            vec![RESUMABLE_CHUNK_SIZE as u64, offered.size_bytes],
         );
     }
 

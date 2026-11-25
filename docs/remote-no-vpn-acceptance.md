@@ -271,3 +271,41 @@ contention, scope and the exact created-file inventory. A separately approved
 isolated no-network launch test can also capture stdout and confirm one
 public card and no relay/WebView startup. This gate is separate from approved
 relay configuration and independent-uplink transfer.
+
+### Disposable native Windows WebView bootstrap smoke (manual gate)
+
+The ignored Windows unit-test target
+`windows_wan_preview_smoke_without_transport` runs the actual Wry document,
+embedded stylesheet/script, exact window and navigation scope, and
+`private_wan_action` bridge in a disposable Windows profile. The synthetic
+controller and observer command compile only with Rust's `cfg(test)`; there
+is no CLI fixture flag or production path to select them. The test-only
+controller exposes a real offline DPAPI-derived **public** card for the
+synthetic profile and denies every operation except Snapshot. It creates no
+WAN endpoint, relay, receive folder, staging, trust record, or external URL
+and starts no Iroh networking. The harmless `data:` script can be
+permitted or blocked without either case sending a network request.
+
+Only after separate approval, give a disposable hosted Windows runner its
+normal WebView2 installation and a fresh synthetic user context. Build
+the normal bundled frontend and compile the test while
+`AERIFT_TRUSTED_QUALIFICATION_RELAY` is absent. Stage dependencies first and
+disconnect test execution from external networks; browser startup flags are
+not an egress policy. From that isolated native test lane (GitHub Actions
+provides `GITHUB_ACTIONS=true`):
+
+```powershell
+Remove-Item Env:AERIFT_TRUSTED_QUALIFICATION_RELAY -ErrorAction SilentlyContinue
+$env:AERIFT_DISPOSABLE_WINDOWS_WAN_SMOKE = '1'
+cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-host --lib windows_wan_preview_smoke_without_transport -- --ignored --nocapture
+```
+
+Use a bounded job timeout and retain only pass/fail, not the synthetic card,
+WebView data or profile files. The witness checks native Snapshot appears on
+the displayed page, local CSS loaded, CSP denies the `data:` probe,
+unregistered navigation did not replace the document, and the fixture did
+not accept an invitation mutation. The observer requests the normal window
+close, and the test verifies the real exit gate releases its synthetic lock.
+A watchdog exits as failure if the WebView does not report. The test is not
+part of default CI and does not prove a native picker, actual WAN transfers,
+or relay/operator availability. Those remain separately authorized tests.
