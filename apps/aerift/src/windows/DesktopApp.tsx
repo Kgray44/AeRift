@@ -1,10 +1,11 @@
+import { CompactHeaderMark, CompactHeaderStatus } from "../CompactHeader";
 import { DesktopInbox } from "./DesktopInbox";
 import { destinationIntent } from "../destination-intent";
 import { Channel } from "@tauri-apps/api/core";
 import type { FileSelection } from "@aerift/app-contract";
 import { DESTINATIONS, getNavigation, type DestinationId } from "@aerift/app-contract/experience";
 import {
-  AppBrand, AppShell, Button, ConnectionStatus, GestureCameraIndicator, GlassSurface, Orbit, OrbitSurface,
+  AppShell, Button, GlassSurface, Orbit, OrbitSurface,
   SpatialIcon, ThemeProvider, TransferWorkspace, type GestureCameraStatus, type WorkspaceConnection,
 } from "@aerift/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -229,19 +230,13 @@ export function DesktopApp() {
 
   return <ThemeProvider {...settings.experience}>
     <AppShell hideToolbar>
-      <header className="ae-experience-nav aerift-desktop-header" data-destination={route}>
+      <header className="ae-experience-nav aerift-desktop-header ae-compact-header" data-destination={route}>
         <Orbit destinations={navigation.primary} active={route} onNavigate={navigate} surfaceRef={surfaceRef}
           presentation={navigation.presentation === "conventional" ? "conventional" : "orbit"}
           shortcut={settings.orbitShortcut} reducedMotion={settings.experience.motion === "reduce"}
           status={activeTransfers ? { activity: `${activeTransfers} active` } : undefined} />
-        <GlassSurface material="chrome" className="ae-nav-brand"><AppBrand /></GlassSurface>
-        <GlassSurface material="chrome" className="ae-nav-tools">
-          <GestureCameraIndicator status={cameraStatus} />
-          <ConnectionStatus state={pairedOnline ? "connected" : connection.state === "disconnected" ? "offline" : "searching"}
-            label={pairedOnline ? "Paired" : connection.state === "disconnected" ? "Disconnected" : snapshot ? "Searching" : "Connecting"} />
-          <Button className="ae-control-gear" variant="quiet" aria-label="Control Center"
-            title="Control Center" onClick={() => navigate("settings")}><SpatialIcon name="settings" /></Button>
-        </GlassSurface>
+        <CompactHeaderMark />
+        <CompactHeaderStatus camera={cameraStatus} enabled={settings.gestures} connections={connected} service={connection.state} />
       </header>
       {(pendingOffers > 0 || pendingPairs > 0) && <div className="ae-offer-notice" role="status">
         {pendingOffers > 0 && <Button variant="quiet" onClick={() => navigate("activity")}>Incoming offers ({pendingOffers})</Button>}
@@ -297,7 +292,8 @@ export function DesktopApp() {
           watchSelection={watchSelection}
           connection={{ generation: watchAttempt, retry: retryConnection, onChange: setConnection }}
           allowInbox
-          activityFooter={route === "activity" && <>{folder?.active && <p>The regular receive folder is {folder.active}.</p>}<DesktopInbox contextualEnabled={captureEnabled} /></>}
+          activityLibrary={<DesktopInbox contextualEnabled={captureEnabled} />}
+          activityFooter={route === "activity" && folder?.active && <p>The regular receive folder is {folder.active}.</p>}
           gesture={controls => <GestureCamera controls={controls} shortcut={settings.cameraShortcut}
             enabled={settings.gestures} actionsBlocked={route !== "rift"} source={settings.cameraId || undefined}
             retryKey={cameraRetry} onStatus={setCameraStatus} />}
@@ -306,3 +302,4 @@ export function DesktopApp() {
     </AppShell>
   </ThemeProvider>;
 }
+

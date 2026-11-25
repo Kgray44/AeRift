@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const read = name => readFileSync(new URL("../../" + name, import.meta.url), "utf8");
+const read = name => readFileSync(new URL("../../" + name, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const fixture = read("apps/windows/Test-InstalledWorkspaceFolder.ps1");
 const shell = read("apps/windows/Test-InstalledShell.ps1");
 const workflow = read(".github/workflows/windows-app.yml");
@@ -22,7 +22,7 @@ test("fixture drives only its foreground app's actual chooser and synthetic fixe
   assert.match(fixture, /Input\.dispatchMouseEvent/);
   assert.match(fixture, /button\.contains\(document\.elementFromPoint/);
   assert.match(fixture, /GetForegroundWindow\(\) -eq \$hwnd/);
-  assert.match(fixture, /AutomationIdProperty, '1152'/);
+  assert.match(fixture, /GetDlgItem\(\$Dialog, 1152\)/);
   assert.match(fixture, /Select-Chooser \$true ''/);
   assert.match(fixture, /Select-Chooser \$false \$chosen/);
   assert.match(fixture, /\$env:RUNNER_TEMP[\s\S]*Get-Volume -FilePath \$item/);
@@ -47,7 +47,11 @@ test("native dialog actions target only the unique verified standard direct chil
   assert.match(fixture, /Invoke-ExactDialogAction \$dialogHandle \$Cancel[\s\S]*!?\(Find-Chooser\)/);
 });
 
-test("the native filename field selector does not shadow PowerShell's automatic ShellId", () => {
+test("writes only the unique verified native filename slot with the synthetic path", () => {
+  assert.match(fixture, /GetDlgItem\(\$Dialog, 1148\)/);
+  assert.match(fixture, /IsChild\(\$Dialog, \$candidate\)[\s\S]*\$editPid -eq \$OwnedProcess.Id/);
+  assert.match(fixture, /\$verified.Count -ne 1/);
+  assert.match(fixture, /\$SyntheticPath -cne \$chosen[\s\S]*\(Find-OwnedFileNameEdit \$Dialog\) -ne \$editHandle/);
+  assert.match(fixture, /SendTextTimeout\(\s*\$editHandle, 0x000c, \[UIntPtr\]::Zero, \$SyntheticPath, 3, 2000, \[ref\]\$reply\)/);
   assert.doesNotMatch(fixture, /\$shellid\b/i);
-  assert.match(fixture, /AndCondition\]::new\(\$fileNameAutomationId, \$edit\)/);
 });

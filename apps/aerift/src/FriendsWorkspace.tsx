@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { Button, GlassSurface, Sheet, SpatialIcon } from "@aerift/ui";
+import { Button, GlassSurface, MobileRoutePresence, Sheet, SpatialIcon } from "@aerift/ui";
 import {
   friendTargets,
   type FriendContact, type FriendObjectKind, type FriendTarget, type FriendsPort, type FriendsRequest, type FriendsSnapshot,
@@ -56,7 +56,9 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, recei
   const [preferredContact, setPreferredContact] = useState<string>();
   const panelHeading = useRef<HTMLHeadingElement>(null);
   const panelOrigin = useRef<HTMLElement>(null);
-  const [entry, setEntry] = useState<"forward" | "back">();
+  const [direction, setDirection] = useState<1 | -1>(1);
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const listTitle = useRef<HTMLHeadingElement>(null);
   const [invitation, setInvitation] = useState("");
   const [card, setCard] = useState("");
   const [recipientCard, setRecipientCard] = useState("");
@@ -71,9 +73,15 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, recei
   const title = useRef<HTMLHeadingElement>(null);
   const previous = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
-    if (panel === "overview" && previous.current !== contact?.id) title.current?.focus();
+    const previousContact = previous.current;
+    if (panel === "overview" && previousContact !== contact?.id) {
+      const focus = mobile && !contact && previousContact
+        ? (rowRefs.current.get(previousContact) ?? listTitle.current)
+        : title.current;
+      focus?.focus({ preventScroll: true });
+    }
     previous.current = contact?.id;
-  }, [contact?.id, panel]);
+  }, [contact?.id, mobile, panel]);
 
   useLayoutEffect(() => {
     if (panel !== "overview") panelHeading.current?.focus();
@@ -135,10 +143,16 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, recei
     return run(() => port.apply(request), after);
   }
 
-  return <div className="ae-friends" data-mobile={mobile ? "" : undefined} data-detail={contact ? "" : undefined} data-desktop={desktop ? "" : undefined}>
-    <GlassSurface className="ae-friends-list" data-ae-route-enter={mobile && !contact ? entry : undefined} aria-labelledby={headingId}>
+  function navigateContact(node: HTMLElement, next?: string) {
+    const forward = getComputedStyle(node).direction === "rtl" ? -1 : 1;
+    setDirection(next === undefined ? (forward === 1 ? -1 : 1) : forward);
+    setPanel("overview");
+    setSelected(next);
+  }
+
+  const list = <GlassSurface className="ae-friends-list" aria-labelledby={headingId}>
       <div className="ae-friends-header">
-        <h3 id={headingId} tabIndex={-1} ref={!contact ? title : undefined}>{desktop ? "People" : "Your friends"}</h3>
+        <h3 id={headingId} tabIndex={-1} ref={listTitle}>{desktop ? "People" : "Your friends"}</h3>
         {pairingIsAvailable && <div className="ae-friends-pair-controls">
           {hasPendingInvitation && <FriendsIconButton icon="activity" className="ae-friends-attention"
             name="Review friendship invitation" aria-haspopup="dialog" aria-controls={pairingMounted ? pairingId : undefined}
@@ -156,13 +170,14 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, recei
       {!desktop && <p>Friends are invited privately. Nearby devices aren't added here automatically.</p>}
       {snapshot.contacts.length > 0 ? <ul className="ae-friends-roster">
         {snapshot.contacts.map(person => <li key={person.id}><Button className="ae-friends-row" variant="quiet"
-          aria-pressed={person.id === contact?.id} onClick={() => { setEntry("forward"); setSelected(person.id); setPanel("overview"); }}>
+          ref={node => { if (node) rowRefs.current.set(person.id, node); else rowRefs.current.delete(person.id); }}
+          aria-pressed={person.id === contact?.id} onClick={event => navigateContact(event.currentTarget, person.id)}>
           <ProfileBadge name={friendDisplayName(person.label, profiles.people[person.id])} avatar={profiles.people[person.id]?.avatar} />
           <span>{friendDisplayName(person.label, profiles.people[person.id])}</span><SpatialIcon name="chevron" size={16} />
         </Button></li>)}
       </ul> : !desktop ? <p>No friends yet.</p> : null}
-    </GlassSurface>
-    <GlassSurface className="ae-friends-detail" key={mobile ? contact?.id ?? "list" : undefined} data-ae-route-enter={mobile && contact ? entry : undefined}>
+    </GlassSurface>;
+  const detail = <GlassSurface className="ae-friends-detail">
       {desktop && <div className="ae-friends-toolbar" role="group" aria-label="Friends actions">
         <FriendsIconButton icon="send" name="Private transfers" aria-expanded={panel === "transfer"}
           onClick={event => reveal("transfer", event.currentTarget)} />
@@ -175,7 +190,7 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, recei
       </div>}
       <div hidden={panel !== "overview"}>
         {contact ? <>
-          {mobile && <Button variant="quiet" onClick={() => { setEntry("back"); setSelected(undefined); }}>Back to friends</Button>}
+          {mobile && <Button variant="quiet" onClick={event => navigateContact(event.currentTarget)}>Back to friends</Button>}
           <div className="ae-friends-contact-heading">
             <ProfileBadge name={contactName!} avatar={profiles.people[contact.id]?.avatar} size="detail" />
             <div><h3 tabIndex={-1} ref={title}>{contactName}</h3>
@@ -200,7 +215,12 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, recei
         {visited.has("transfer") && <div className="ae-friends-workflow" hidden={panel !== "transfer"}>{desktop.transfer(preferredContact)}</div>}
         {visited.has("enrollment") && <div className="ae-friends-workflow" hidden={panel !== "enrollment"}>{desktop.enrollment}</div>}
       </>}
-    </GlassSurface>
+    </GlassSurface>;
+
+  return <div className="ae-friends" data-mobile={mobile ? "" : undefined} data-desktop={desktop ? "" : undefined}>
+    {mobile ? <MobileRoutePresence routeKey={contact?.id ?? headingId} direction={direction}>
+      {contact ? detail : list}
+    </MobileRoutePresence> : <>{list}{detail}</>}
     {pairingIsAvailable && pairingMounted && <Sheet id={pairingId} className="ae-friends-pair-sheet" open={pairing}
       title="Friends" closeIcon onClose={() => setPairing(false)} onAfterClose={() => {
         const origin = pairingOrigin.current;
@@ -248,7 +268,7 @@ export function FriendsWorkspace({ snapshot, port, mobile, setup, desktop, recei
       target={edit.kind === "own" ? { kind: "own", verifiedName: verifiedOwnProfileName ?? "My profile", local: profiles.self }
         : { kind: "friend", verifiedName: editFriend!.label, local: profiles.people[edit.id] ?? emptyPresentation() }}
       onClose={() => setEditOpen(false)}
-      onAfterClose={() => (editOrigin.current?.isConnected ? editOrigin.current : title.current)?.focus({ preventScroll: true })}
+      onAfterClose={() => (editOrigin.current?.isConnected ? editOrigin.current : (title.current ?? listTitle.current))?.focus({ preventScroll: true })}
       onSave={value => setProfiles(saveFriendPresentation(localStorage, edit.kind === "own" ? "self" : edit.id, value))} />}
     {error && !pairing && <p className="ae-friends-feedback" role="alert">{error}</p>}
   </div>;

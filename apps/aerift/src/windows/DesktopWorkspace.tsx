@@ -1,7 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import type { DigitalObject } from "@aerift/app-contract/digital-objects";
 import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@aerift/app-contract/experience";
-import { Button, IconAction, Popover, SpatialIcon } from "@aerift/ui";
+import { Button, IconAction, MotionFeedbackProvider, Popover, SpatialIcon } from "@aerift/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
@@ -12,7 +12,7 @@ import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardD
 import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
 import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
 import { useDesktopContentEnter } from "./desktopContentMotion";
-import { WorkspaceCategoryHeading, WorkspaceLibrary, useWorkspaceLibrary } from "../WorkspaceLibrary";
+import { WorkspaceCategoryHeading, WorkspaceLibrary, WorkspaceScene, useWorkspaceLibrary } from "../WorkspaceLibrary";
 import { isWorkspaceDocument, workspaceSections, type WorkspaceSectionId } from "../workspace-categories";
 import { applyWorkspaceChanges, loadWorkspace, loadWorkspaceAsset, type WorkspaceEntry, type WorkspaceMetadata } from "./workspaceStore";
 
@@ -254,7 +254,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
     section?.id === "documents" ? "Import documents" : "Import files";
   const selectedVisible = visible.filter(({ object }) => selected.includes(object.id)).map(({ object }) => object.id);
 
-  return <div className="aerift-workspace">
+  return <MotionFeedbackProvider group="desktop-workspace"><WorkspaceScene scene={workspace}><div className="aerift-workspace">
     {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} counts={counts} desktop />}
     {section && section.id !== "notes" && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={() => { clipboardTools.reset(); workspace.back(); }} desktop />}
     {!entries && !error && <p>Opening Workspace…</p>}
@@ -351,5 +351,5 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
         </nav>}
       </section>
     </div>}
-  </div>;
+  </div></WorkspaceScene></MotionFeedbackProvider>;
 }

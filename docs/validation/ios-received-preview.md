@@ -1,0 +1,9 @@
+# iOS Activity: verify and preview one selected text receipt
+
+Base: #114 candidate `5fef54c`. The iOS Activity list is still historical metadata and Files guidance, not a durable receipt catalog. The explicit preview action only appears for eligible current-session completed incoming receipts. It does not restart networking, enumerate folders, or expose original paths. PDF, images and other binary files stay metadata/Files only.
+
+The single iOS command accepts only a canonical opaque receipt ID, only from the bundled main WebView, and looks up the exact completed native receiver entry. A single worker opens a regular file without following links beneath the OS-owned Received directory. Length (64 KiB maximum) and SHA-256 must match the receipt, and the preview uses those exact read bytes. Non-UTF-8 and most control characters do not produce text. The UI renders React text nodes, never HTML, Markdown, native viewers or automatic links. Closing or changing the selected receipt discards any stale reply. It never alters the saved copy.
+
+No historical receipt is rebuilt by scanning user-visible Files. A future durable catalog must store verified native receipt data privately at publication, keep the exact committed filename and time, and handle missing or modified Files copies without claiming verification. General iOS file previews, opening/sharing received content, and physical device behavior remain separate work. An installed iOS build should verify the bundled origin, receipt-only display, Files still showing the original and restart/history behavior; WKWebView and Swift are not exercised by the portable harness.
+
+Tests: pure Rust file and receipt-key tests on synthetic bounded data; exact keyed receiver test through actual publication; Chromium iOS-sized fixture with mocked IPC asserts explicit request, canonical-key-only payload, inert response, PDF fallback and stale-response suppression. No user files, device, GitHub push or release.

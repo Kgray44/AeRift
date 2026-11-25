@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Derive native icons from the exact approved, opaque AeRift artwork."""
+"""Derive native icons from the exact approved AeRift artwork."""
 import argparse
 import hashlib
 import json
@@ -10,13 +10,16 @@ import zlib
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "assets/branding/aerift-logo.png"
 SHA256 = "2aa3948cead24d7afeb23d9b417943ef869bcaf776f2e5182eeb97161fe7476f"
+NATIVE_SOURCE = ROOT / "assets/branding/aerift-mark-transparent.png"
+NATIVE_SHA256 = "3472bb0e7f7fa5911509f499fbe27a1ae8a2dc70767c48a64d69273799d388f3"
 PNG = b"\x89PNG\r\n\x1a\n"
 DARK = (4, 4, 11)
 
 
-def source_pixels():
-    data = SOURCE.read_bytes()
-    if hashlib.sha256(data).hexdigest() != SHA256 or not data.startswith(PNG):
+def source_pixels(native=False):
+    data = (NATIVE_SOURCE if native else SOURCE).read_bytes()
+    expected = NATIVE_SHA256 if native else SHA256
+    if hashlib.sha256(data).hexdigest() != expected or not data.startswith(PNG):
         raise ValueError("Unexpected approved AeRift artwork")
     pos, encoded = 8, []
     while pos < len(data):
@@ -53,7 +56,7 @@ def source_pixels():
             else:
                 raise ValueError("Unexpected source PNG filter")
             row[i] = (row[i] + f) & 255
-        if any(a != 255 for a in row[3::4]):
+        if not native and any(a != 255 for a in row[3::4]):
             raise ValueError("Approved artwork is expected to be opaque")
         rows.append(row)
         prior = row
@@ -78,6 +81,44 @@ def resize(source, size):
                   for x in range(size * 3)) for span in axes]
 
 
+def resize_alpha(source, size):
+    """Area resampling with alpha-weighted colors and no contribution from hidden RGB."""
+    n = len(source)
+    if not 1 <= size <= n:
+        raise ValueError("Invalid icon size")
+    axes = []
+    for i in range(size):
+        left, right = i * n, (i + 1) * n
+        axes.append([(q, min(right, (q + 1) * size) - max(left, q * size))
+                     for q in range(left // size, (right - 1) // size + 1)])
+    horiz = []
+    for row in source:
+        prem = [(row[i] * row[i + 3], row[i + 1] * row[i + 3],
+                 row[i + 2] * row[i + 3], row[i + 3]) for i in range(0, len(row), 4)]
+        horiz.append([sum(prem[q][c] * overlap for q, overlap in span)
+                      for span in axes for c in range(4)])
+    result = []
+    for span in axes:
+        row = bytearray()
+        for x in range(size):
+            i = x * 4
+            weighted_alpha = sum(horiz[q][i + 3] * overlap for q, overlap in span)
+            alpha = (weighted_alpha + n * n // 2) // (n * n)
+            if not alpha:
+                row.extend(bytes(4))
+                continue
+            row.extend((sum(horiz[q][i + c] * overlap for q, overlap in span)
+                        + weighted_alpha // 2) // weighted_alpha for c in range(3))
+            row.append(alpha)
+        result.append(bytes(row))
+    return result
+
+
+def composite(rows, color):
+    return [bytes((row[i + c] * row[i + 3] + color[c] * (255 - row[i + 3]) + 127) // 255
+                  for i in range(0, len(row), 4) for c in range(3)) for row in rows]
+
+
 def png(rows, channels):
     def chunk(tag, data):
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
@@ -97,20 +138,25 @@ def windows(source, destination, check):
     offset = 6 + len(sizes) * 16
     directory, frames = [], []
     for size in sizes:
-        rows = resize(source, size)
+        rows = resize_alpha(source, size)
         if size == 256:
-            frame = png(rgba(rows), 4)
+            frame = png(rows, 4)
         else:
-            image = b"".join(b"".join(row[i:i + 3][::-1] + b"\xff"
-                                        for i in range(0, len(row), 3)) for row in reversed(rows))
-            mask = bytes((size + 31) // 32 * 4 * size)
+            image = b"".join(b"".join(row[i:i + 3][::-1] + row[i + 3:i + 4]
+                                        for i in range(0, len(row), 4)) for row in reversed(rows))
+            stride = ((size + 31) // 32) * 4
+            mask = bytearray(stride * size)
+            for y, row in enumerate(reversed(rows)):
+                for x, alpha in enumerate(row[3::4]):
+                    if alpha == 0:
+                        mask[y * stride + x // 8] |= 0x80 >> (x % 8)
             frame = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0, len(image), 0, 0, 0, 0) + image + mask
         dim = size & 255
         directory.append(struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(frame), offset))
         frames.append(frame)
         offset += len(frame)
     output = {"icon.ico": struct.pack("<HHH", 0, 1, len(sizes)) + b"".join(directory + frames),
-              "icon.png": png(rgba(resize(source, 32)), 4)}
+              "icon.png": png(resize_alpha(source, 32), 4)}
     for name, content in output.items():
         path = destination / name
         if check:
@@ -123,7 +169,13 @@ def windows(source, destination, check):
 def ios(source, destination):
     # Xcode 14+ universal iOS icon; minimum shipping system is iOS 15.
     destination.mkdir(parents=True, exist_ok=True)
-    (destination / "AeRift-AppIcon.png").write_bytes(png(resize(source, 1024), 3))
+    # The system supplies its own rounded mask. Keep the artwork clear
+    # of the icon edge, using solid RGB rather than uploaded PNG alpha.
+    mark = composite(resize_alpha(source, 896), DARK)
+    border = bytes(DARK) * 64
+    blank = bytes(DARK) * 1024
+    rows = [blank] * 64 + [border + row + border for row in mark] + [blank] * 64
+    (destination / "AeRift-AppIcon.png").write_bytes(png(rows, 3))
     payload = {"images": [{"filename": "AeRift-AppIcon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
                "info": {"author": "xcode", "version": 1}}
     (destination / "Contents.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -163,7 +215,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.check and args.platform != "windows":
         parser.error("--check applies only to committed Windows resources")
-    source = source_pixels()
+    source = source_pixels(native=args.platform != "android")
     if args.platform == "windows":
         windows(source, args.destination, args.check)
     elif args.platform == "ios":

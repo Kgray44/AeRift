@@ -15,7 +15,23 @@
 .ae-friends :is(code, p, li, .ae-friends-actions) { overflow-wrap: anywhere; }
 .ae-friends-feedback { grid-column: 1 / -1; }
 .ae-friends[data-mobile] { display: block; }
-.ae-friends[data-mobile][data-detail] .ae-friends-list, .ae-friends[data-mobile]:not([data-detail]) .ae-friends-detail { display: none; }
+.ae-friends[data-mobile] .ae-mobile-presence {
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+}
+.ae-friends[data-mobile] .ae-mobile-presence-pane { position: relative; min-inline-size: 0; }
+.ae-friends[data-mobile] .ae-mobile-presence-pane[data-present="false"] {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: -1;
+  pointer-events: none;
+}
+.ae-friends[data-mobile] .ae-mobile-presence-pane[data-motion-suppressed] {
+  transform: none !important;
+  opacity: 1 !important;
+}
+.ae-friends[data-mobile] .ae-mobile-presence-pane[data-motion-suppressed][inert] { visibility: hidden; }
 @media (max-width: 37rem) { .ae-friends { grid-template-columns: minmax(0, 1fr); } }
 
 /* Desktop: one calm contact surface and one working surface. The compact mobile

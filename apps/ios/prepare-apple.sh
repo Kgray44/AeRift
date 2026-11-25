@@ -20,6 +20,7 @@ if [[ -z "$catalog" || "$catalog" == *$'\n'* || ! -d "$catalog" ]]; then
   echo 'Expected one generated iOS AppIcon asset catalog.' >&2
   exit 1
 fi
+# Stage the solid RGB iOS AppIcon, not the separate transparent Windows glyph.
 python3 "$ios_dir/../../scripts/branding/app-icons.py" ios "$catalog"
 
 manifest="${targets[0]}/PrivacyInfo.xcprivacy"

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const read = (path) => readFileSync(new URL("../../" + path, import.meta.url), "utf8");
+const read = (path) => readFileSync(new URL("../../" + path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const picker = read("apps/aerift/src-tauri/src/workspace_folder_picker.rs");
 const shell = read("apps/aerift/src/windows/DesktopApp.tsx");
 const host = read("apps/aerift/src-tauri/src/lib.rs");

@@ -40,6 +40,15 @@ function Test-InstalledWorkspaceFolder {
         public static extern System.IntPtr SendMessageTimeout(
             System.IntPtr window, uint message, System.UIntPtr wparam, System.IntPtr lparam,
             uint flags, uint timeoutMs, out System.UIntPtr result);
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="SendMessageTimeoutW", CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+        public static extern System.IntPtr SendTextTimeout(
+            System.IntPtr window, uint message, System.UIntPtr wparam, string text,
+            uint flags, uint timeoutMs, out System.UIntPtr result);
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="GetWindowLongW")]
+        public static extern int GetWindowLong(System.IntPtr window, int index);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static extern bool IsChild(System.IntPtr parent, System.IntPtr child);
 '@
 
     function Find-Chooser {
@@ -169,6 +178,85 @@ function Test-InstalledWorkspaceFolder {
         if ($sent -eq [IntPtr]::Zero) { throw 'Exact native dialog button did not respond.' }
     }
 
+    function Get-NativeClass([IntPtr]$Control) {
+        $name = [Text.StringBuilder]::new(40)
+        if ($Control -ne [IntPtr]::Zero -and
+            [AeRiftFixture.OwnedWindow]::GetClassName($Control, $name, $name.Capacity)) {
+            $name.ToString()
+        }
+    }
+
+    function Find-OwnedFileNameEdit([IntPtr]$Dialog) {
+        # Native shell filename slots only: the direct Edit (1152) or the
+        # classic FileName combobox (1148) with its embedded Edit child.
+        $direct = [AeRiftFixture.OwnedWindow]::GetDlgItem($Dialog, 1152)
+        $combo = [AeRiftFixture.OwnedWindow]::GetDlgItem($Dialog, 1148)
+        $candidates = [Collections.Generic.HashSet[IntPtr]]::new()
+        if ($direct -ne [IntPtr]::Zero -and
+            [AeRiftFixture.OwnedWindow]::GetDlgCtrlID($direct) -eq 1152 -and
+            [AeRiftFixture.OwnedWindow]::GetAncestor($direct, 1) -eq $Dialog -and
+            (Get-NativeClass $direct) -ieq 'Edit') {
+            $null = $candidates.Add($direct)
+        }
+        if ($combo -ne [IntPtr]::Zero -and
+            [AeRiftFixture.OwnedWindow]::GetDlgCtrlID($combo) -eq 1148 -and
+            [AeRiftFixture.OwnedWindow]::GetAncestor($combo, 1) -eq $Dialog -and
+            (Get-NativeClass $combo) -in @('ComboBox', 'ComboBoxEx32')) {
+            $queue = [Collections.Generic.Queue[IntPtr]]::new()
+            $queue.Enqueue($combo)
+            $examined = 0
+            while ($queue.Count -gt 0 -and $examined -lt 64) {
+                $child = [AeRiftFixture.OwnedWindow]::GetWindow($queue.Dequeue(), 5)
+                while ($child -ne [IntPtr]::Zero -and $examined -lt 64) {
+                    $examined++
+                    $class = Get-NativeClass $child
+                    if ($class -ieq 'Edit') { $null = $candidates.Add($child) }
+                    if ($class -in @('ComboBox', 'ComboBoxEx32')) { $queue.Enqueue($child) }
+                    $child = [AeRiftFixture.OwnedWindow]::GetWindow($child, 2)
+                }
+                if ($child -ne [IntPtr]::Zero) { throw 'Native filename controls exceeded the fixture limit.' }
+            }
+            if ($queue.Count -gt 0) { throw 'Native filename controls exceeded the fixture limit.' }
+        }
+        $verified = @()
+        foreach ($candidate in $candidates) {
+            $editPid = [uint32]0
+            if ([AeRiftFixture.OwnedWindow]::IsChild($Dialog, $candidate) -and
+                [AeRiftFixture.OwnedWindow]::GetWindowThreadProcessId($candidate, [ref]$editPid) -and
+                $editPid -eq $OwnedProcess.Id -and
+                [AeRiftFixture.OwnedWindow]::IsWindowVisible($candidate) -and
+                [AeRiftFixture.OwnedWindow]::IsWindowEnabled($candidate) -and
+                ([AeRiftFixture.OwnedWindow]::GetWindowLong($candidate, -16) -band 0x0800) -eq 0) {
+                $verified += $candidate
+            }
+        }
+        if ($verified.Count -ne 1) {
+            Write-Host "Owned native filename slot: direct=$($direct -ne [IntPtr]::Zero) combo=$($combo -ne [IntPtr]::Zero) discovered=$($candidates.Count) verified=$($verified.Count)"
+            throw 'Could not verify exactly one writable native filename control.'
+        }
+        return $verified[0]
+    }
+
+    function Set-SyntheticFolderName([IntPtr]$Dialog, [string]$SyntheticPath) {
+        if ($SyntheticPath -cne $chosen -or (Find-Chooser) -ne $Dialog -or
+            [AeRiftFixture.OwnedWindow]::GetForegroundWindow() -ne $Dialog) {
+            throw 'Refusing a folder field outside the exact owned fixture.'
+        }
+        $editHandle = Find-OwnedFileNameEdit $Dialog
+        if ((Find-Chooser) -ne $Dialog -or [AeRiftFixture.OwnedWindow]::GetForegroundWindow() -ne $Dialog -or
+            (Find-OwnedFileNameEdit $Dialog) -ne $editHandle) {
+            throw 'Native folder field changed before its action.'
+        }
+        # WM_SETTEXT for this exact writable native Edit, not keyboard input.
+        # Only the path created in the isolated fixture is passed here.
+        $reply = [UIntPtr]::Zero
+        $sent = [AeRiftFixture.OwnedWindow]::SendTextTimeout(
+            $editHandle, 0x000c, [UIntPtr]::Zero, $SyntheticPath, 3, 2000, [ref]$reply)
+        if ($sent -eq [IntPtr]::Zero -or $reply -eq [UIntPtr]::Zero) {
+            throw 'Verified native filename control rejected the synthetic path.'
+        }
+    }
+
     function Select-Chooser([bool]$Cancel, [string]$SyntheticPath, [string]$Stage) {
         try {
             $dialogHandle = Wait-Fixture { Find-Chooser } 'No visible native picker matched the exact process and root owner.'
@@ -183,21 +271,7 @@ function Test-InstalledWorkspaceFolder {
             throw
         }
         Write-Host "Workspace picker stage=${Stage}: exact owned native dialog found."
-        if (!$Cancel) {
-            $dialog = [System.Windows.Automation.AutomationElement]::FromHandle($dialogHandle)
-            $fileNameAutomationId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1152')
-            $edit = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
-            $fields = $dialog.FindAll([System.Windows.Automation.TreeScope]::Children,
-                [System.Windows.Automation.AndCondition]::new($fileNameAutomationId, $edit))
-            if ($fields.Count -ne 1 -or $fields[0].Current.ProcessId -ne $OwnedProcess.Id -or
-                $fields[0].Current.ClassName -cne 'Edit' -or !$fields[0].Current.IsEnabled -or
-                $fields[0].Current.Name -cnotin @('Folder:', 'Folder name:', 'File name:')) {
-                throw 'Could not identify the exact native folder name field.'
-            }
-            $field = $fields[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-            if ($field.Current.IsReadOnly) { throw 'Native name field unexpectedly read-only.' }
-            $field.SetValue($SyntheticPath)
-        }
+        if (!$Cancel) { Set-SyntheticFolderName $dialogHandle $SyntheticPath }
         Invoke-ExactDialogAction $dialogHandle $Cancel
         Wait-Fixture { !(Find-Chooser) } 'Native folder dialog did not close.' | Out-Null
     }

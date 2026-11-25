@@ -17,7 +17,8 @@ export function beginDesktopContentEnter(node: HTMLElement, scope: ContentScope)
   const clear = () => target.removeAttribute("data-ae-route-enter");
   // The shared CSS is the clock. Observe the actual effects rather than a
   // duplicate timeout, and remove the marker when interrupted or unsupported.
-  const animations = target.getAnimations?.() ?? [];
+  const animations = (target.getAnimations?.() ?? []).filter(effect =>
+    (effect as Partial<CSSAnimation>).animationName === "ae-route-neutral");
   if (!animations.length) {
     clear();
     return;
