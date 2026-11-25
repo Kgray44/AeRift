@@ -16,7 +16,7 @@ async (page) => {
     check(await heading.evaluate(el => el === document.activeElement), name + " focus");
   }
   const config = async () => {
-    await page.getByRole("button", { name: "Control Center", exact: true }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     return page.getByRole("dialog", { name: "Control Center" });
   };
   const screenshot = name => page.screenshot({ path: "docs/validation/evidence/mobile-workspace/" + name + ".png", animations: "disabled" });
@@ -100,7 +100,7 @@ async (page) => {
       const box = i.getBoundingClientRect();
       return [box.left, box.right, box.top, box.bottom, box.width, box.height];
     }));
-    check(buttons.length === 5, "all five routes at " + width);
+    check(buttons.length === 6, "all routes plus Settings at " + width);
     check(buttons.every(([l, r, t, b, w, h]) => l >= 0 && r <= width && t >= 0 && b <= height && w >= 44 && h >= 44), "dock bounds and touch targets at " + width);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "no sideways scrolling at " + width);
     if (width === 1024) await screenshot("dark-home-1024");

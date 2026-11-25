@@ -171,6 +171,7 @@ impl<C: Connector> Sender<C> {
             return Err(ErrorCode::InvalidRequest.into());
         }
         let revoked = self.connector.trust_revoked().unwrap_or_default();
+        let stop_requested = || cancel.is_cancelled() || revoked.is_cancelled();
         let stop = async {
             tokio::select! {
                 _ = cancel.cancelled() => {},
@@ -190,17 +191,25 @@ impl<C: Connector> Sender<C> {
             progress(id, status);
         });
         let result = {
-            let run = self.run(offer.clone(), file, frozen, Arc::clone(&progress), check);
+            let run = self.run(
+                offer.clone(),
+                file,
+                frozen,
+                Arc::clone(&progress),
+                check,
+                &stop_requested,
+            );
             tokio::pin!(run);
             tokio::select! {
                 biased;
                 // Keep the upload socket open but stop polling it until DELETE has
                 // reached the receiver. Otherwise EOF could race the cancellation.
-                _ = &mut stop => match self.cancel(id).await {
-                    Ok(status) if status.state == State::Completed => Ok(status),
-                    _ => Ok(Status { state: State::Cancelled, bytes_transferred: sent.load(Ordering::Relaxed), error: None }),
+                _ = &mut stop => Ok(self.cancel_in_flight(id, &sent).await),
+                result = &mut run => match result {
+                    Err(error) if error.code == ErrorCode::Cancelled && stop_requested() =>
+                        Ok(self.cancel_in_flight(id, &sent).await),
+                    result => result,
                 },
-                result = &mut run => result,
             }
         };
         let mut final_status = match result {
@@ -229,6 +238,17 @@ impl<C: Connector> Sender<C> {
         }
         progress(id, final_status);
         Ok(final_status)
+    }
+
+    async fn cancel_in_flight(&self, id: Uuid, sent: &AtomicU64) -> Status {
+        match self.cancel(id).await {
+            Ok(status) if status.state == State::Completed => status,
+            _ => Status {
+                state: State::Cancelled,
+                bytes_transferred: sent.load(Ordering::Relaxed),
+                error: None,
+            },
+        }
     }
 
     pub async fn status(&self, id: Uuid) -> Result<Status, TransferError> {
@@ -299,6 +319,7 @@ impl<C: Connector> Sender<C> {
         frozen: Option<FrozenBlocks>,
         progress: Progress,
         check: Option<AuthorityCheck>,
+        stop_requested: &(impl Fn() -> bool + Sync),
     ) -> Result<Status, TransferError> {
         if let Some(allowed) = &check {
             allowed()?;
@@ -329,6 +350,12 @@ impl<C: Connector> Sender<C> {
             return Err(ErrorCode::Conflict.into());
         }
 
+        // An Accepted progress observer may synchronously stop the send.
+        // The outer select is not polled again until this task yields, so
+        // check before opening the payload connection in this same poll.
+        if stop_requested() {
+            return Err(ErrorCode::Cancelled.into());
+        }
         if let Some(allowed) = &check {
             allowed()?;
         }

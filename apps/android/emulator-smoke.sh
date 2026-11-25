@@ -161,10 +161,16 @@ with open(sys.argv[1], "wb") as image:
     image.write(b"\x89PNG\x0D\x0A\x1A\x0A" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
                 + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 PY_PNG
+  # The API 36 image's content CLI does not accept --extra for query.
+  # MediaStore.setIncludePending() appends this URI parameter, which AOSP's
+  # MediaProvider translates to MATCH_INCLUDE. This stays fixture-only.
+  # https://android.googlesource.com/platform/packages/providers/MediaProvider/+/57c15117b/apex/framework/java/android/provider/MediaStore.java
+  # https://android.googlesource.com/platform/packages/providers/MediaProvider/+/f24cf9963/src/com/android/providers/media/MediaProvider.java
+  pending_collection="${collection}?includePending=1"
   lookup_photos() {
     local output error="$tmp/media-query.err" status=0
-    output="$(adb -s "$serial" shell content query --uri "$collection" --projection '_id:_display_name' \
-      "$@" 2>"$error" | tr -d '\r')" || status=$?
+    output="$(adb -s "$serial" shell content query --uri "'$1'" --projection '_id:_display_name:is_pending' \
+       2>"$error" | tr -d '\r')" || status=$?
     # AOSP content can report parser/provider failures without a nonzero exit
     # status. Classify only: never print raw media rows or provider output.
     local kind=unrecognized
@@ -187,13 +193,13 @@ PY_PNG
     return 1
   }
   photo_stage 'confirm visible MediaStore image inventory is empty'
-  if ! row="$(lookup_photos)"; then exit 1; fi
+  if ! row="$(lookup_photos "$collection")"; then exit 1; fi
   if [[ "$row" != 'No result found.' ]]; then
     echo 'Refusing Photos smoke: the fresh MediaStore already has visible images.' >&2
     exit 1
   fi
   photo_stage 'confirm MediaStore image inventory including pending is empty'
-  if ! row="$(lookup_photos --extra 'android:query-arg-match-pending:i:1')"; then exit 1; fi
+  if ! row="$(lookup_photos "$pending_collection")"; then exit 1; fi
   if [[ "$row" != 'No result found.' ]]; then
     echo 'Refusing Photos smoke: the fresh MediaStore already has pending images.' >&2
     exit 1
@@ -202,15 +208,28 @@ PY_PNG
   adb -s "$serial" shell content insert --uri "$collection" \
     --bind "_display_name:s:$photo_name" --bind mime_type:s:image/png \
     --bind relative_path:s:Pictures/AeRift-CI/ --bind is_pending:i:1 >"$tmp/media-insert.out" 2>"$tmp/media-insert.err"
-  if ! row="$(lookup_photos --extra 'android:query-arg-match-pending:i:1')"; then exit 1; fi
-  if ! [[ "$row" =~ ^Row:[[:space:]]0[[:space:]]_id=([0-9]+),[[:space:]]_display_name=AeRift-Android-photo-smoke\.png$ ]]; then
+  if ! row="$(lookup_photos "$pending_collection")"; then exit 1; fi
+  if ! [[ "$row" =~ ^Row:[[:space:]]0[[:space:]]_id=([0-9]+),[[:space:]]_display_name=AeRift-Android-photo-smoke\.png,[[:space:]]is_pending=1$ ]]; then
     echo 'Refusing Photos smoke: insert did not yield exactly the owned synthetic fixture.' >&2
     exit 1
   fi
-  photo_uri="$collection/${BASH_REMATCH[1]}"
+  photo_id="${BASH_REMATCH[1]}"
+  photo_uri="$collection/$photo_id"
+  # Prove the pending URI changed what the provider exposed, not merely that
+  # it accepted an ignored query parameter. No picker opens on discrepancy.
+  if ! row="$(lookup_photos "$collection")"; then exit 1; fi
+  if [[ "$row" != 'No result found.' ]]; then
+    echo 'Refusing Photos smoke: a pending fixture became visible before publication.' >&2
+    exit 1
+  fi
   photo_stage 'publish and verify fixture bytes'
   adb -s "$serial" shell -T content write --uri "$photo_uri" < "$tmp/$photo_name"
   adb -s "$serial" shell content update --uri "$photo_uri" --bind is_pending:i:0
+  if ! row="$(lookup_photos "$collection")"; then exit 1; fi
+  if [[ "$row" != "Row: 0 _id=$photo_id, _display_name=$photo_name, is_pending=0" ]]; then
+    echo 'Refusing Photos smoke: the owned synthetic fixture is not the sole published image.' >&2
+    exit 1
+  fi
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-before.png"
   cmp "$tmp/$photo_name" "$tmp/source-before.png"
 

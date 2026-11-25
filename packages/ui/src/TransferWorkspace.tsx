@@ -77,7 +77,7 @@ export interface MobileTransferPresentation {
 }
 
 export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection, allowInbox = false,
-  navigationStart = "AeRift", navigationEnd, pairRequest, onPairingOpenChange,
+  navigationStart = "AeRift", navigationEnd, shellHeader, pairRequest, onPairingOpenChange,
   platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift, mobile, friendsRoster }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
@@ -87,6 +87,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   connection?: { generation: number; retry: () => void; onChange: (value: WorkspaceConnection) => void };
   navigationStart?: ReactNode;
   navigationEnd?: ReactNode;
+  shellHeader?: ReactNode;
   pairRequest?: number;
   onPairingOpenChange?: (open: boolean) => void;
   platform?: Platform;
@@ -642,7 +643,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   </section>;
 
   return <>
-    {!hosted && <><header className="ae-experience-nav" data-destination={destination} data-mobile-shell={!!mobile}>
+    {!hosted && <>{shellHeader ?? <header className="ae-experience-nav" data-destination={destination} data-mobile-shell={!!mobile}>
       <GlassSurface material="chrome" className="ae-nav-brand">{navigationStart}</GlassSurface>
       {!mobile && <GlassSurface material="chrome" className="ae-nav-destinations">
         <nav aria-label="AeRift destinations">
@@ -654,7 +655,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
         </nav>
       </GlassSurface>}
       {navigationEnd && <GlassSurface material="chrome" className="ae-nav-tools">{navigationEnd}</GlassSurface>}
-    </header>
+    </header>}
     <div className="ae-offer-notice">
       <span role="status">{!!incoming.length && <Button variant="quiet"
         aria-controls={transferRegionId}
