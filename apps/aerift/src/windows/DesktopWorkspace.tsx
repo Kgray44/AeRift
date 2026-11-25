@@ -4,6 +4,7 @@ import { Button, IconAction, Popover, SpatialIcon } from "@aerift/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
+import { WorkspaceDocumentsGallery } from "../WorkspaceDocumentsGallery";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
@@ -53,6 +54,21 @@ function AssetPreview({ object }: { object: DigitalObject }) {
     {object.kind === "video" && <video src={url} aria-label={object.name} controls preload="metadata" />}
     <a href={url} download={object.name}>Save a copy</a>
   </>;
+}
+
+async function exportDocumentCopy(id: string, name: string) {
+  const asset = await loadWorkspaceAsset(id);
+  if (!asset) return false;
+  const href = URL.createObjectURL(asset);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = name.replace(/[\u0000-\u001f\u007f/\\]/gu, "_") || "document";
+  document.body.append(link);
+  try { link.click(); } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 10_000);
+  }
+  return true;
 }
 
 const pageSize = 48;
@@ -138,7 +154,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     }
   }
 
-  function importFiles(files: File[], mediaOnly: boolean) {
+  async function importFiles(files: File[], mediaOnly: boolean): Promise<readonly string[]> {
     const additions: WorkspaceEntry[] = [];
     for (const file of files) {
       const kind = file.type.startsWith("image/") ? "photo" : file.type.startsWith("video/") ? "video" : "file";
@@ -146,8 +162,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       additions.push({ object: { ...newObject(file.name), kind: mediaOnly ? kind : "file",
         sizeBytes: file.size, mediaType: file.type || undefined }, asset: file });
     }
-    if (additions.length) void change(() => additions, `Imported ${additions.length} ${additions.length === 1 ? "item" : "items"}.`);
-    else if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
+    if (additions.length) {
+      const saved = await change(() => additions, `Imported ${additions.length} ${additions.length === 1 ? "item" : "items"}.`);
+      return saved ? additions.map(({ object }) => object.id) : [];
+    }
+    if (files.length) setError(section?.id === "documents" ? "Choose a supported document." : "Choose an image or video file.");
+    return [];
   }
 
   async function submit(event: FormEvent<HTMLFormElement>, kind: "url" | "collection") {
@@ -261,7 +281,16 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
       disabled={disabled} onSave={object => change(() => [{ object }], "")} onRemove={id => removeObjects([id])}
       onBack={workspace.back} heading={back => <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} desktop />}
       collectionSelection={selected} onCollectionSelect={select} />}
-    {current && section?.id !== "notes" && <div className="aerift-workspace-content">
+    {section?.id === "documents" && <WorkspaceDocumentsGallery
+      catalog={categoryItems.flatMap(({ object, hasAsset }) =>
+        object.kind === "file" && hasAsset ? [{id: object.id, name: object.name, sizeBytes: object.sizeBytes}] : [])}
+      scope="desktop" disabled={disabled} readAsset={loadWorkspaceAsset}
+      onImport={files => importFiles(files, false)} onRemove={id => removeObjects([id])}
+      onExport={row => exportDocumentCopy(row.id, row.name)}
+      onSelect={row => { select(row.id, !selected.includes(row.id)); return true; }}
+      selectLabel="Toggle collection selection"
+      emptyText="No documents here yet. Use the plus icon to import documents." />}
+    {current && section?.id !== "notes" && section?.id !== "documents" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
         onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
@@ -349,3 +378,4 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     </div>}
   </div>;
 }
+
