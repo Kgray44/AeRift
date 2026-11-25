@@ -2,13 +2,14 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import type {
   AppPort, AppSnapshot, ErrorCode, FileSelection, PairingInvitation, Platform, Result, Transfer, TransferRequest,
 } from "@aerift/app-contract";
+import type { FriendsSnapshot } from "@aerift/app-contract/friends";
 import { automaticGestureTarget } from "@aerift/gestures";
 import { Button, GlassSurface, TransferProgress } from "./components";
 import { TransferIsland } from "./TransferIsland";
 import { IconAction } from "./IconAction";
 import { Sheet, Toast } from "./overlays";
 import { PairingPanel, type PairingAction } from "./PairingPanel";
-import { offerTransfer, type TransferIntent } from "./send-action";
+import { offerTransfer, ordinaryWorkspaceDevices, type TransferIntent } from "./send-action";
 import { SpatialIcon, SpatialScene, type DiscoveryState } from "./SpatialScene";
 import { RiftExperience, RiftLink, TransferObject } from "./RiftExperience";
 import { environmentPhase, incomingObjectPhase, isTransferActive, objectPhase, readinessMatches, reconcileTransfers, selectRift, terminalTransition,
@@ -77,7 +78,7 @@ export interface MobileTransferPresentation {
 
 export function TransferWorkspace({ port, gesture, activityFooter, watchSelection, connection, allowInbox = false,
   navigationStart = "AeRift", navigationEnd, pairRequest, onPairingOpenChange,
-  platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift, mobile }: {
+  platform, discovery, discoveryNotice, allowDrop, desktopView, onOpenRift, mobile, friendsRoster }: {
   port: AppPort;
   gesture?: (controls: TransferControls) => ReactNode;
   activityFooter?: ReactNode;
@@ -95,6 +96,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   desktopView?: "rift" | "activity" | "hidden";
   onOpenRift?: () => void;
   mobile?: MobileTransferPresentation;
+  friendsRoster?: FriendsSnapshot;
 }) {
   const titleId = useId();
   const activityId = useId();
@@ -109,6 +111,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     : desktopView === "activity" ? "activity" : hosted ? "send" : localDestination;
   const riftVisible = desktopView !== "hidden" && destination === "send";
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
+  const liveFriendsRoster = useRef(friendsRoster);
+  useLayoutEffect(() => { liveFriendsRoster.current = friendsRoster; }, [friendsRoster]);
   const [watchError, setWatchError] = useState<string>();
   const [watchAttempt, setWatchAttempt] = useState(0);
   const retryGeneration = connection?.generation ?? watchAttempt;
@@ -264,7 +268,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
   const pendingPairs = snapshot?.pendingPairing ?? [];
   const pairingBusy = operations.get("pairing");
   const pairingDisabled = !snapshot || !!watchError;
-  const devices = snapshot?.devices ?? [];
+  const devices = ordinaryWorkspaceDevices(snapshot, friendsRoster);
   const chosen = devices.find(device => device.id === selectedId && device.paired);
   const target = chosen?.online ? chosen : undefined;
   const offerBlocked = selection && mobile?.offerBlockedReason?.(selection);
@@ -380,7 +384,7 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
     const request = Symbol();
     return run(composerKey, "send", session => {
       if (session.selection && mobile?.offerBlockedReason?.(session.selection)) return Promise.resolve(null);
-      const peer = session.snapshot?.devices.find(device => device.id === session.selectedId);
+      const peer = ordinaryWorkspaceDevices(session.snapshot, liveFriendsRoster.current).find(device => device.id === session.selectedId);
       const result = offerTransfer(port, peer, session.selection, captured);
       if (peer?.online && peer.paired && peer.id === captured.deviceId && session.selection?.selectionId === captured.selectionId) {
         const glyph = dockGlyph.current?.getBoundingClientRect();
@@ -406,7 +410,8 @@ export function TransferWorkspace({ port, gesture, activityFooter, watchSelectio
       const transfer = session.snapshot?.transfers.find(item => item.id === request.transferId);
       if (!transfer || (expectedPeer !== undefined && transfer.deviceId !== expectedPeer)) return Promise.resolve(null);
       if (chosenOffer !== undefined) {
-        const peer = session.snapshot?.devices.find(device => device.id === session.selectedId && device.paired && device.online);
+        const peer = ordinaryWorkspaceDevices(session.snapshot, liveFriendsRoster.current)
+          .find(device => device.id === session.selectedId && device.paired && device.online);
         const sendIntent = peer && session.selection ? { deviceId: peer.id, selectionId: session.selection.selectionId } : null;
         const offers = session.snapshot?.transfers
           .filter(item => item.direction === "incoming" && item.state === "pending")

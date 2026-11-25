@@ -29,14 +29,18 @@ export function WindowsFriendsSetup({ view, refresh }: { view: SetupView; refres
       if (result.ok) { next?.(result.value); refresh(); }
       else setMessage(result.error.code === "conflict" ? "An invitation is already active. Wait for it to expire before creating another." :
         "Couldn't complete this action. Check the invitation, private address, and expiration, then try again.");
+    } catch {
+      setMessage("Friends is temporarily unavailable. Try again.");
     } finally { setBusy(false); }
   }
-  return <details open>
-    <summary>Set up a private friendship</summary>
-    <p>Both people must be running AeRift on Windows and reachable on the same private network or VPN. No one is discovered automatically.</p>
-    <p>Your verification fingerprint: <code>{view.profile}</code></p>
-    <Button disabled={busy} onClick={() => void run<string>("card", undefined, setCard)}>Show my private contact card</Button>
-    {card && <label>Share this card privately with your friend<textarea readOnly value={card} /></label>}
+  return <div aria-label="Private friendship invitation">
+    <p>Exchange invitations privately. Both friends need AeRift for Windows and a reachable private network or VPN.</p>
+    <div className="ae-friends-actions">
+      <Button disabled={busy} onClick={() => void run<string>("card", undefined, setCard)}>Show my private contact card</Button>
+    </div>
+    {card && <label>Share this card privately with your friend<textarea readOnly value={card} spellCheck={false} /></label>}
+    <details><summary>My verification fingerprint</summary><code>{view.profile}</code></details>
+    <details><summary>Create an invitation</summary>
     <form onSubmit={event => {
       event.preventDefault();
       void run<string>("issue", { bindAddress: ip.trim(), recipientCard: recipientCard.trim() }, value => {
@@ -50,13 +54,16 @@ export function WindowsFriendsSetup({ view, refresh }: { view: SetupView; refres
         onChange={event => setIp(event.target.value)} placeholder="Your LAN or VPN IPv4 address" /></label>
       <Button type="submit" disabled={busy || !ip.trim() || !recipientCard.trim()}>Create targeted invitation</Button>
     </form>
-    {issued && <label>Your expiring invitation<textarea readOnly value={issued} /></label>}
-    {view.pendingRecipient && <section>
-      <p>Your intended recipient approved. Compare their full fingerprint with them privately:</p>
+    {issued && <label>Your expiring invitation<textarea readOnly value={issued} spellCheck={false} /></label>}
+    </details>
+    {view.pendingRecipient && <section aria-label="Friendship invitation awaiting approval">
+      <h4>Friendship awaiting approval</h4>
+      <p>Compare the recipient’s full fingerprint privately.</p>
       <code>{view.pendingRecipient.verification}</code>
       <Button disabled={busy} onClick={() => void run("answer", { id: view.pendingRecipient?.id, accept: true })}>Verify and approve friendship</Button>
       <Button variant="quiet" disabled={busy} onClick={() => void run("answer", { id: view.pendingRecipient?.id, accept: false }, () => setIssued(""))}>Decline</Button>
     </section>}
+    <details><summary>Review an invitation</summary>
     <form onSubmit={event => {
       event.preventDefault();
       void run<Review>("review", { invitation: invitation.trim() }, setReview);
@@ -75,6 +82,7 @@ export function WindowsFriendsSetup({ view, refresh }: { view: SetupView; refres
         else setMessage("Waiting for the inviter to approve. Check again before the invitation expires.");
       })}>Check inviter approval and finish</Button>}
     </section>}
+    </details>
     {message && <p role="status">{message}</p>}
-  </details>;
+  </div>;
 }
