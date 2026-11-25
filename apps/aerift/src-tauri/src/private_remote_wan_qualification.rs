@@ -91,7 +91,7 @@ fn allowed_document(url: &tauri::Url) -> bool {
 
 enum PreviewController {
     Live(QualificationController),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "private-remote-wan-webview-smoke"))]
     OfflineSmoke {
         profile: Mutex<Option<PrivateRemoteProfile>>,
         card: String,
@@ -102,7 +102,7 @@ impl PreviewController {
     async fn stop(&self) -> io::Result<()> {
         match self {
             Self::Live(live) => live.stop().await,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "private-remote-wan-webview-smoke"))]
             Self::OfflineSmoke { profile, .. } => {
                 drop(profile.lock().map_err(|_| io::ErrorKind::Other)?.take());
                 Ok(())
@@ -122,7 +122,7 @@ async fn private_wan_action(
     let controller = window.state::<Arc<PreviewController>>().inner().clone();
     let live = match controller.as_ref() {
         PreviewController::Live(live) => live,
-        #[cfg(test)]
+        #[cfg(all(test, feature = "private-remote-wan-webview-smoke"))]
         PreviewController::OfflineSmoke { card, .. } => {
             return match action {
                 QualificationAction::Snapshot {} => Ok(QualificationReply::Snapshot {
@@ -325,7 +325,7 @@ fn run_qualification_app(app: App<Wry>, session: ActiveSession, gate: Arc<ExitGa
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "private-remote-wan-webview-smoke"))]
 #[path = "private_remote_wan_windows_smoke.rs"]
 mod windows_smoke;
 

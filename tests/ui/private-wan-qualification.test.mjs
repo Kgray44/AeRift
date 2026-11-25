@@ -126,8 +126,14 @@ test("offline card diverts before relay or app construction and exposes no rende
 test("the native WebView smoke is ignored, test-only, and has no online fixture", () => {
   const native = readFileSync(new URL("../private_remote_wan_qualification.rs", assets), "utf8");
   const smoke = readFileSync(new URL("../private_remote_wan_windows_smoke.rs", assets), "utf8");
-  assert.match(native, /#\[cfg\(test\)\]\s*#\[path = "private_remote_wan_windows_smoke.rs"\]\s*mod windows_smoke;/);
-  assert.match(native, /#\[cfg\(test\)\]\s*OfflineSmoke \{/);
+  const manifest = readFileSync(new URL("../../Cargo.toml", assets), "utf8");
+  assert.match(manifest, /^private-remote-wan-webview-smoke = \["private-remote-wan-host"\]$/m);
+  assert.doesNotMatch(manifest, /^private-remote-wan-host = .*private-remote-wan-webview-smoke/m);
+  assert.match(native, /#\[cfg\(all\(test, feature = "private-remote-wan-webview-smoke"\)\)\]\s*#\[path = "private_remote_wan_windows_smoke.rs"\]\s*mod windows_smoke;/);
+  for (const branch of ["OfflineSmoke {", "Self::OfflineSmoke {", "PreviewController::OfflineSmoke {"]) {
+    const at = native.indexOf(branch);
+    assert.match(native.slice(at - 110, at), /#\[cfg\(all\(test, feature = "private-remote-wan-webview-smoke"\)\)\]\s*$/);
+  }
   assert.doesNotMatch(native, /private_wan_smoke_report|AERIFT_DISPOSABLE_WINDOWS_WAN_SMOKE/);
   assert.match(smoke, /#\[ignore = /);
   assert.match(smoke, /OPERATOR_RELAY\.is_none\(\)/);

@@ -42,6 +42,11 @@ jobs:
           AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
             AERIFT_WORKSPACE_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
             node tests/ui/workspace-browser.mjs
+          AERIFT_FRIENDS_PLAYWRIGHT="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            AERIFT_FRIENDS_URL=http://127.0.0.1:4175 \
+            AERIFT_FRIENDS_SCREENSHOT="$RUNNER_TEMP/aerift-workspace-evidence/friends-desktop.png" \
+            AERIFT_FRIENDS_PAIR_SCREENSHOT="$RUNNER_TEMP/aerift-workspace-evidence/friends-invitation.png" \
+            node tests/ui/friends-browser.mjs
       - name: Verify the installed desktop frontend entry with native calls simulated
         run: |
           npm --workspace @aerift/app run dev -- --host 127.0.0.1 --port 4176 --strictPort > "$RUNNER_TEMP/aerift-app-vite.log" 2>&1 &

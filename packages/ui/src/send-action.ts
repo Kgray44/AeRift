@@ -1,4 +1,12 @@
-import type { AppPort, Device, FileSelection } from "@aerift/app-contract";
+import type { AppPort, AppSnapshot, Device, FileSelection } from "@aerift/app-contract";
+
+import { ordinaryDevices, type FriendsSnapshot } from "@aerift/app-contract/friends";
+
+/** Windows also loads its verified Friends roster through a separate native command. */
+export function ordinaryWorkspaceDevices(snapshot: Pick<AppSnapshot, "devices" | "friends"> | undefined,
+  separateRoster?: FriendsSnapshot): readonly Device[] {
+  return ordinaryDevices(ordinaryDevices(snapshot?.devices ?? [], snapshot?.friends), separateRoster);
+}
 
 export interface TransferIntent {
   readonly deviceId: string;

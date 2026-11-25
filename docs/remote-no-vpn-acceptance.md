@@ -278,8 +278,11 @@ The ignored Windows unit-test target
 `windows_wan_preview_smoke_without_transport` runs the actual Wry document,
 embedded stylesheet/script, exact window and navigation scope, and
 `private_wan_action` bridge in a disposable Windows profile. The synthetic
-controller and observer command compile only with Rust's `cfg(test)`; there
-is no CLI fixture flag or production path to select them. The test-only
+controller and observer command compile only with both Rust's `cfg(test)` and
+the separate opt-in `private-remote-wan-webview-smoke` feature. The ordinary
+`private-remote-wan-host` test executable omits the mock, renderer probe, and
+smoke runtime linkage. Merely marking a test ignored does not remove its imports
+from the Windows loader. There is no CLI fixture flag or production path. The test-only
 controller exposes a real offline DPAPI-derived **public** card for the
 synthetic profile and denies every operation except Snapshot. It creates no
 WAN endpoint, relay, receive folder, staging, trust record, or external URL
@@ -289,7 +292,10 @@ permitted or blocked without either case sending a network request.
 Only after separate approval, give a disposable hosted Windows runner its
 normal WebView2 installation and a fresh synthetic user context. Build
 the normal bundled frontend and compile the test while
-`AERIFT_TRUSTED_QUALIFICATION_RELAY` is absent. Stage dependencies first and
+`AERIFT_TRUSTED_QUALIFICATION_RELAY` is absent. To type-check the separately
+compiled target without linking or launching it, use
+`cargo check --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-webview-smoke --tests`.
+Leave existing mandatory DPAPI/origin tests on `private-remote-wan-host` only. Stage dependencies first and
 disconnect test execution from external networks; browser startup flags are
 not an egress policy. From that isolated native test lane (GitHub Actions
 provides `GITHUB_ACTIONS=true`):
@@ -297,7 +303,7 @@ provides `GITHUB_ACTIONS=true`):
 ```powershell
 Remove-Item Env:AERIFT_TRUSTED_QUALIFICATION_RELAY -ErrorAction SilentlyContinue
 $env:AERIFT_DISPOSABLE_WINDOWS_WAN_SMOKE = '1'
-cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-host --lib windows_wan_preview_smoke_without_transport -- --ignored --nocapture
+cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-webview-smoke --lib windows_wan_preview_smoke_without_transport -- --ignored --nocapture
 ```
 
 Use a bounded job timeout and retain only pass/fail, not the synthetic card,

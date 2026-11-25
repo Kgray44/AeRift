@@ -20,6 +20,9 @@ ambient-native-model-qualification = ["dep:sha2", "windows-sys/Win32_System_Libr
 ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "dep:windows-core"]
 private-remote-host = []
 private-remote-wan-host = ["dep:aerift-remote-wan"]
+# Separate from the qualification lib-test binary so the ignored native WebView
+# smoke is not linked into its ordinary DPAPI/origin tests.
+private-remote-wan-webview-smoke = ["private-remote-wan-host"]
 private-remote-app = ["tauri/custom-protocol"]
 
 [[example]]
