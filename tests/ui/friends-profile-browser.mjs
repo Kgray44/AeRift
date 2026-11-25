@@ -28,7 +28,9 @@ export async function verifyFriendProfiles(browser, base) {
   const page = await browser.newPage({ viewport: { width: 1060, height: 850 } });
   try {
     await page.goto(base + "/desktop-visual.html?route=friends&friendsFixture=1");
-    const editOwn = page.getByRole("button", { name: "Edit my profile" });
+    const ownRow = page.locator(".ae-friends-list .ae-friends-own");
+    const ownName = ownRow.locator("strong");
+    const editOwn = ownRow.getByRole("button", { name: "Edit my profile" });
     await editOwn.click();
     const own = page.getByRole("dialog", { name: "My profile" });
     await own.getByLabel("Display name").fill("Field researcher");
@@ -36,14 +38,19 @@ export async function verifyFriendProfiles(browser, base) {
     await own.getByRole("tab", { name: "Glass styles" }).click();
     assert.equal(await own.locator(".ae-profile-choice").count(), 6);
     await own.getByRole("button", { name: "Sea glass" }).click();
+    await own.locator(".ae-profile-summary").getByText("Scout", { exact: true }).waitFor();
+    assert.equal(await own.locator(".ae-profile-summary .ae-profile-badge").getAttribute("data-style"), "reef");
     await own.getByRole("button", { name: "Save profile" }).click();
     await own.waitFor({ state: "hidden" });
-    await page.getByText("Scout", { exact: true }).waitFor();
+    await ownName.filter({ hasText: /^Scout$/ }).waitFor();
+    assert.equal(await ownRow.locator(".ae-profile-badge").getAttribute("data-style"), "reef");
 
     await page.getByRole("button", { name: "Test contact A" }).click();
     await page.getByRole("button", { name: "Edit friend appearance" }).click();
     const friend = page.getByRole("dialog", { name: "Edit friend appearance" });
-    assert.equal(await friend.getByText("Test contact A", { exact: true }).count(), 2);
+    const friendSummary = friend.locator(".ae-profile-summary");
+    await friendSummary.locator("strong").filter({ hasText: /^Test contact A$/ }).waitFor();
+    await friendSummary.locator("small b").filter({ hasText: /^Test contact A$/ }).waitFor();
     await friend.getByLabel("Name on this device").fill("Field teammate");
     await friend.getByLabel("Nickname (optional)").fill("Fox");
     await friend.getByRole("tab", { name: "Recently received" }).click();
@@ -53,24 +60,28 @@ export async function verifyFriendProfiles(browser, base) {
     await file.setInputFiles({ name: "invalid.png", mimeType: "image/png", buffer: Buffer.from("not a raster") });
     await friend.getByRole("alert").waitFor();
     await file.setInputFiles({ name: "avatar.png", mimeType: "image/png", buffer: pixel() });
-    await friend.locator(".ae-profile-summary img").waitFor();
-    const preview = friend.locator(".ae-profile-summary img");
+    const preview = friendSummary.locator("img");
+    await preview.waitFor();
     assert.match(await preview.getAttribute("src"), /^blob:/);
     await preview.evaluate(img => img.decode());
     assert.equal(await preview.evaluate(img => img.naturalWidth), 192);
     await friend.getByRole("button", { name: "Save appearance" }).click();
     await friend.waitFor({ state: "hidden" });
-    await page.getByRole("heading", { name: "Fox" }).waitFor();
-    await page.getByText("Verified as Test contact A").waitFor();
+    const contactPanel = page.locator(".ae-friends-detail .ae-friends-contact-heading");
+    await contactPanel.getByRole("heading", { name: "Fox", exact: true }).waitFor();
+    await contactPanel.getByText("Verified as Test contact A", { exact: true }).waitFor();
+    await page.locator(".ae-friends-roster").getByRole("button", { name: "Fox", exact: true }).waitFor();
     await page.reload();
-    await page.getByRole("button", { name: "Fox" }).click();
-    await page.getByRole("heading", { name: "Fox" }).waitFor();
-    const savedPhoto = page.locator(".ae-friends-contact-heading img");
+    await ownName.filter({ hasText: /^Scout$/ }).waitFor();
+    await page.locator(".ae-friends-roster").getByRole("button", { name: "Fox", exact: true }).click();
+    await contactPanel.getByRole("heading", { name: "Fox", exact: true }).waitFor();
+    const savedPhoto = contactPanel.locator("img");
     await savedPhoto.waitFor();
     assert.match(await savedPhoto.getAttribute("src"), /^blob:/);
     await page.getByRole("button", { name: "Edit friend appearance" }).click();
     await friend.getByRole("button", { name: "Reset to default" }).click();
     await friend.getByRole("button", { name: "Save appearance" }).click();
-    await page.getByRole("heading", { name: "Test contact A" }).waitFor();
+    await friend.waitFor({ state: "hidden" });
+    await contactPanel.getByRole("heading", { name: "Test contact A", exact: true }).waitFor();
   } finally { await page.close(); }
 }

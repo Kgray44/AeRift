@@ -6,6 +6,10 @@ const playwright = process.env.AERIFT_FRIENDS_PLAYWRIGHT;
 const { chromium } = await import(playwright ? pathToFileURL(resolve(playwright)).href : "playwright");
 const browser = await chromium.launch({ executablePath: process.env.AERIFT_FRIENDS_BROWSER });
 const base = process.env.AERIFT_FRIENDS_URL ?? "http://127.0.0.1:47782";
+const waitForButtonFocus = (page, label) => page.waitForFunction(
+  expected => document.activeElement?.matches("button") && document.activeElement.getAttribute("aria-label") === expected,
+  label,
+);
 try {
   const desktop = await browser.newPage({ viewport: { width: 1250, height: 900 } });
   await desktop.goto(base + "/desktop-visual.html?route=friends&friendsFixture=1");
@@ -46,7 +50,7 @@ try {
   await pairDialog.waitFor();
   await pairDialog.getByRole("button", { name: "Close Friends" }).click();
   await pairDialog.waitFor({ state: "hidden" });
-  assert.equal(await addFriend.evaluate(node => document.activeElement === node), true, "closing restores focus to the glass plus");
+  await waitForButtonFocus(desktop, "Add a friend");
   await desktop.getByRole("button", { name: "Send a file to Test contact A" }).click();
   await desktop.getByRole("heading", { name: "Private transfers" }).waitFor();
   await desktop.getByLabel("Your reachable private IPv4 address").fill("100.64.0.1");
@@ -105,7 +109,7 @@ try {
   await studio.waitFor();
   assert.equal(await phone.getByText("Test phone", { exact: true }).count(), 0,
     "the active ordinary picker excludes Friends devices too");
-  const manual = phone.getByRole("region", { name: "Manual transfer" });
+  const manual = phone.getByRole("region", { name: "Manual transfer", exact: true });
   await manual.getByRole("button", { name: "Choose another file" }).click();
   await manual.getByText("Harbor survey.pdf", { exact: true }).waitFor();
   await studio.click();
@@ -126,7 +130,7 @@ try {
   assert.equal(await mobilePair.getByLabel("Private invitation", { exact: true }).inputValue(), "test-fixture");
   await mobilePair.getByRole("button", { name: "Close Friends" }).click();
   await mobilePair.waitFor({ state: "hidden" });
-  assert.equal(await mobileAddFriend.evaluate(node => document.activeElement === node), true);
+  await waitForButtonFocus(phone, "Add a friend");
   await phone.getByRole("button", { name: "Test contact A" }).click();
   assert.equal(await phone.getByRole("button", { name: "Test contact B" }).isVisible(), false);
   assert.equal(await phone.getByRole("heading", { name: "Test contact A" }).evaluate(node => document.activeElement === node), true);
@@ -134,9 +138,10 @@ try {
   await phone.getByRole("region", { name: "Send to friend" }).getByRole("combobox", { name: /^Send to/ }).selectOption("friend-phone");
   await phone.getByRole("button", { name: "File", exact: true }).click();
   await phone.getByRole("button", { name: "Send offer" }).click();
-  await phone.getByText("Synthetic sample · queued").waitFor();
-  await phone.getByRole("button", { name: "Accept", exact: true }).click();
-  await phone.getByText("Incoming fixture · accepted").waitFor();
+  const friendTransfers = phone.getByRole("region", { name: "Pending transfers and history", exact: true });
+  await friendTransfers.getByText("Synthetic sample · queued", { exact: true }).waitFor();
+  await friendTransfers.getByRole("button", { name: "Accept", exact: true }).click();
+  await friendTransfers.getByText("Incoming fixture · accepted", { exact: true }).waitFor();
   await phone.getByRole("button", { name: "Back to friends" }).click();
   await phone.getByRole("button", { name: "Test contact B" }).click();
   assert.equal(await phone.locator(".ae-friends-detail option").count(), 2);
