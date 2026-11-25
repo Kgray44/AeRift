@@ -1,5 +1,9 @@
 import type { Transfer } from "@aerift/app-contract";
 
+export type TransferIslandReceipt = Pick<Transfer, "id" | "direction" | "state" | "file" | "bytesTransferred"> & {
+  kind?: "file" | "folder";
+};
+
 export const transferMetricStaleMs = 4_000;
 const minimumSampleMs = 250;
 const smoothingMs = 1_500;
@@ -12,7 +16,7 @@ export interface TransferMetricSample {
   rate?: number;
 }
 
-export function activeIslandTransfers(transfers: readonly Transfer[]) {
+export function activeIslandTransfers(transfers: readonly TransferIslandReceipt[]) {
   return transfers.filter(transfer => transfer.state === "transferring");
 }
 
@@ -20,12 +24,12 @@ function validBytes(bytes: number) {
   return Number.isFinite(bytes) && bytes >= 0;
 }
 
-function totalFor(transfer: Transfer) {
+function totalFor(transfer: TransferIslandReceipt) {
   const size = transfer.file.sizeBytes;
   return validBytes(size) && size > 0 ? size : undefined;
 }
 
-function observedFor(transfer: Transfer) {
+function observedFor(transfer: TransferIslandReceipt) {
   const received = transfer.bytesTransferred;
   if (!validBytes(received)) return undefined;
   return Math.min(received, totalFor(transfer) ?? Infinity);
@@ -38,7 +42,7 @@ function initial(bytes: number, now: number): TransferMetricSample {
 // These samples describe native I/O, not the cadence of UI renders or receipt polls.
 export function observeIslandTransfers(
   previous: ReadonlyMap<string, TransferMetricSample>,
-  active: readonly Transfer[],
+  active: readonly TransferIslandReceipt[],
   now: number,
 ): ReadonlyMap<string, TransferMetricSample> {
   const next = new Map<string, TransferMetricSample>();
@@ -73,7 +77,7 @@ export function observeIslandTransfers(
   return next;
 }
 
-export function readIslandMetrics(transfer: Transfer, sample: TransferMetricSample | undefined, now: number) {
+export function readIslandMetrics(transfer: TransferIslandReceipt, sample: TransferMetricSample | undefined, now: number) {
   const total = totalFor(transfer);
   const bytes = observedFor(transfer);
   if (total === undefined || bytes === undefined) return {};
@@ -84,7 +88,7 @@ export function readIslandMetrics(transfer: Transfer, sample: TransferMetricSamp
   return { percent, bytesPerSecond: sample.rate, seconds: (total - bytes) / sample.rate };
 }
 
-export function transferIslandSummary(active: readonly Transfer[]) {
+export function transferIslandSummary(active: readonly TransferIslandReceipt[]) {
   const incoming = active.filter(transfer => transfer.direction === "incoming").length;
   const count = active.length;
   let total = 0;

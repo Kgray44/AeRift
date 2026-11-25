@@ -305,6 +305,55 @@ try {
     await page.locator(".ae-transfer-island[data-ae-lens='sampled']").waitFor({ state: "detached" });
     await page.close();
   }
+  const remote = await browser.newPage({ viewport: { width: 1280, height: 900 },
+    colorScheme: "dark", reducedMotion: "reduce" });
+  await remote.goto(root + "/desktop-visual.html?privateRemoteIsland=1&scheme=dark");
+  const activeRemote = remote.getByRole("complementary", { name: "Active transfers", exact: true });
+  await remote.getByText("Tidal charts.pdf", { exact: true }).waitFor();
+  assert.equal(await activeRemote.count(), 0, "the accepted Remote offer has no data progress yet");
+  await remote.evaluate(() => window.setRemoteIslandFixture("transferring", 1200));
+  const fileProgress = activeRemote.getByRole("progressbar", { name: "Receiving Tidal charts.pdf", exact: true });
+  const folderProgress = activeRemote.getByRole("progressbar", { name: "Receiving Field recordings", exact: true });
+  await folderProgress.waitFor();
+  await fileProgress.waitFor();
+  assert.equal(await fileProgress.getAttribute("aria-valuenow"), "30");
+  assert.equal(await folderProgress.getAttribute("aria-valuenow"), "30");
+  assert.equal(await activeRemote.getByText("2 items", { exact: true }).count(), 1);
+  await snapped(remote, "desktop-private-remote-receive-island");
+  await remote.evaluate(() => window.setRemoteIslandFixture("transferring", 4000));
+  await activeRemote.getByText("Checking staged bytes · save separately", { exact: true }).waitFor();
+  assert.equal(await folderProgress.getAttribute("aria-valuenow"), "100");
+  assert.equal(await remote.getByText("Saved to the destination you chose.", { exact: true }).count(), 0);
+  await remote.evaluate(() => window.setRemoteIslandFixture("completed", 4000));
+  await activeRemote.waitFor({ state: "hidden" });
+  await remote.getByText("Folder data verified. Not exported yet.", { exact: true }).waitFor();
+  await button(remote, "Save verified folder without replacing files").waitFor();
+  await remote.getByLabel("Other device’s VPN address and port").fill("100.88.1.2:48888");
+  for (const kind of ["file", "folder"]) {
+    const recipientLabel = kind === "file" ? "Authorized recipient" : "Folder recipient";
+    await remote.getByLabel(recipientLabel, { exact: true }).selectOption({ index: 1 });
+    await button(remote, "Choose " + kind + " to send").click();
+    const progress = (state, bytes) => remote.evaluate(([phase, n]) => window.remoteUploadFixture.progress(phase, n), [state, bytes]);
+    assert.equal(await progress("accepted", 0), true);
+    assert.equal(await activeRemote.count(), 0);
+    assert.equal(await progress("transferring", 1600), true);
+    const outgoingName = kind === "file" ? "Outgoing survey.wav" : "Outgoing folder";
+    const outgoing = activeRemote.getByRole("progressbar", { name: "Sending " + outgoingName, exact: true });
+    await outgoing.waitFor();
+    assert.equal(await outgoing.getAttribute("aria-valuenow"), "40");
+    await progress("transferring", 4000);
+    await activeRemote.getByText(kind === "file" ? "Awaiting verification" :
+      "Recipient checking staged bytes · export is separate", { exact: true }).waitFor();
+    assert.equal(await outgoing.getAttribute("aria-valuenow"), "100");
+    await remote.evaluate(() => window.remoteUploadFixture.finish());
+    await activeRemote.waitFor({ state: "hidden" });
+    await progress("transferring", 4000); // an obsolete callback cannot resurrect a finished operation
+    await remote.getByText(kind === "file" ? "Delivered. The recipient verified the file." :
+      "The recipient verified the folder data. This is not confirmation that it was saved to their chosen location.", { exact: true }).waitFor();
+    assert.equal(await activeRemote.count(), 0);
+  }
+  await remote.close();
+
   console.log("Workspace browser journeys passed: desktop documents; iOS and narrow Android library, focus and dock");
 } finally {
   await browser.close();

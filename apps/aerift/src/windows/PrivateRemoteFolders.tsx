@@ -1,36 +1,53 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useVisibleNativeRefresh } from "./useVisibleNativeRefresh";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type Channel } from "@tauri-apps/api/core";
+import type { TransferIslandReceipt } from "@aerift/ui";
+import { usePrivateRemoteUpload } from "./usePrivateRemoteUpload";
+import type { IncomingRemoteFolder } from "./private-remote-island";
 
-type FolderItem = {
-  peerId: string; id: string; title: string; entries: number; sizeBytes: number;
-  status: { state: string; bytesTransferred: number };
-  destinationRetained: boolean; publishedTitle: string | null;
+type FolderItem = IncomingRemoteFolder & {
+  entries: number; destinationRetained: boolean; publishedTitle: string | null;
 };
+const noIncoming: readonly FolderItem[] = [];
+const ignore = () => {};
 type Reply = { incoming: FolderItem[]; outgoingReceipt: { state: string } | null; differentDestinationVolume?: boolean };
 
-export function PrivateRemoteFolders({ peers, endpoint }: {
+export function PrivateRemoteFolders({ peers, endpoint, onIncomingChange, onOutgoingChange = ignore }: {
   peers: readonly { id: string; name: string }[];
   endpoint: string;
+  onIncomingChange?: (offers: readonly IncomingRemoteFolder[]) => void;
+  onOutgoingChange?: (receipt: TransferIslandReceipt | undefined) => void;
 }) {
+  const upload = usePrivateRemoteUpload("folder", onOutgoingChange);
   const [peerId, setPeerId] = useState("");
-  const [incoming, setIncoming] = useState<FolderItem[]>([]);
+  const [incoming, setIncoming] = useState<readonly FolderItem[]>(noIncoming);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const command = (action: Record<string, string>) =>
-    invoke<Reply>("windows_remote_folder_command", { action });
+  const command = (action: Record<string, string>, progress?: Channel<unknown>) =>
+    invoke<Reply>("windows_remote_folder_command", progress ? { action, progress } : { action });
+  function updateIncoming(offers: readonly FolderItem[]) {
+    setIncoming(offers);
+    onIncomingChange?.(offers);
+  }
+
+  useEffect(() => () => {
+    onIncomingChange?.(noIncoming);
+    onOutgoingChange(undefined);
+  }, [onIncomingChange, onOutgoingChange]);
+
   const refresh = useVisibleNativeRefresh("windows_remote_folder_command:inspect", 1000,
     () => command({ action: "inspect" }),
-    reply => setIncoming(reply.incoming),
-    () => setIncoming([]),
-    () => setIncoming([]),
+    reply => updateIncoming(reply.incoming),
+    () => updateIncoming(noIncoming),
+    () => updateIncoming(noIncoming),
   );
 
   function run(action: Record<string, string>) {
     if (busy) return;
     setBusy(true);
     setMessage(action.action === "pick_send" ? "Choose a folder and wait for the other device to accept." : "");
-    void command(action).then((reply) => {
+    const transfer = action.action === "pick_send" ? upload.begin() : undefined;
+    void command(action, transfer?.updates).then((reply) => {
       // A mutation result never races an earlier Inspect onto the screen.
       refresh();
       if (reply.differentDestinationVolume) {
@@ -43,7 +60,7 @@ export function PrivateRemoteFolders({ peers, endpoint }: {
     }).catch((error: { code?: string } | undefined) => {
       setMessage(error?.code === "cancelled" ? "Cancelled."
         : "The folder action could not finish. No successful export was reported.");
-    }).finally(() => setBusy(false));
+    }).finally(() => { transfer?.close(); setBusy(false); });
   }
 
   return <section aria-labelledby="remote-folder-heading">

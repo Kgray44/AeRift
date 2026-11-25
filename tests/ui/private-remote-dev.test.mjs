@@ -45,7 +45,7 @@ test("the installed Windows shell admits either Nearby or explicit Remote, not b
   assert.match(remote, /LaunchMode::Remote\(endpoint\) => Ok\(endpoint\)/);
   assert.match(remote, /invitation_peer\(&invite\)\? != expected_issuer/);
   assert.match(remote, /sender\(\s*&\[route\],\s*peer_id/);
-  assert.match(remote, /send_resumable_file\(&selected, name, stop/);
+  assert.match(remote, /send_resumable_file_with_manifest_progress\(\s*Uuid::new_v4\(\),\s*&selected,\s*name,\s*stop/);
   assert.match(settings, /type="submit" disabled=\{!mode \|\| !authorized/);
   assert.match(settings, /windows_exit_for_remote_mode/);
 });

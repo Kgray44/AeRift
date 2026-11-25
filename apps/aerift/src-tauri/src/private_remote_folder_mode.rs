@@ -2,8 +2,8 @@
 use super::*;
 use aerift_peers::RemoteFolderIngress;
 use aerift_transfer::{
-    ambient::{freeze, Candidate, CaptureContext, CaptureLimits},
-    folder::{commit_windows_folder, prepare_folder, WindowsFolderDirectory, WindowsFolderExport},
+    ambient::{Candidate, CaptureContext, CaptureLimits, freeze},
+    folder::{WindowsFolderDirectory, WindowsFolderExport, commit_windows_folder, prepare_folder},
 };
 use std::{collections::HashMap, path::Path};
 
@@ -93,8 +93,13 @@ struct FolderView {
 pub(crate) async fn windows_remote_folder_command(
     window: WebviewWindow,
     action: FolderAction,
+    progress: Option<JavaScriptChannelId>,
 ) -> Result<FolderReply, TransferError> {
     require_remote_origin(&window)?;
+    if progress.is_some() && !matches!(action, FolderAction::PickSend { .. }) {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    let observer = UploadObserver::new(window.clone(), progress);
     let runtime = window.state::<RemoteRuntime>();
     let (node, mode, stop, _profile) = {
         let session = runtime.session.lock().await;
@@ -148,6 +153,9 @@ pub(crate) async fn windows_remote_folder_command(
             })
             .await
             .map_err(|_| ErrorCode::InternalError)??;
+            let (title, total) = folder.progress_manifest();
+            let title = title.to_owned();
+            let observing_stop = stop.clone();
             result.outgoing_receipt = Some(
                 node.send_folder(
                     &[endpoint],
@@ -155,7 +163,9 @@ pub(crate) async fn windows_remote_folder_command(
                     &folder,
                     Uuid::new_v4(),
                     stop,
-                    |_, _| {},
+                    move |_, status| {
+                        observer.checkpoint(&observing_stop, "folder", &title, total, status)
+                    },
                 )
                 .await?,
             );
