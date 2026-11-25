@@ -20,6 +20,8 @@ use wry::{
 };
 
 use crate::workspace_browser_policy::BrowserPolicy;
+#[cfg(test)]
+use crate::workspace_browser_fixture::{ClosedFixture, Observations, DENIED, ORIGIN, START};
 
 #[derive(Debug)]
 pub(crate) enum SandboxError {
@@ -46,6 +48,28 @@ impl WorkspaceBrowserSandbox {
         policy: BrowserPolicy,
         initial_url: &str,
         bounds: Rect,
+    ) -> Result<Self, SandboxError> {
+        Self::open_inner(parent, scratch_root, policy, initial_url, bounds, #[cfg(test)] None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_fixture(
+        parent: &impl HasWindowHandle,
+        scratch_root: &Path,
+        bounds: Rect,
+        observations: Observations,
+    ) -> Result<Self, SandboxError> {
+        let policy = BrowserPolicy::from_approved_origins(&[ORIGIN]).ok_or(SandboxError::NotApproved)?;
+        Self::open_inner(parent, scratch_root, policy, START, bounds, Some(observations))
+    }
+
+    fn open_inner(
+        parent: &impl HasWindowHandle,
+        scratch_root: &Path,
+        policy: BrowserPolicy,
+        initial_url: &str,
+        bounds: Rect,
+        #[cfg(test)] observations: Option<Observations>,
     ) -> Result<Self, SandboxError> {
         let destination = policy.approved_url(initial_url).ok_or(SandboxError::NotApproved)?;
         const REPARSE_POINT: u32 = 0x400;
@@ -83,7 +107,9 @@ impl WorkspaceBrowserSandbox {
             .with_download_started_handler(|_, _| false)
             .build_as_child(parent)
             .map_err(|_| SandboxError::BrowserUnavailable)?;
-        install_native_guards(&view, profile.path(), policy.clone())?;
+        #[cfg(test)]
+        let fixture = observations.map(|value| ClosedFixture::new(&view, value));
+        install_native_guards(&view, profile.path(), policy.clone(), #[cfg(test)] fixture)?;
         view.load_url(destination.as_str()).map_err(|_| SandboxError::BrowserUnavailable)?;
         view.set_visible(true).map_err(|_| SandboxError::BrowserUnavailable)?;
         Ok(Self { view, _profile: profile, policy })
@@ -107,6 +133,7 @@ fn install_native_guards(
     view: &WebView,
     scratch: &Path,
     policy: BrowserPolicy,
+    #[cfg(test)] fixture: Option<ClosedFixture>,
 ) -> Result<(), SandboxError> {
     let failure = |_| SandboxError::SecurityControlsUnavailable;
     let browser = view.webview();
@@ -175,10 +202,27 @@ fn install_native_guards(
                 &WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
                     if let Some(args) = args {
                         let mut uri = PWSTR::null();
-                        let allowed = args.Request()
-                            .and_then(|request| request.Uri(&mut uri))
-                            .is_ok() && policy.approved_url(&take_pwstr(uri)).is_some();
-                        if !allowed { args.SetResponse(&blocked)?; }
+                        let raw = args.Request().and_then(|request| request.Uri(&mut uri))
+                            .ok().map(|()| take_pwstr(uri));
+                        let allowed = raw.as_deref().and_then(|uri| policy.approved_url(uri)).is_some();
+                        if !allowed {
+                            args.SetResponse(&blocked)?;
+                            #[cfg(test)]
+                            if let Some(fixture) = &fixture {
+                                if raw.as_deref() == Some(DENIED) {
+                                    fixture.observations.denied.set(fixture.observations.denied.get() + 1);
+                                }
+                            }
+                        } else {
+                            #[cfg(test)]
+                            if let (Some(fixture), Some(raw)) = (&fixture, raw.as_deref()) {
+                                // Set the closed response first: a failed synthetic stream
+                                // must never turn interception into an outbound request.
+                                args.SetResponse(&blocked)?;
+                                let response = fixture.response(raw)?;
+                                args.SetResponse(&response)?;
+                            }
+                        }
                     }
                     Ok(())
                 })),
