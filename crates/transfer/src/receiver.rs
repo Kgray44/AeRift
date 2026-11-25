@@ -1151,7 +1151,12 @@ mod tests {
         assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
         assert_eq!(rx.commit_resumable(key).unwrap().state, State::Completed);
         let receipt = rx.completed_receipt(key).unwrap();
-        assert_eq!(receipt.saved_path.as_ref(), Some(&final_path));
+        // Windows can return a pinned long path while TEMP uses a short alias.
+        // Both must resolve to the expected published file.
+        assert_eq!(
+            receipt.saved_path.as_ref().unwrap().canonicalize().unwrap(),
+            final_path.canonicalize().unwrap()
+        );
         assert_eq!(
             receipt.offer.sha256,
             format!("{:x}", Sha256::digest(&bytes))
