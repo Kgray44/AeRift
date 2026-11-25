@@ -36,3 +36,58 @@
 }
 .ae-destination-intent{color:var(--ae-muted);font-size:.88rem;line-height:1.45;max-inline-size:50ch;margin:.35rem 0 0}
 .aerift-ios .aw-focused-surface{padding:clamp(.78rem,4vw,1.25rem);border-radius:1.35rem}
+
+.aw-note-search,.aw-note-editor,.aw-note-preview{display:grid;gap:.65rem;min-inline-size:0}
+.aw-note-search{grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto;align-items:end;padding:.8rem}
+.aw-note-search label{display:grid;gap:.25rem;min-inline-size:0}
+.aw-note-search input,.aw-note-search select,.aw-note-editor textarea{box-sizing:border-box;min-inline-size:0;inline-size:100%}
+.aw-note-editor textarea{min-block-size:9rem;resize:vertical}
+.aw-note-editor [hidden]{display:none}
+.aw-note-preview{min-block-size:8rem;max-block-size:26rem;overflow:auto;padding:.9rem;overflow-wrap:anywhere}
+.aw-note-preview p,.aw-note-preview h4{margin:0;white-space:pre-wrap}
+.aw-note-preview code{white-space:pre-wrap}
+.aw-note-preview [data-note-line="done"]{text-decoration:line-through}
+.aw-note-footer{display:flex;gap:.6rem;align-items:center;justify-content:space-between;flex-wrap:wrap;color:var(--ae-muted)}
+.aw-note-footer label{display:inline-flex;align-items:center;gap:.35rem}
+@media(max-width:540px){.aw-note-search{grid-template-columns:minmax(0,1fr) auto}.aw-note-search label:first-child{grid-column:1/-1}.aw-note-toolbar{flex-wrap:wrap}}
+
+.aw-file-filter{padding:.8rem;min-inline-size:0}
+.aw-file-tools{display:grid;gap:.55rem;min-inline-size:0}
+.aw-file-tools form{align-items:end;flex-wrap:wrap}
+.aw-file-tools label{display:grid;gap:.25rem;min-inline-size:0}
+.aw-file-tools label:first-child{flex:1 1 11rem}
+.aw-file-tools input,.aw-file-tools select{box-sizing:border-box;inline-size:100%;min-inline-size:0}
+.aw-file-tools details summary{cursor:pointer;color:var(--ae-muted)}
+
+.aw-browser-tools{padding:.85rem;min-inline-size:0}
+.aw-browser-address{display:flex;align-items:end;gap:.65rem;flex-wrap:wrap}
+.aw-browser-address label{flex:1 1 14rem;display:grid;gap:.25rem;min-inline-size:0}
+.aw-browser-address input{inline-size:100%;min-inline-size:0;box-sizing:border-box}
+.aw-browser-remember{display:flex;align-items:center;gap:.42rem;margin-block:.8rem .3rem}
+.aw-browser-history{display:grid;gap:.35rem;list-style:none;padding:0}
+.aw-browser-history li{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;min-inline-size:0}
+.aw-browser-history button{white-space:normal;overflow-wrap:anywhere;min-inline-size:0;text-align:start}
+.aw-browser-history time{color:var(--ae-muted);font-size:.78rem}
+
+.ae-theme :is(.aw-note-search,.aw-note-editor,.aw-file-tools,.aw-browser-tools,.aw-collection-tools)
+  :is(input:not([type="checkbox"],[type="hidden"]),select,textarea){
+  border:1px solid var(--ae-display-edge,var(--ae-control-edge));border-radius:.78rem;
+  color:var(--ae-text);background:var(--ae-field);padding:.62rem .71rem;font:inherit;
+  min-block-size:2.75rem;max-inline-size:100%;
+}
+.ae-theme[data-ae-theme="glass"] :is(.aw-note-search,.aw-note-editor,.aw-file-tools,.aw-browser-tools,.aw-collection-tools)
+  :is(input:not([type="checkbox"],[type="hidden"]),select,textarea){
+  background:color-mix(in srgb,var(--ae-field) 60%,transparent);
+  box-shadow:inset 0 1px var(--ae-optical-rim);
+}
+.aw-note-editor .aw-note-toolbar{flex-wrap:wrap;gap:.38rem}
+.aw-note-editor .aw-note-toolbar .ae-button{min-block-size:2.75rem}
+.aw-note-editor .aw-note-toolbar .ae-button[data-variant="quiet"]:not(:disabled){border-color:var(--ae-control-edge)}
+.aw-note-editor .aw-note-footer .ae-button[aria-pressed="true"]{border-color:var(--ae-accent)}
+.aw-clipboard-tools,.aw-collection-tools{padding:.85rem;min-inline-size:0}
+.aw-clipboard-tools .ae-actions{align-items:end;flex-wrap:wrap}
+.aw-collection-members,.aw-collection-candidates{display:grid;gap:.35rem;padding-inline-start:1.25rem}
+.aw-collection-members li,.aw-collection-candidates li{overflow-wrap:anywhere}
+.aw-collection-members .ae-actions{flex-wrap:wrap}
+.aw-collection-candidates li .ae-button{margin-inline-start:.5rem}
+@media (forced-colors:active){.ae-theme[data-ae-theme="glass"] :is(.aw-note-search,.aw-note-editor,.aw-file-tools,.aw-browser-tools,.aw-collection-tools) :is(input,select,textarea){background:Canvas;color:CanvasText;border-color:ButtonText}}

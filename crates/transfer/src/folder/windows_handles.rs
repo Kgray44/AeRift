@@ -41,7 +41,7 @@ use windows_sys::{
 
 use crate::model::safe_name;
 
-// The normal app does not export or register these lab-only capabilities.
+// Explicit app-selected folder metadata; no file or child authority.
 #[cfg(any(test, feature = "windows-folder-picker-qualification"))]
 #[path = "windows_directory_page.rs"]
 mod directory_page;

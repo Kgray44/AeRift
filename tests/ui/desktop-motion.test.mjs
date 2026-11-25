@@ -12,12 +12,14 @@ test("desktop routes reuse the live Orbit content and defer to an active Orbit m
   assert.doesNotMatch(app, /<(?:OrbitSurface|TransferWorkspace|DesktopWorkspace)[^>]*\bkey=/);
 });
 
-test("desktop Workspace navigation preserves native disclosures and animates only the changed items view", async () => {
+test("desktop Workspace keeps non-Notes disclosures and animates the selected Notes editor", async () => {
   const workspace = await source("DesktopWorkspace.tsx");
   assert.match(workspace, /useDesktopContentEnter\(section\?\.id, itemsRef\)/);
   assert.match(workspace, /<section ref=\{itemsRef\}[^>]*className="aerift-workspace-items"/);
-  assert.match(workspace, /<details className="aerift-workspace-create" ref=\{noteEditor\}>/);
-  assert.match(workspace, /noteEditor\.current\.open = true/);
+  assert.match(workspace, /<details className="aerift-workspace-create"[^>]*><summary>/);
+  assert.match(workspace, /<DesktopNotesWorkspace\b/);
+  const editor = await source("DesktopNotesWorkspace.tsx");
+  assert.match(editor, /<form key=\{draft\.id\}[^>]*data-ae-route-enter="neutral"/);
 });
 
 async function entryPoint(windowsCheckout = false) {

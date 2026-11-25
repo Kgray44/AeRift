@@ -1,4 +1,4 @@
-//! Qualification-only Windows metadata from an already pinned directory.
+//! Bounded Windows metadata from an already pinned directory.
 //! No path arguments, child opening, content or file authority in a page.
 
 #[path = "windows_directory_page_codec.rs"]
