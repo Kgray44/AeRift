@@ -82,6 +82,10 @@ if (privateRemoteFixture) {
   } };
 }
 mockIPC((cmd, args) => {
+  if (query.get("safeBrowserFixture") === "1" && cmd === "open_workspace_url") {
+    sessionStorage.setItem("aerift.safeBrowserTest.lastOpen", JSON.stringify({ cmd, args }));
+    return undefined;
+  }
   if (privateRemoteFixture) {
     if (cmd === "windows_remote_mode") return { current: "remote", nextEndpoint: fixtureEndpoint, restartNeeded: false };
     if (cmd === "private_remote_snapshot") {

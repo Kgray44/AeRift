@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  appendWorkspaceBrowserHistory, decodeWorkspaceBrowserHistory, workspaceBrowserDestination,
+  appendWorkspaceBrowserHistory, matchesSavedWorkspaceLink, decodeWorkspaceBrowserHistory, workspaceBrowserDestination,
   workspaceBrowserSearch, workspaceBrowserHistoryLimit, readWorkspaceBrowserHistory,
   setWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch, clearWorkspaceBrowserHistory,
 } from "../../apps/aerift/src/workspace-browser-tools.ts";
@@ -71,4 +71,11 @@ test("clear preserves consent and opt-out deletes history for the next launch", 
   recordWorkspaceBrowserLaunch(key, "https://example.org/", storage);
   assert.equal(setWorkspaceBrowserHistory(key, false, storage), true);
   assert.equal(data.has(key), false);
+});
+
+test("saved link search matches titles and hosts without searching address tokens", () => {
+  const link = { name: "Travel Plans", url: "https://example.com/private?token=verysecret#internal" };
+  assert.equal(matchesSavedWorkspaceLink(link, "travel EXAMPLE"), true);
+  assert.equal(matchesSavedWorkspaceLink(link, "verysecret"), false);
+  assert.equal(matchesSavedWorkspaceLink(link, "internal"), false);
 });
