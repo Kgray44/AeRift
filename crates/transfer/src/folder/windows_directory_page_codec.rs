@@ -53,7 +53,9 @@ fn usable_name(name: &str) -> bool {
     name != "."
         && name != ".."
         && !name.ends_with([' ', '.'])
-        && !name.chars().any(|ch| matches!(ch, '/' | '\\' | ':') || ch.is_control())
+        && !name
+            .chars()
+            .any(|ch| matches!(ch, '/' | '\\' | ':') || ch.is_control())
 }
 
 pub(crate) fn parse_page(bytes: &[u8]) -> io::Result<Vec<DirectoryEntryMetadata>> {
@@ -175,7 +177,10 @@ mod tests {
     #[test]
     fn detects_incomplete_pages_and_unusable_lengths_without_partial_output() {
         assert!(parse_page(&row("visible.txt", 0x80, 1, 5)[..NAME_OFFSET + 1]).is_err());
-        let mut page = chain(vec![row("first.txt", 0x80, 1, 2), row("second.txt", 0x80, 2, 3)]);
+        let mut page = chain(vec![
+            row("first.txt", 0x80, 1, 2),
+            row("second.txt", 0x80, 2, 3),
+        ]);
         let final_record = read_u32(&page, 0).unwrap() as usize;
         page[final_record + NAME_LENGTH_OFFSET] |= 1;
         assert!(parse_page(&page).is_err());

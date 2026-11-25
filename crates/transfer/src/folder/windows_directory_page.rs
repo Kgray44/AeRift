@@ -137,7 +137,11 @@ fn pinned_metadata_paging_reads_only_the_chosen_directory_level_and_releases_it(
     fs::create_dir(&sibling).unwrap();
     fs::write(sibling.join("outside.txt"), b"synthetic sentinel").unwrap();
     fs::create_dir(chosen.join("nested")).unwrap();
-    fs::write(chosen.join("nested").join("inside.txt"), b"synthetic sentinel").unwrap();
+    fs::write(
+        chosen.join("nested").join("inside.txt"),
+        b"synthetic sentinel",
+    )
+    .unwrap();
     // Force several 16 KiB native pages without using a live folder.
     let leaf = "metadata-fixture-".repeat(7);
     for n in 0..300 {
