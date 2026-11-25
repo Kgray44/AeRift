@@ -2,12 +2,13 @@ import { WorkspacePhotosGallery } from "../WorkspacePhotosGallery";
 import { isWorkspaceDocument } from "../workspace-categories";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import type { MobilePlatformCopy } from "./mobile-platform";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getObjectPresentation } from "@aerift/app-contract/digital-objects";
 import { Button, formatFileSize, type TransferWorkspaceRegions } from "@aerift/ui";
 import type { Result } from "@aerift/app-contract";
 import type { ImportedMedia, MediaSource } from "./mobile-media";
 import type { ObservedMediaPort } from "./mobile-media-observer";
+import { createMobileThumbnailReader } from "./mobile-photo-thumbnail";
 
 const mediaNames = { file: "File", photo: "Photo", video: "Video" };
 
@@ -18,6 +19,8 @@ export function MobileMediaTray({ source, documents = false, port, regions, copy
   port: ObservedMediaPort;
   regions: TransferWorkspaceRegions;
 }) {
+  const photoThumbnails = useMemo(() => source === "photos" && port.thumbnail
+    ? createMobileThumbnailReader(assetId => port.thumbnail!(assetId)) : undefined, [source, port]);
   const fileTools = useWorkspaceFileTools(`mobile:${documents ? "documents" : source}`);
   const [imports, setImports] = useState<readonly ImportedMedia[]>();
   const [busy, setBusy] = useState(false);
@@ -100,6 +103,7 @@ export function MobileMediaTray({ source, documents = false, port, regions, copy
       <p>Keep up to 24 imported copies on {copy.device}. Your originals stay in place.</p>
       {initialFailure ? <Button variant="quiet" onClick={() => setReload(attempts => attempts + 1)}>Retry loading imports</Button> :
         <WorkspacePhotosGallery catalog={catalog} scope={copy.photoAlbumScope} disabled={busy || regions.selecting}
+          readAsset={photoThumbnails} visibleThumbnailsOnly
           importDisabled={!imports || imports.length >= 24}
           onNativeImport={async () => {
             const known = new Set(imports?.map(item => item.assetId));

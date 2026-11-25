@@ -72,8 +72,10 @@ try {
     const harbor = button(photos, "Open Harbor aerial.heic");
     const video = button(photos, "Open Harbor approach.mov");
     await harbor.waitFor(); await video.waitFor();
-    assert.deepEqual(await mobile.evaluate(() => window.aePhotoGalleryFixture), ["import:photos"]);
-    assert.equal(await harbor.locator("img").count(), 0, "thumbnail capability is not fabricated");
+    await mobile.waitForFunction(() => document.querySelector('[aria-label="Open Harbor aerial.heic"] img')?.naturalWidth === 16);
+    assert.deepEqual(await mobile.evaluate(() => window.aePhotoGalleryFixture),
+      ["import:photos", "thumbnail:ff1a587e-224a-41f0-a368-5ab457e719a3"]);
+    assert.equal(await video.locator("img").count(), 0, "videos keep a fallback without requesting a decode");
     await button(albumBar, "New album").tap();
     await albumBar.getByRole("textbox", { name: "Album name" }).fill("Harbor");
     await button(albumBar, "Save album").tap();
@@ -88,15 +90,21 @@ try {
     await button(viewer, "Close photo").tap();
     await viewer.waitFor({ state: "hidden" });
     await mobile.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open Harbor approach.mov");
-    assert.deepEqual(await mobile.evaluate(() => window.aePhotoGalleryFixture),
+    const calls = await mobile.evaluate(() => window.aePhotoGalleryFixture);
+    const thumbCalls = calls.filter(call => call.startsWith("thumbnail:"));
+    // Recents can remount when changing albums. A refreshed visible cell may
+    // read again; no request may target the video or a non-catalog identifier.
+    assert.ok(thumbCalls.length >= 1 && thumbCalls.length <= 2);
+    assert.ok(thumbCalls.every(call => call === "thumbnail:ff1a587e-224a-41f0-a368-5ab457e719a3"));
+    assert.deepEqual(calls.filter(call => !call.startsWith("thumbnail:")),
       ["import:photos", "preview:import-video", "export:import-video", "select:import-video"]);
     await harbor.tap();
     const remover = mobile.getByRole("dialog", { name: "Viewing Harbor aerial.heic" });
     await button(remover, "Remove imported copy").tap();
-    assert.equal((await mobile.evaluate(() => window.aePhotoGalleryFixture)).includes("remove:import-photo"), false);
+    assert.equal((await mobile.evaluate(() => window.aePhotoGalleryFixture)).includes("remove:ff1a587e-224a-41f0-a368-5ab457e719a3"), false);
     await button(remover, "Confirm remove imported copy").tap();
     await harbor.waitFor({ state: "detached" });
-    assert.equal((await mobile.evaluate(() => window.aePhotoGalleryFixture)).at(-1), "remove:import-photo");
+    assert.equal((await mobile.evaluate(() => window.aePhotoGalleryFixture)).at(-1), "remove:ff1a587e-224a-41f0-a368-5ab457e719a3");
     await mobile.reload();
     await button(mobile, "Workspace").tap();
     await button(mobile, "Images & Videos").tap();

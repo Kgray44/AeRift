@@ -1,10 +1,13 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 
 enum MediaSmokeError: Error {
     case invalidRoundTrip
     case invalidRollback
     case removedLiveLink
     case acceptedInvalidCatalog
+    case invalidThumbnail
 }
 
 @main
@@ -67,6 +70,43 @@ struct MediaLibrarySmoke {
         let lastFile = catalog.appendingPathComponent(lastImport[0].id.uuidString)
             .appendingPathComponent("source.bin")
         guard try Data(contentsOf: lastFile) == data else { throw MediaSmokeError.invalidRoundTrip }
+        try checkThumbnails(fixture: fixture, staging: staging, manager: manager)
         print("Media library retained IDs and bytes across restart, rolled back a failed batch and kept active links readable")
+    }
+
+    static func checkThumbnails(fixture: URL, staging: URL, manager: FileManager) throws {
+        let root = fixture.appendingPathComponent("photo-library", isDirectory: true)
+        let store = try MediaLibrary(root: root)
+        let photo = fixture.appendingPathComponent("synthetic-photo.jpg")
+        guard let context = CGContext(data: nil, width: 512, height: 300, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+              let destination = CGImageDestinationCreateWithURL(photo as CFURL, "public.jpeg" as CFString, 1, nil)
+        else { throw MediaSmokeError.invalidThumbnail }
+        context.setFillColor(red: 0.23, green: 0.5, blue: 0.8, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 512, height: 300))
+        guard let image = context.makeImage() else { throw MediaSmokeError.invalidThumbnail }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw MediaSmokeError.invalidThumbnail }
+        var staged = try FileStaging.stage(photo, in: staging)
+        staged.kind = .photo
+        guard let id = try store.append([staged]).first?.id else { throw MediaSmokeError.invalidThumbnail }
+        let bound = try store.thumbnailSource(id)
+        let jpeg = try bound.decode()
+        guard jpeg.starts(with: [0xff, 0xd8, 0xff]), jpeg.count <= 128 * 1024,
+              let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let preview = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              preview.width == 256, preview.height > 0, preview.height <= 256
+        else { throw MediaSmokeError.invalidThumbnail }
+        let owned = bound.root.appendingPathComponent(bound.asset.uuidString).appendingPathComponent(bound.filename)
+        try manager.removeItem(at: owned)
+        try manager.createSymbolicLink(at: owned, withDestinationURL: photo)
+        guard (try? bound.decode()) == nil else { throw MediaSmokeError.invalidThumbnail }
+        try manager.removeItem(at: owned)
+        try Data(repeating: 0x41, count: bound.expectedSize).write(to: owned)
+        guard (try? bound.decode()) == nil else { throw MediaSmokeError.invalidThumbnail }
+        _ = try store.remove(id)
+        guard (try? store.thumbnailSource(id)) == nil else { throw MediaSmokeError.invalidThumbnail }
+        print("Native ImageIO rendered a 256-pixel JPEG and refused a linked, malformed or removed imported copy")
     }
 }

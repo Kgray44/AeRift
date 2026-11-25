@@ -28,6 +28,7 @@ export function createMobileOperations(platform: MobilePlatform, call: InvokeCom
     import: source => readImports(`import_${platform}_media`, { source }),
     remove: assetId => readImports(`remove_${platform}_media`, { assetId }),
     select: assetId => call<FileSelection | null>(`select_${platform}_media`, { assetId }),
+    thumbnail: assetId => call<string>(`thumbnail_${platform}_media`, { assetId }),
     present: (assetId, action) => call<void>(`present_${platform}_media`, { assetId, action }),
   };
   return {

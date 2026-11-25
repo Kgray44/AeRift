@@ -203,6 +203,16 @@ pub async fn list_media<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<MediaAsset
     Ok(value.items)
 }
 
+pub async fn thumbnail_media<R: Runtime>(
+    app: &AppHandle<R>, asset_id: Uuid,
+) -> Result<String, TransferError> {
+    #[derive(Deserialize)]
+    struct Thumbnail { jpeg: String }
+    let value: Thumbnail = call(app, "thumbnailMedia", serde_json::json!({ "assetId": asset_id }))
+        .await.map_err(storage_failed)?;
+    Ok(value.jpeg)
+}
+
 pub async fn remove_media<R: Runtime>(app: &AppHandle<R>, asset_id: Uuid)
     -> Result<Vec<MediaAsset>, TransferError>
 {

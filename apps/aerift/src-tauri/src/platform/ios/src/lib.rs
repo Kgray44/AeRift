@@ -199,6 +199,20 @@ pub async fn list_media<R: Runtime>(
     Ok(response.items)
 }
 
+pub async fn thumbnail_media<R: Runtime>(
+    app: &AppHandle<R>,
+    asset_id: &str,
+) -> Result<String, PluginInvokeError> {
+    #[derive(Deserialize)]
+    struct Thumbnail { jpeg: String }
+    let response: Thumbnail = app
+        .state::<IosPlatform<R>>()
+        .0
+        .run_mobile_plugin_async("thumbnailMedia", MediaAssetArgs { asset_id })
+        .await?;
+    Ok(response.jpeg)
+}
+
 pub async fn remove_media<R: Runtime>(
     app: &AppHandle<R>,
     asset_id: &str,

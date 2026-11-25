@@ -133,6 +133,26 @@ final class MediaLibrary {
         return list()
     }
 
+    struct ThumbnailSource: Equatable, Sendable {
+        let root: URL
+        let asset: UUID
+        let filename: String
+        let expectedSize: Int
+
+        func decode() throws -> Data {
+            try ImportedPhotoThumbnail.make(root: root, asset: asset, filename: filename, expectedSize: expectedSize)
+        }
+    }
+
+    // Snapshot this descriptor on the main catalog lane; decoding never reads
+    // mutable catalog state or any external photo library.
+    func thumbnailSource(_ id: UUID) throws -> ThumbnailSource {
+        guard let record = records.first(where: { $0.media.id == id }), record.media.kind == .photo else {
+            throw MediaLibraryError.missingAsset
+        }
+        return ThumbnailSource(root: root, asset: id, filename: record.filename, expectedSize: record.media.sizeBytes)
+    }
+
     func stage(_ id: UUID, in staging: URL? = nil) throws -> StagedSelection {
         guard let record = records.first(where: { $0.media.id == id }) else {
             throw MediaLibraryError.missingAsset

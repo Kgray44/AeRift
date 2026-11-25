@@ -16,34 +16,56 @@ function albumStorage() {
   try { return window.localStorage; } catch { return undefined; }
 }
 
-function Thumbnail({ row, asset }: { row: PhotoRow; asset?: (id: string) => Promise<Blob | undefined> }) {
+type ReadPhotoAsset = (id: string, signal?: AbortSignal) => Promise<Blob | undefined>;
+
+function Thumbnail({ row, asset, visibleOnly = false }: { row: PhotoRow; asset?: ReadPhotoAsset; visibleOnly?: boolean }) {
   const target = useRef<HTMLSpanElement>(null);
   const [url, setUrl] = useState<string>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (!asset || row.kind !== "photo") return;
-    let live = true, started = false;
+    let disposed = false, attempted = false;
     let objectUrl: string | undefined;
+    let pending: AbortController | undefined;
+    let intersects = false;
     const load = () => {
-      if (started) return;
-      started = true;
-      void asset(row.id).then(blob => {
-        if (!live || !blob || blob.size > previewBytes || !inlineImageTypes.has(blob.type)) return;
+      if (attempted || pending || disposed || (visibleOnly && document.hidden)) return;
+      const controller = new AbortController();
+      pending = controller;
+      void asset(row.id, controller.signal).then(blob => {
+        if (disposed || controller.signal.aborted) return;
+        attempted = true;
+        if (!blob || blob.size > previewBytes || !inlineImageTypes.has(blob.type)) return;
         objectUrl = URL.createObjectURL(blob);
         setUrl(objectUrl);
-      }).catch(() => { /* The original remains available through the explicit viewer. */ });
+      }).catch(() => { /* The original remains available through the explicit viewer. */ })
+        .finally(() => { if (pending === controller) pending = undefined; });
     };
     const node = target.current;
     const observer = node && typeof IntersectionObserver === "function" ? new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting)) { observer?.disconnect(); load(); }
-    }, { rootMargin: "160px" }) : undefined;
+      intersects = entries.some(entry => entry.isIntersecting && entry.intersectionRatio > 0);
+      if (intersects) {
+        if (!visibleOnly) observer?.disconnect();
+        load();
+      } else if (visibleOnly) cancelPending();
+    }, { rootMargin: visibleOnly ? "0px" : "160px" }) : undefined;
+    function cancelPending() {
+      pending?.abort();
+      pending = undefined;
+    }
+    const visibility = () => {
+      if (document.hidden) cancelPending();
+      else if (intersects) load();
+    };
     if (observer && node) observer.observe(node);
-    else load();
+    else if (!visibleOnly) load();
+    if (visibleOnly) document.addEventListener("visibilitychange", visibility);
     return () => {
-      live = false; observer?.disconnect();
+      disposed = true; cancelPending(); observer?.disconnect();
+      if (visibleOnly) document.removeEventListener("visibilitychange", visibility);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [asset, row.id, row.kind]);
+  }, [asset, row.id, row.kind, visibleOnly]);
 
   return <span ref={target} className="aw-photo-thumb" aria-hidden="true">
     {url && !failed ? <img src={url} alt="" decoding="async" draggable={false} onError={() => setFailed(true)} /> :
@@ -52,11 +74,12 @@ function Thumbnail({ row, asset }: { row: PhotoRow; asset?: (id: string) => Prom
   </span>;
 }
 
-export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, disabled, readAsset, onImport, onNativeImport, importDisabled, onRemove, viewer, emptyText }: {
+export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, disabled, readAsset, visibleThumbnailsOnly, onImport, onNativeImport, importDisabled, onRemove, viewer, emptyText }: {
   catalog: readonly T[];
   scope: PhotoAlbumScope;
   disabled?: boolean;
-  readAsset?: (id: string) => Promise<Blob | undefined>;
+  readAsset?: ReadPhotoAsset;
+  visibleThumbnailsOnly?: boolean;
   onImport?: (files: File[]) => Promise<readonly string[]>;
   onNativeImport?: () => Promise<readonly string[]>;
   importDisabled?: boolean;
@@ -165,7 +188,7 @@ export function WorkspacePhotosGallery<T extends PhotoRow>({ catalog, scope, dis
         <button type="button" className="aw-photo-tile" aria-label={`Open ${row.name}`} onClick={event => {
           fromTile.current = event.currentTarget; setAddToAlbum(false); setRemovePhoto(false); setActive(row);
         }}>
-          <Thumbnail row={row} asset={readAsset} />
+          <Thumbnail row={row} asset={readAsset} visibleOnly={visibleThumbnailsOnly} />
           <span className="aw-photo-caption" title={row.name}>{row.name}</span>
         </button>
       </li>)}</ul>
