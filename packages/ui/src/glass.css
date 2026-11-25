@@ -712,7 +712,7 @@
 /* Keep the same stationary scene under scrolling content. The sampled overlay
    resumes atomically with new viewport-relative lens geometry after scrolling. */
 .ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"]:not([data-ae-scrolling]) .ae-glass-atmosphere,
-.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-scrolling] .ae-glass-optics {
+.ae-theme[data-ae-theme="glass"] .ae-shell[data-ae-optics="ready"][data-ae-scrolling] .ae-glass-optics {
   display: none;
 }
 .ae-theme[data-ae-theme="glass"]:not([data-transparency="reduce"], [data-contrast="increase"])
