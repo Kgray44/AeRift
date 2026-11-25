@@ -17,7 +17,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const heading = (page, name) => page.getByRole("heading", { name, exact: true, level: 3 });
 const focused = locator => locator.evaluate(node => document.activeElement === node);
 const assertFloatingNoteTools = async (editor, required) => {
-  assert.equal(await editor.getByRole("combobox").count(), 0, "no always-visible category dropdown");
+  assert.equal(await editor.getByRole("combobox", { name: /category/i }).count(), 0, "no always-visible category dropdown");
   const canvas = editor.locator(".aw-note-canvas");
   const tools = canvas.getByRole("group", { name: "Note tools", exact: true });
   for (const name of required) {
