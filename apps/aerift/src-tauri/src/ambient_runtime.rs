@@ -22,11 +22,22 @@ use tauri::{ipc::Channel, AppHandle, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 
-use crate::ambient_context::{self, ContextError, ExplorerContext};
+use crate::ambient_context::{self, CaptureAnchor, ContextError, ExplorerContext};
 
-#[cfg(all(test, feature = "ambient-media-qualification"))]
+#[cfg(feature = "ambient-media-qualification")]
 mod explorer_gesture;
 mod nearby_actions;
+
+struct NativePickupGuard {
+    anchor: CaptureAnchor,
+    still_authorized: Box<dyn Fn() -> bool + Send + Sync>,
+}
+
+impl NativePickupGuard {
+    fn is_current(&self) -> bool {
+        (self.still_authorized)() && ambient_context::capture_anchor().ok() == Some(self.anchor)
+    }
+}
 
 #[derive(Clone, Serialize)]
 #[serde(
@@ -265,6 +276,32 @@ impl AmbientRuntime {
     }
 
     pub(crate) fn request_pickup(&self) {
+        self.request_pickup_with_guard(None);
+    }
+
+    // The owner reads a native lease snapshot without acquiring the capture
+    // runtime's config lock. No renderer or shortcut creates this permit.
+    #[cfg(feature = "ambient-media-qualification")]
+    fn request_explorer_gesture(
+        &self,
+        pickup: explorer_gesture::ExplorerPickup<CaptureAnchor>,
+        current: impl Fn() -> Option<explorer_gesture::ExplorerCameraContext<CaptureAnchor>>
+            + Send + Sync + 'static,
+    ) {
+        let observed = current();
+        let Some(anchor) = pickup.claim(observed, Instant::now()) else {
+            return;
+        };
+        self.request_pickup_with_guard(Some(NativePickupGuard {
+            anchor,
+            still_authorized: Box::new(move || current() == observed),
+        }));
+    }
+
+    fn request_pickup_with_guard(&self, expected: Option<NativePickupGuard>) {
+        if expected.as_ref().is_some_and(|guard| !guard.is_current()) {
+            return;
+        }
         let Ok(mut cfg) = self.0.config.lock() else {
             return;
         };
@@ -278,6 +315,9 @@ impl AmbientRuntime {
             return;
         }
         let Ok(anchor) = ambient_context::capture_anchor() else {
+            if expected.is_some() {
+                return;
+            }
             cfg.slot = None;
             emit(
                 &cfg,
@@ -287,12 +327,18 @@ impl AmbientRuntime {
             );
             return;
         };
+        if expected.as_ref().is_some_and(|guard| guard.anchor != anchor || !guard.is_current()) {
+            return;
+        }
         let source = ambient_context::foreground_executable();
         if source
             .as_ref()
             .is_none_or(|source| cfg.excludes.contains(source))
             || ambient_context::capture_anchor().ok() != Some(anchor)
         {
+            if expected.is_some() {
+                return;
+            }
             cfg.slot = None;
             emit(
                 &cfg,
@@ -312,7 +358,12 @@ impl AmbientRuntime {
         let runtime = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let _lease = WorkLease(runtime.0.clone());
-            let result = ambient_context::capture(anchor)
+            let capture = if expected.as_ref().is_some_and(|guard| !guard.is_current()) {
+                Err(ContextError::SelectionChanged)
+            } else {
+                ambient_context::capture(anchor)
+            };
+            let result = capture
                 .map_err(|error| match error {
                     ContextError::Unsupported => CaptureError::NoSupportedObject,
                     ContextError::SelectionChanged => CaptureError::SourceChanged,
@@ -332,7 +383,9 @@ impl AmbientRuntime {
                     drop(cfg);
                     let guard_state = std::cell::Cell::new((None::<Instant>, true));
                     acquire(context, || {
-                        if runtime.0.generation.load(Ordering::Acquire) != generation {
+                        if runtime.0.generation.load(Ordering::Acquire) != generation
+                            || expected.as_ref().is_some_and(|guard| !(guard.still_authorized)())
+                        {
                             return false;
                         }
                         let (last_check, mut session_open) = guard_state.get();
@@ -353,6 +406,10 @@ impl AmbientRuntime {
                 || !cfg.enabled
                 || cfg.paused
             {
+                return;
+            }
+            if expected.as_ref().is_some_and(|guard| !guard.is_current()) {
+                emit(&cfg, CaptureView::Idle);
                 return;
             }
             if !ambient_context::interactive_session() {
