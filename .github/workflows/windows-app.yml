@@ -242,3 +242,16 @@ jobs:
               throw "Required WAN activation gate did not pass: $name"
             }
           }
+      - name: Type-check the isolated Windows WAN smoke without linking or launching it
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
+        run: |
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'WAN smoke compilation is only for the disposable Windows runner.'
+          }
+          Remove-Item Env:AERIFT_TRUSTED_QUALIFICATION_RELAY -ErrorAction SilentlyContinue
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          cargo check --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features private-remote-wan-webview-smoke --tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git diff --exit-code -- Cargo.lock apps/aerift/src-tauri/Cargo.lock
