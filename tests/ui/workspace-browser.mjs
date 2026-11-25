@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyReceivedActivity } from "./received-activity-browser.mjs";
 const module = process.env.AERIFT_PLAYWRIGHT_MODULE;
 const { chromium } = await import(module ? pathToFileURL(module).href : "playwright");
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
@@ -239,8 +240,28 @@ try {
   await button(inbox, "Search Inbox").click();
   await verify.waitFor();
   assert.equal(await activity.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await verifyReceivedActivity(activity, { expectedTime: "2026-11-25T14:02:00.000Z" });
+  const timeline = inbox.getByRole("region", { name: "Receipt timeline" });
+  const newest = timeline.getByRole("button").first();
+  assert.equal(await newest.getAttribute("aria-label"), "View timeline entry for Received sketch.txt");
+  await newest.press("Enter");
+  const receiptPreview = inbox.getByRole("region", { name: "File preview", exact: true });
+  await button(receiptPreview, "Preview file").click();
+  await receiptPreview.getByText("<script>preview is inert text</script>", { exact: true }).waitFor();
+  assert.equal(await receiptPreview.locator("script").count(), 0);
   await snapped(activity, "desktop-activity-inbox-polished");
   await activity.close();
+
+  const receivedAndroid = await browser.newPage({ viewport: { width: 360, height: 800 } });
+  await receivedAndroid.goto(root + "/mobile.html?platform=android&receivedFixture=1");
+  await receivedAndroid.getByRole("button", { name: /^Activity(?:\s*Transfers active)?$/ }).click();
+  const androidFiles = receivedAndroid.getByRole("region", { name: "Received files", exact: true });
+  await androidFiles.getByRole("searchbox", { name: "Find a file", exact: true }).fill("chart");
+  await button(androidFiles, "View received Received chart.pdf").click();
+  await button(androidFiles, "Open file").click();
+  await androidFiles.getByText("Opened received copy.", { exact: true }).waitFor();
+  await snapped(receivedAndroid, "android-activity-received-library");
+  await receivedAndroid.close();
 
   for (const platform of ["ios", "android"]) {
     const page = await browser.newPage({ viewport: { width: platform === "ios" ? 390 : 320, height: 844 },
@@ -535,3 +556,4 @@ try {
 } finally {
   await browser.close();
 }
+

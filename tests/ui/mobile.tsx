@@ -1,5 +1,6 @@
 import { friendsFixture } from "./friends-fixture";
 import { createRoot } from "react-dom/client";
+import { mockIPC } from "@tauri-apps/api/mocks";
 import type { AppPort, AppSnapshot, Transfer } from "@aerift/app-contract";
 import { installMotionFixture, installTransferIslandFixture, respondToMotionReceipt } from "./motion-fixture";
 import "../../apps/aerift/public/appearance-bootstrap.css";
@@ -15,10 +16,16 @@ const incoming: Transfer = {
   id: "offer", direction: "incoming", deviceId: device.id,
   state: "pending", bytesTransferred: 0, file: photo,
 };
+const receivedTextFixture = new URLSearchParams(location.search).get("receivedTextFixture") === "1";
+const receiptPrefix = "a".repeat(64) + ":c6991e6c-ecd2-4f10-905c-0f254040dda";
 const islandFixture = new URLSearchParams(location.search).get("islandFixture") === "1";
 const motionFixture = new URLSearchParams(location.search).get("motionFixture") === "1";
 let snapshot: AppSnapshot = { version: 1, devices: [device], pendingPairing: [], transfers: [
   ...(!motionFixture && !islandFixture ? [incoming] : []),
+  ...(receivedTextFixture ? ([
+    { ...incoming, id: receiptPrefix + "7", state: "completed", file: { name: "Verified notes.txt", sizeBytes: 89 }, bytesTransferred: 89 },
+    { ...incoming, id: receiptPrefix + "8", state: "completed", file: { name: "Other receipt.txt", sizeBytes: 89 }, bytesTransferred: 89 },
+  ] satisfies Transfer[]) : []),
   { ...incoming, id: "earlier", state: "completed", file, bytesTransferred: file.sizeBytes },
 ] };
 const watchers = new Set<(snapshot: AppSnapshot) => void>();
@@ -113,6 +120,19 @@ const media: MobileMediaPort = {
   async present(id, action) { mediaTrace?.push(`${action}:${id}`); return { ok: true, value: undefined }; },
 };
 
+if (new URLSearchParams(location.search).get("receivedFixture") === "1") {
+  const id = "received-" + "a".repeat(64);
+  mockIPC((cmd, args) => {
+    if (cmd === "list_android_received") return [{id, name: "Received chart.pdf", sizeBytes: 38413}];
+    if (cmd === "present_android_received") {
+      const { transferId, action } = args as { transferId: string; action: string };
+      if (transferId !== id || action !== "preview") throw { code: "invalid_request" };
+      return undefined;
+    }
+    return undefined;
+  }, { shouldMockEvents: true });
+}
+
 const App = new URLSearchParams(location.search).get("platform") === "android" ? AndroidApp : IosApp;
 
 createRoot(document.getElementById("root")!).render(
@@ -121,3 +141,4 @@ createRoot(document.getElementById("root")!).render(
     return { ok: true, value: selection };
   }} />,
 );
+

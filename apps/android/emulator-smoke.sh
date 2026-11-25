@@ -233,8 +233,12 @@ PY_PNG
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-before.png"
   cmp "$tmp/$photo_name" "$tmp/source-before.png"
 
+  photo_stage 'return from File Browser to the Workspace category library'
+  # The Files smoke publicly selects a document without leaving File Browser.
+  # Tapping the already-selected Workspace dock tab does not clear that category.
+  tap_label 'Back to Workspace'
+  await_ui 'Everything in its place.' >/dev/null
   photo_stage 'open Photos through AeRift Workspace'
-  tap_label 'Workspace'
   tap_label 'Images & Videos'
   tap_label 'Import photos and videos'
   tap_photo_picker() {
