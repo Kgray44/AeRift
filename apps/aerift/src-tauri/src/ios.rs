@@ -27,6 +27,87 @@ fn require_main(window: &WebviewWindow) -> Result<(), TransferError> {
     Ok(())
 }
 
+fn require_receipt_origin(window: &WebviewWindow) -> Result<(), TransferError> {
+    require_main(window)?;
+    if !window.url().ok().is_some_and(|url| {
+        url.scheme() == "tauri"
+            && url.host_str() == Some("localhost")
+            && url.port().is_none()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && matches!(url.path(), "/" | "/index.html")
+    }) {
+        return Err(ErrorCode::InvalidRequest.into());
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavedReceiptRow {
+    pub id: String,
+    pub name: String,
+    pub size_bytes: u64,
+}
+
+#[tauri::command]
+pub(crate) async fn list_ios_received_receipts(
+    window: WebviewWindow,
+) -> Result<Vec<SavedReceiptRow>, TransferError> {
+    require_receipt_origin(&window)?;
+    let running = window.state::<AppRuntime>().existing_ios_session()?;
+    let permit = RECEIPT_PREVIEW
+        .try_acquire()
+        .map_err(|_| ErrorCode::Conflict)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        running.list_completion_receipts()
+    })
+    .await
+    .map_err(|_| ErrorCode::InternalError)?
+}
+
+#[tauri::command]
+pub(crate) async fn configure_ios_receipt_history(
+    window: WebviewWindow,
+    enabled: bool,
+    clear: bool,
+) -> Result<(), TransferError> {
+    require_receipt_origin(&window)?;
+    let running = window.state::<AppRuntime>().existing_ios_session()?;
+    let permit = RECEIPT_PREVIEW
+        .try_acquire()
+        .map_err(|_| ErrorCode::Conflict)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        running.configure_completion_receipts(enabled, clear)
+    })
+    .await
+    .map_err(|_| ErrorCode::InternalError)?
+}
+
+// One reader across this app, including while another selected row changes.
+static RECEIPT_PREVIEW: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+#[tauri::command]
+pub(crate) async fn preview_ios_received_text(
+    window: WebviewWindow,
+    receipt_id: String,
+) -> Result<Option<String>, TransferError> {
+    require_receipt_origin(&window)?;
+    let key = crate::ios_received_preview::receipt_key(&receipt_id)?;
+    let running = window.state::<AppRuntime>().existing_ios_session()?;
+    let permit = RECEIPT_PREVIEW
+        .try_acquire()
+        .map_err(|_| ErrorCode::Conflict)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        running.preview_received_text(key)
+    })
+    .await
+    .map_err(|_| ErrorCode::InternalError)?
+}
+
 #[tauri::command]
 pub(crate) async fn watch_app(
     window: WebviewWindow,
@@ -202,7 +283,8 @@ pub(crate) async fn open_ios_browser(
     url: String,
 ) -> Result<Vec<tauri_plugin_aerift_ios::BrowserLink>, TransferError> {
     require_main(&window)?;
-    let destination = crate::workspace_link::browser_destination(&url).ok_or(ErrorCode::InvalidRequest)?;
+    let destination =
+        crate::workspace_link::browser_destination(&url).ok_or(ErrorCode::InvalidRequest)?;
     tauri_plugin_aerift_ios::open_browser(window.app_handle(), destination.as_str())
         .await
         .map_err(|_| ErrorCode::InvalidRequest.into())

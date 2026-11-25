@@ -336,6 +336,8 @@ pub(crate) struct Session {
     #[cfg(all(test, windows))]
     root: PathBuf,
     destination: PathBuf,
+    #[cfg(target_os = "ios")]
+    completion_receipts: tauri_plugin_aerift_ios::CompletionReceipts,
     #[cfg(windows)]
     _profile_lock: File,
     #[cfg(windows)]
@@ -390,6 +392,15 @@ impl AppRuntime {
             .get_or_try_init(|| Session::open_ios(app, self.stop.child_token()))
             .await
             .map(Arc::clone)
+    }
+
+    #[cfg(target_os = "ios")]
+    pub(crate) fn existing_ios_session(&self) -> Result<Arc<Session>, TransferError> {
+        self.session
+            .get()
+            .cloned()
+            .filter(|session| !session.stop.is_cancelled())
+            .ok_or_else(|| ErrorCode::PeerUnavailable.into())
     }
 
     #[cfg(target_os = "android")]
