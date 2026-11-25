@@ -1,4 +1,5 @@
 import { isWorkspaceDocument } from "../workspace-categories";
+import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import type { MobilePlatformCopy } from "./mobile-platform";
 import { useEffect, useRef, useState } from "react";
 import { getObjectPresentation } from "@aerift/app-contract/digital-objects";
@@ -16,6 +17,7 @@ export function MobileMediaTray({ source, documents = false, port, regions, copy
   port: ObservedMediaPort;
   regions: TransferWorkspaceRegions;
 }) {
+  const fileTools = useWorkspaceFileTools(`mobile:${documents ? "documents" : source}`);
   const [imports, setImports] = useState<readonly ImportedMedia[]>();
   const [busy, setBusy] = useState(false);
   const [initialFailure, setInitialFailure] = useState(false);
@@ -88,7 +90,12 @@ export function MobileMediaTray({ source, documents = false, port, regions, copy
     }, "AeRift couldn’t select this item for Rift.");
   }
 
-  const items = (imports ?? []).filter(item => (item.kind === "file") === (source === "files") && (!documents || isWorkspaceDocument(item.name)));
+  const importedItems = (imports ?? []).filter(item => (item.kind === "file") === (source === "files") && (!documents || isWorkspaceDocument(item.name)));
+
+  const items = fileTools.browse(importedItems, item => ({
+    name: item.name, sizeBytes: item.sizeBytes,
+    kind: item.kind === "file" && isWorkspaceDocument(item.name) ? "document" : item.kind,
+  }));
 
   return <section className="ae-surface ios-section ios-imports aw-focused-surface" data-material="content" aria-label={documents ? "Imported documents" : source === "files" ? "Imported files" : "Imported photos and videos"} aria-busy={busy}>
     <h3>{documents ? "Imported documents" : "Imported copies"}</h3>
@@ -100,7 +107,11 @@ export function MobileMediaTray({ source, documents = false, port, regions, copy
         {source === "files" ? "Import files" : "Import photos or videos"}
       </Button>}
     {imports && imports.length >= 24 && <p>The library holds 24 items. Remove an imported copy to make space.</p>}
-    {documents && imports && !items.length && <p>No imported documents. Import files in File Browser to see them here.</p>}
+    {imports && <WorkspaceFileTools tools={fileTools}
+      label={documents ? "Search imported documents" : source === "files" ? "Search imported files" : "Search imported media"}
+      kinds={documents ? [] : source === "files" ? ["document", "photo", "video", "other"] : ["photo", "video"]} />}
+    {documents && imports && !importedItems.length && <p>No imported documents. Import files in File Browser to see them here.</p>}
+    {importedItems.length > 0 && !items.length && <p>No imported items match your search.</p>}
     {items.length > 0 && <ol className="ios-object-list">
       {items.map(item => <li key={item.assetId}>
         <strong>{getObjectPresentation(item).label}</strong>

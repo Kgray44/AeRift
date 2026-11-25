@@ -38,6 +38,15 @@ try {
     { name: "Sketch.png", mimeType: "image/png", buffer: Buffer.from("synthetic image bytes") },
   ]);
   await desktop.getByRole("checkbox", { name: "Report.pdf" }).waitFor();
+  const fileSearch = desktop.getByRole("searchbox", { name: "Search imported files", exact: true });
+  await fileSearch.fill("report");
+  await fileSearch.press("Enter");
+  await desktop.getByRole("checkbox", { name: "Report.pdf" }).waitFor();
+  assert.equal(await desktop.getByRole("checkbox", { name: "Sketch.png" }).count(), 0);
+  await desktop.getByText("Recent searches", { exact: true }).click();
+  await button(desktop, "report").waitFor();
+  await button(desktop, "Clear recent searches").click();
+  assert.equal(await desktop.getByText("Recent searches", { exact: true }).count(), 0);
   await back(desktop, "File Browser");
   await open(desktop, "Documents");
   await desktop.getByRole("checkbox", { name: "Report.pdf" }).waitFor();
@@ -46,6 +55,22 @@ try {
   await button(desktop, "File details").click();
   await desktop.getByRole("link", { name: "Save a copy" }).waitFor();
   await snapped(desktop, "desktop-documents-dark");
+  await back(desktop, "Documents");
+  await open(desktop, "Notes");
+  await desktop.getByText("New note", { exact: true }).click();
+  await desktop.getByRole("textbox", { name: "Title", exact: true }).fill("Door project");
+  await desktop.getByRole("textbox", { name: "Note", exact: true }).fill("Trim measurements");
+  await button(desktop, "Heading").click();
+  await button(desktop, "Preview").click();
+  const desktopNote = desktop.getByRole("region", { name: "Note preview" });
+  await desktopNote.getByRole("heading", { name: "Trim measurements" }).waitFor();
+  await snapped(desktop, "desktop-note-suite-dark");
+  await button(desktop, "Add note").click();
+  const desktopNoteSearch = desktop.getByRole("searchbox", { name: "Search notes" });
+  await desktopNoteSearch.fill("measurements");
+  await desktop.getByRole("checkbox", { name: "Door project" }).waitFor();
+  await desktopNoteSearch.fill("unrelated");
+  await desktop.getByText("No notes match your search.").waitFor();
   await desktop.close();
 
   const large = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -158,6 +183,18 @@ try {
     const docs = page.getByRole("region", { name: "Imported documents" });
     await docs.getByText("Navigation chart.pdf", { exact: true }).waitFor();
     await back(page, "Documents");
+    await open(page, "Notes");
+    await page.getByText("New note", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Weekend plan");
+    await page.getByRole("textbox", { name: "Note", exact: true }).fill("Pick up lumber");
+    await button(page, "Checklist").click();
+    await button(page, "Preview").click();
+    await page.getByRole("region", { name: "Note preview" }).getByText("☐ Pick up lumber").waitFor();
+    await snapped(page, platform + "-note-suite");
+    await button(page, "Save note").click();
+    await page.getByRole("searchbox", { name: "Search notes" }).fill("lumber");
+    await page.getByText("Weekend plan", { exact: true }).waitFor();
+    await back(page, "Notes");
     const settle = async () => {
       await page.waitForFunction(() => !document.querySelector(".af-dock-bead")?.getAnimations().some(anim => anim.playState === "running"));
     };

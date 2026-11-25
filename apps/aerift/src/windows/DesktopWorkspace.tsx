@@ -3,6 +3,11 @@ import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@a
 import { Button, IconAction, Popover, SpatialIcon } from "@aerift/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
+import { DesktopNoteEditor, WorkspaceNoteSearch } from "../WorkspaceNoteTools";
+import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
+import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
+import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
+import { matchesWorkspaceNote, workspaceNoteLimit, type NoteFilter } from "../workspace-note-tools";
 import { useDesktopContentEnter } from "./desktopContentMotion";
 import { WorkspaceCategoryHeading, WorkspaceLibrary, useWorkspaceLibrary } from "../WorkspaceLibrary";
 import { isWorkspaceDocument, workspaceSections, type WorkspaceSectionId } from "../workspace-categories";
@@ -50,6 +55,7 @@ function AssetPreview({ object }: { object: DigitalObject }) {
 }
 
 const pageSize = 48;
+const browserHistoryKey = "aerift.desktop.workspace.browser-history.v1";
 
 export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   preferences: ExperiencePreferences;
@@ -59,6 +65,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const workspace = useWorkspaceLibrary(id => modules.some(module => module.id === id));
   const section = workspace.section;
   const current = section ? { id: section.module, label: section.label } : undefined;
+  const fileTools = useWorkspaceFileTools(`desktop:${section?.id ?? "all"}`);
+  const fileCategory = current?.id === "files" || current?.id === "photos";
   const itemsRef = useRef<HTMLElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
   useDesktopContentEnter(section?.id, itemsRef);
@@ -70,16 +78,29 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
   const [preview, setPreview] = useState<string>();
   const [editing, setEditing] = useState<string>();
   const noteEditor = useRef<HTMLDetailsElement>(null);
+  const [noteFilter, setNoteFilter] = useState<NoteFilter>({ query: "", format: "any" });
+  const [noteRevision, setNoteRevision] = useState(0);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const items = entries ?? [];
   const inCategory = (object: DigitalObject, id: WorkspaceSectionId, module: ModuleId) =>
     belongsTo(object, module) && (id !== "documents" || (object.kind === "file" && isWorkspaceDocument(object.name, object.mediaType)));
-  const visible = section ? items.filter(({ object }) => inCategory(object, section.id, section.module)) : [];
+  const categoryItems = section ? items.filter(({ object }) => inCategory(object, section.id, section.module)) : [];
+  const visible = section?.id === "notes"
+    ? categoryItems.filter(({ object }) => object.kind === "note" && matchesWorkspaceNote(object, noteFilter))
+    : fileCategory ? fileTools.browse(categoryItems, ({ object }) => ({
+      name: object.name,
+      ...(object.kind === "file" || object.kind === "photo" || object.kind === "video" ? {
+        mediaType: object.mediaType, sizeBytes: object.sizeBytes,
+        kind: object.kind === "file" && isWorkspaceDocument(object.name, object.mediaType) ? "document" as const : object.kind,
+      } : {}),
+    })) : categoryItems;
   const counts = entries && Object.fromEntries(workspaceSections.map(({ id, module }) =>
     [id, entries.filter(({ object }) => inCategory(object, id, module)).length]));
   function openSection(id: WorkspaceSectionId) {
     setError(undefined); setStatus(undefined); setPreview(undefined); setEditing(undefined); setPageIndex(0); workspace.open(id);
   }
+
+  useEffect(() => { setPageIndex(0); }, [fileTools.query, fileTools.kind, fileTools.sort]);
 
   useEffect(() => {
     let disposed = false;
@@ -143,7 +164,11 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         return;
       }
     } else if (kind === "note") {
-      object = { ...base, kind, format: "plain", text: String(data.get("text") ?? "") };
+      const text = String(data.get("text") ?? "");
+      if (!text.trim() || text.length > workspaceNoteLimit) return;
+      const prior = items.find(item => item.object.id === editing)?.object;
+      object = { ...base, kind, format: data.has("noteMarkdown") ? "markdown" : "plain", text,
+        ...(prior?.kind === "note" && prior.attachmentIds?.length ? { attachmentIds: prior.attachmentIds } : {}) };
     } else {
       if (selected.length === 0) return;
       object = { ...base, kind, itemIds: selected };
@@ -151,7 +176,27 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     if (await change(() => [{ object }], "Saved to Workspace.")) {
       form.reset();
       setEditing(undefined);
+      if (kind === "note") setNoteRevision(revision => revision + 1);
       if (kind === "collection") setSelected([]);
+    }
+  }
+
+  async function openWorkspaceLink(url: string, saved = false): Promise<boolean> {
+    const remember = saved && readWorkspaceBrowserHistory(browserHistoryKey).enabled;
+    setError(undefined);
+    try {
+      const result = await command<void>("open_workspace_url", { url });
+      if (!result.ok) {
+        setError("AeRift could not open this page in your browser.");
+        return false;
+      }
+      if (remember && !recordWorkspaceBrowserLaunch(browserHistoryKey, url)) {
+        setError("The page opened, but AeRift could not save this visit.");
+      }
+      return true;
+    } catch {
+      setError("AeRift could not open this page in your browser.");
+      return false;
     }
   }
 
@@ -217,6 +262,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
     {error && <p role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
     {current && <div className="aerift-workspace-content">
+      {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
+        onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
         {(current?.id === "files" || current?.id === "photos") &&
           <div className="aerift-workspace-import">
@@ -228,9 +275,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
                 event.currentTarget.value = "";
               }} />
           </div>}
-        {current?.id === "notes" && <details className="aerift-workspace-create" ref={noteEditor}><summary><SpatialIcon name="add" size={18} />{editing ? "Edit note" : "New note"}</summary><form key={editing ?? "new"} onSubmit={event => void submit(event, "note")}>
+        {current.id === "notes" && <WorkspaceNoteSearch filter={noteFilter} count={visible.length}
+          onChange={filter => { setNoteFilter(filter); setPageIndex(0); }} />}
+        {current?.id === "notes" && <details className="aerift-workspace-create" ref={noteEditor}><summary><SpatialIcon name="add" size={18} />{editing ? "Edit note" : "New note"}</summary><form key={`${editing ?? "new"}:${noteRevision}`} onSubmit={event => void submit(event, "note")}>
           <label>Title<input name="name" required maxLength={180} defaultValue={note?.name} /></label>
-          <label>Note<textarea name="text" defaultValue={note?.kind === "note" ? note.text : undefined} /></label>
+          <DesktopNoteEditor text={note?.kind === "note" ? note.text : undefined}
+            format={note?.kind === "note" ? note.format : undefined} disabled={disabled} />
           <div className="ae-actions"><Button type="submit" disabled={disabled}>{editing ? "Save changes" : "Add note"}</Button>
             {editing && <Button onClick={() => setEditing(undefined)}>Cancel editing</Button>}</div>
         </form></details>}
@@ -251,8 +301,15 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
           <div><Button type="submit" disabled={disabled || !selected.length}>Create collection</Button></div>
         </form></details>}
       </div>
+      {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
+        <WorkspaceFileTools tools={fileTools}
+          label={section?.id === "documents" ? "Search imported documents" : current.id === "photos" ? "Search imported media" : "Search imported files"}
+          kinds={section?.id === "documents" ? [] : current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
+      </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
-        {entries && current && visible.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved {current.id === "photos" ? "media" : "items"} yet</h4>{(current.id === "files" || current.id === "photos") && <p>Use the add button above to import.</p>}</div>}
+        {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}
+        {entries && current.id === "notes" && !visible.length && categoryItems.length > 0 && <p>No notes match your search.</p>}
+        {entries && current && categoryItems.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved {current.id === "photos" ? "media" : "items"} yet</h4>{(current.id === "files" || current.id === "photos") && <p>Use the add button above to import.</p>}</div>}
         {selectedVisible.length > 0 && <div>
           <Button variant="quiet" disabled={disabled} onClick={() => removeObjects(selectedVisible)}>
             Remove selected ({selectedVisible.length})
@@ -276,12 +333,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
                 onSelect: () => setPreview(preview === object.id ? undefined : object.id) }] : []),
               ...(object.kind === "note" ? [{ id: "edit", label: "Edit note",
                 onSelect: () => { setEditing(object.id); if (noteEditor.current) noteEditor.current.open = true; } }] : []),
-              ...(object.kind === "url" ? [{ id: "open-link", label: "Open in browser", onSelect: () => {
-                setError(undefined);
-                void command<void>("open_workspace_url", { url: object.url }).then(result => {
-                  if (!result.ok) setError("AeRift could not open the saved link in your browser.");
-                });
-              } }] : []),
+              ...(object.kind === "url" ? [{ id: "open-link", label: "Open in browser", onSelect: () =>
+                void openWorkspaceLink(object.url, true) }] : []),
               { id: "remove", label: "Remove", disabled, onSelect: () => removeObjects([object.id]) },
             ]} />
             {preview === object.id && <AssetPreview object={object} />}
