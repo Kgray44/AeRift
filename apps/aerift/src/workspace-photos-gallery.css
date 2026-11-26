@@ -1,0 +1,49 @@
+.aw-photos{display:grid;grid-template-columns:minmax(13rem,.72fr) minmax(0,2.28fr);gap:clamp(.65rem,1.6vw,1.25rem);min-inline-size:0}
+.aw-photos :is(h4,p){margin:0}
+.aw-photos :is(.aw-photos-sidebar,.aw-photos-main){min-inline-size:0;padding:.85rem;border-radius:1.25rem}
+.aw-photos :is(.aw-photos-sidebar,.aw-photos-main) > header,.aw-photo-viewer > header{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-block-end:.7rem}
+.aw-photos-sidebar nav,.aw-photo-add-albums{display:flex;flex-direction:column;gap:.22rem}
+.aw-photos-sidebar nav button,.aw-photo-add-albums button{display:flex;align-items:center;gap:.5rem;min-inline-size:0;min-block-size:2.65rem;
+  border:1px solid transparent;background:transparent;color:var(--ae-text);font:inherit;text-align:start;border-radius:.72rem;padding:.42rem .55rem;overflow-wrap:anywhere}
+.aw-photos-sidebar nav button[aria-current],.aw-photo-add-albums button[aria-pressed="true"]{border-color:var(--ae-control-edge);background:color-mix(in srgb,var(--ae-accent) 15%,transparent)}
+.ae-theme .aw-photos-icons{display:flex;flex-wrap:wrap;align-items:center;gap:.2rem;max-inline-size:100%;padding:.16rem;border-radius:.8rem}
+.aw-photos-grid{list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(9.2rem,100%),1fr));gap:.44rem;margin:.55rem 0;padding:0}
+.aw-photos-grid li{min-inline-size:0}
+.aw-photo-tile{position:relative;display:block;inline-size:100%;padding:0;border:1px solid var(--ae-control-edge);border-radius:.7rem;
+  overflow:hidden;background:var(--ae-field);color:var(--ae-text);font:inherit;cursor:pointer;text-align:start}
+.aw-photo-tile:focus-visible{outline:2px solid var(--ae-focus);outline-offset:2px}
+.aw-photo-thumb{display:grid;place-items:center;aspect-ratio:1;overflow:hidden;position:relative;background:color-mix(in srgb,var(--ae-accent) 10%,transparent)}
+.aw-photo-thumb img{inline-size:100%;block-size:100%;object-fit:cover}
+.aw-photo-video-mark{position:absolute;right:.46rem;bottom:.32rem}
+.aw-photo-caption{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:.76rem;padding:.24rem .38rem}
+.aw-photo-album-form{display:grid;gap:.58rem;padding-block-start:.58rem}
+.aw-photo-album-form label{display:grid;gap:.25rem}
+.aw-photo-album-form input{font:inherit;color:var(--ae-text);background:var(--ae-field);border:1px solid var(--ae-control-edge);border-radius:.66rem;min-inline-size:0;padding:.45rem}
+.aw-photo-viewer{color:var(--ae-text);background:var(--ae-field);border:1px solid var(--ae-control-edge);border-radius:1.2rem;
+  width:min(62rem,94vw);max-height:94dvh;overflow:auto;padding:.9rem;box-sizing:border-box}
+.aw-photo-viewer::backdrop{background:rgb(0 0 0 / .68)}
+.aw-photo-viewer h4{margin:0;overflow-wrap:anywhere}
+.aw-photo-viewer-content{display:grid;place-items:center;gap:.7rem}
+.aw-photo-viewer-content :is(img,video){max-inline-size:100%;max-block-size:72dvh;object-fit:contain}
+.aw-photo-add-albums{max-block-size:12rem;overflow:auto;margin-block-end:.5rem}
+@media(max-width:660px){
+  .aw-photos{grid-template-columns:1fr}.aw-photos-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .aw-photo-viewer{width:100vw;max-width:100vw;max-height:100dvh;border-radius:0}
+}
+@media(hover:hover) and (prefers-reduced-motion:no-preference){
+  .ae-theme:not([data-motion="reduce"]) .aw-photo-tile{transition:transform var(--ae-fast,160ms) ease}
+  .ae-theme:not([data-motion="reduce"]) .aw-photo-tile:hover{transform:translateY(-2px)}
+  .ae-theme:not([data-motion="reduce"]) .aw-photo-tile:active{transform:scale(.98)}
+}
+
+.aw-photos-next > svg { transform: rotate(180deg); }
+
+/* On a phone the album strip doesn't push the imported grid below the fold. */
+@media (max-width: 660px) {
+  .ios-imported-photo-library .aw-photos-sidebar nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: .3rem;
+  }
+  .ios-imported-photo-library .aw-photos-sidebar nav button { min-block-size: 2.75rem; }
+}

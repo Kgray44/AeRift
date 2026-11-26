@@ -31,6 +31,8 @@ mod explorer_receive;
 mod ios;
 #[cfg(target_os = "ios")]
 mod ios_received_preview;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+mod mobile_photo_thumbnail;
 #[cfg(windows)]
 mod private_remote_app;
 #[cfg(windows)]
@@ -86,6 +88,7 @@ pub fn run() {
             ios::select_app_file,
             ios::import_ios_media,
             ios::list_ios_media,
+            ios::thumbnail_ios_media,
             ios::remove_ios_media,
             ios::select_ios_media,
             ios::present_ios_media,
@@ -119,6 +122,7 @@ pub fn run() {
             android::retry_android_discovery,
             android::import_android_media,
             android::list_android_media,
+            android::thumbnail_android_media,
             android::remove_android_media,
             android::select_android_media,
             android::present_android_media,

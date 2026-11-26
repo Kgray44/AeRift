@@ -10,5 +10,6 @@ export interface MobileMediaPort {
   import(source: MediaSource): Promise<Result<readonly ImportedMedia[]>>;
   remove(assetId: string): Promise<Result<readonly ImportedMedia[]>>;
   select(assetId: string): Promise<Result<FileSelection | null>>;
+  thumbnail?(assetId: string): Promise<Result<string>>;
   present(assetId: string, action: MediaAction): Promise<Result<void>>;
 }

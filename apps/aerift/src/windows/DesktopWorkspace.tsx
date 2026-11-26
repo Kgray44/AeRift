@@ -8,6 +8,8 @@ import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
 import { WorkspaceDocumentsGallery } from "../WorkspaceDocumentsGallery";
 import { WorkspaceChosenFolder } from "./WorkspaceChosenFolder";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
+import { WorkspacePhotosGallery } from "../WorkspacePhotosGallery";
+import { NoteIconButton } from "../WorkspaceNoteTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
 import { WorkspaceCollectionsGallery } from "../WorkspaceCollectionsGallery";
@@ -89,7 +91,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
   const section = workspace.section;
   const current = section ? { id: section.module, label: section.label } : undefined;
   const fileTools = useWorkspaceFileTools(`desktop:${section?.id ?? "all"}`);
-  const fileCategory = current?.id === "files" || current?.id === "photos";
+  const fileCategory = current?.id === "files";
   const itemsRef = useRef<HTMLElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
   useDesktopContentEnter(section?.id, itemsRef);
@@ -285,8 +287,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
   const pages = Math.max(1, Math.ceil(visible.length / pageSize));
   const page = Math.min(pageIndex, pages - 1);
   const visiblePage = visible.slice(page * pageSize, (page + 1) * pageSize);
-  const importLabel = current?.id === "photos" ? "Import photos and videos" :
-    section?.id === "documents" ? "Import documents" : "Import files";
+  const importLabel = "Import files";
   const selectedVisible = visible.filter(({ object }) => selected.includes(object.id)).map(({ object }) => object.id);
 
   return <MotionFeedbackProvider group="desktop-workspace"><WorkspaceScene scene={workspace}><div className="aerift-workspace">
@@ -313,19 +314,31 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
       preselectedIds={selected} disabled={disabled || !collectionAppearance.ready} onCreate={createCollection}
       onRename={renameCollection} onChangeMembers={updateCollection}
       onRemove={id => byId.get(id)?.kind === "collection" && removeObjects([id])} />}
-    {current && section?.id !== "notes" && section?.id !== "collections" && section?.id !== "documents" && <div className="aerift-workspace-content">
+
+    {current?.id === "photos" && <WorkspacePhotosGallery
+      catalog={categoryItems.flatMap(({ object, hasAsset }) =>
+        (object.kind === "photo" || object.kind === "video") && hasAsset ? [{ id: object.id, name: object.name, kind: object.kind, object }] : [])}
+      scope="desktop" disabled={disabled} readAsset={loadWorkspaceAsset}
+      onImport={files => importFiles(files, true)} onRemove={id => removeObjects([id])}
+      emptyText="No photos here yet. Use the plus icon to import photos or videos."
+      viewer={({ object }) => <>
+        <AssetPreview object={object} />
+        <NoteIconButton icon="folder" type="button" label="Select photo for collection" aria-pressed={selected.includes(object.id)}
+          onClick={() => select(object.id, !selected.includes(object.id))} />
+      </>} />}
+    {current && section?.id !== "notes" && current.id !== "photos" && section?.id !== "collections" && section?.id !== "documents" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
         onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: embeddedWebsitesRequested
           ? "Embedded Websites is requested, but unavailable in this build. Opens pages in your default browser."
           : "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
-        {(current?.id === "files" || current?.id === "photos") &&
+        {current?.id === "files" &&
           <div className="aerift-workspace-import">
             <IconAction variant="secondary" icon="add" label={importLabel} disabled={disabled}
               onClick={() => importInput.current?.click()} />
-            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled} accept={current.id === "photos" ? "image/*,video/*" : undefined}
+            <input ref={importInput} hidden aria-label={importLabel} type="file" multiple disabled={disabled}
               onChange={event => {
-                importFiles(Array.from(event.currentTarget.files ?? []), current.id === "photos");
+                void importFiles(Array.from(event.currentTarget.files ?? []), false);
                 event.currentTarget.value = "";
               }} />
           </div>}
@@ -343,12 +356,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
       {active && section?.id === "files" && isTauri() && <WorkspaceChosenFolder />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
-          label={current.id === "photos" ? "Search imported media" : "Search imported files"}
-          kinds={current.id === "photos" ? ["photo", "video"] : ["document", "photo", "video", "other"]} />
+          label="Search imported files"
+          kinds={["document", "photo", "video", "other"]} />
       </section>}
       <section ref={itemsRef} aria-label={`Saved ${current.label.toLowerCase()}`} className="aerift-workspace-items">
         {entries && fileCategory && !visible.length && categoryItems.length > 0 && <p>No imported items match your search.</p>}
-        {entries && current && categoryItems.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved {current.id === "photos" ? "media" : "items"} yet</h4>{(current.id === "files" || current.id === "photos") && <p>Use the add button above to import.</p>}</div>}
+        {entries && current && categoryItems.length === 0 && <div className="aerift-empty-state"><SpatialIcon name="workspace" size={32} /><h4>No saved items yet</h4>{current.id === "files" && <p>Use the add button above to import.</p>}</div>}
         {selectedVisible.length > 0 && <div>
           <Button variant="quiet" disabled={disabled} onClick={() => removeObjects(selectedVisible)}>
             Remove selected ({selectedVisible.length})

@@ -53,6 +53,10 @@ private struct MediaLibraryResponse: Encodable {
     let items: [MediaImport]
 }
 
+private struct ThumbnailResponse: Encodable {
+    let jpeg: String
+}
+
 private struct MediaAssetArgs: Decodable {
     let assetId: UUID
 }
@@ -124,6 +128,8 @@ final class AeRiftPlugin: Plugin {
     @MainActor private var browserCapture: BrowserLinkCapture?
     @MainActor private lazy var filePicker = FilePicker()
     @MainActor private var mediaLibrary: MediaLibrary?
+    @MainActor private var thumbnailBusy = false
+    private let thumbnailQueue = DispatchQueue(label: "com.aerift.imported-thumbnail", qos: .userInitiated)
 
     @MainActor
     private func openMediaLibrary() throws -> MediaLibrary {
@@ -240,6 +246,31 @@ final class AeRiftPlugin: Plugin {
                 invoke.resolve(MediaLibraryResponse(items: try self.openMediaLibrary().list()))
             } catch {
                 invoke.reject("AeRift could not read the import library.")
+            }
+        }
+    }
+
+    @objc func thumbnailMedia(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(MediaAssetArgs.self)
+        DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState == .active, !self.thumbnailBusy,
+                  let library = try? self.openMediaLibrary(),
+                  let source = try? library.thumbnailSource(args.assetId) else {
+                invoke.reject("Photo preview unavailable.")
+                return
+            }
+            self.thumbnailBusy = true
+            self.thumbnailQueue.async {
+                let jpeg = try? source.decode().base64EncodedString()
+                DispatchQueue.main.async {
+                    self.thumbnailBusy = false
+                    guard UIApplication.shared.applicationState == .active,
+                          (try? library.thumbnailSource(args.assetId)) == source, let jpeg else {
+                        invoke.reject("Photo preview unavailable.")
+                        return
+                    }
+                    invoke.resolve(ThumbnailResponse(jpeg: jpeg))
+                }
             }
         }
     }

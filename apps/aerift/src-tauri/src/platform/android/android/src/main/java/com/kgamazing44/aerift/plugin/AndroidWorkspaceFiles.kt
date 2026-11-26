@@ -135,6 +135,9 @@ internal class AndroidWorkspaceFiles(private val context: Context) {
         return list()
     }
 
+    // Only the app-private import catalog can issue a thumbnail source.
+    fun thumbnail(assetId: String): ByteArray = ImportedPhotoThumbnail.make(durable, assetId)
+
     fun stageMedia(assetId: String): Item {
         val parent = asset(assetId)
         val record = readRecord(parent) ?: error("Media unavailable")

@@ -28,6 +28,7 @@ export function createMobileOperations(platform: MobilePlatform, call: InvokeCom
     import: source => readImports(`import_${platform}_media`, { source }),
     remove: assetId => readImports(`remove_${platform}_media`, { assetId }),
     select: assetId => call<FileSelection | null>(`select_${platform}_media`, { assetId }),
+    thumbnail: assetId => call<string>(`thumbnail_${platform}_media`, { assetId }),
     present: (assetId, action) => call<void>(`present_${platform}_media`, { assetId, action }),
   };
   return {
@@ -54,6 +55,7 @@ export type MobileOperations = ReturnType<typeof createMobileOperations>;
 
 export const mobilePlatformCopy = {
   ios: {
+    photoAlbumScope: "ios",
     device: "this iPhone",
     discoveryMessage: "Allow Local Network access in iOS Settings to find AeRift devices nearby.",
     cameraDenied: "Allow camera access for AeRift in iOS Settings, then return to Rift.",
@@ -65,6 +67,7 @@ export const mobilePlatformCopy = {
     browserTip: "In the in-app browser, choose Share → Collect in AeRift, then Done. You can also enter an address here.",
   },
   android: {
+    photoAlbumScope: "android",
     device: "this Android device",
     discoveryMessage: "Check Wi-Fi or nearby access for AeRift in Android Settings, then retry discovery.",
     cameraDenied: "Allow camera access for AeRift in Android app settings, then return to Rift.",

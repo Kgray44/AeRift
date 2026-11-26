@@ -211,15 +211,17 @@ async (page) => {
     "file import order survives staging");
   await openCategory('Images & Videos');
   const media = page.getByRole("region", { name: "Imported photos and videos", exact: true });
-  await media.getByRole("button", { name: "Import photos or videos", exact: true }).click();
+  await media.getByRole("button", { name: "Import photos and videos", exact: true }).click();
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
   check((await media.getByRole("listitem").allTextContents())[0].includes("Harbor aerial.heic"),
     "photo-library order is preserved");
   check(await media.getByText("Navigation chart.pdf", { exact: true }).count() === 0, "media filters out provider files");
-  const video = media.getByRole("listitem").filter({ hasText: "Harbor approach.mov" });
-  await video.getByRole("button", { name: "Preview", exact: true }).click();
+  await media.getByRole("button", { name: "Open Harbor approach.mov", exact: true }).click();
+  const video = page.getByRole("dialog", { name: "Viewing Harbor approach.mov" });
+  await video.getByRole("button", { name: "Open in Quick Look", exact: true }).click();
   await video.getByRole("button", { name: "Export copy", exact: true }).click();
   await video.getByRole("button", { name: "Select for Rift", exact: true }).click();
+  await video.getByRole("button", { name: "Close photo", exact: true }).click();
   await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
   await page.screenshot({ path: "docs/validation/evidence/mobile-workspace/media-import-tray-390.png", fullPage: true,
     animations: "disabled" });
@@ -227,7 +229,11 @@ async (page) => {
   await page.locator(".ae-dock-file").getByText("Harbor approach.mov", { exact: true }).waitFor();
   await go("Workspace");
   await openCategory('Images & Videos');
-  await media.getByRole("button", { name: "Remove Harbor aerial.heic", exact: true }).click();
+  await media.getByRole("button", { name: "Open Harbor aerial.heic", exact: true }).click();
+  const removePhoto = page.getByRole("dialog", { name: "Viewing Harbor aerial.heic" });
+  await removePhoto.getByRole("button", { name: "Remove imported copy", exact: true }).click();
+  await removePhoto.getByRole("button", { name: "Confirm remove imported copy", exact: true }).click();
+  await media.getByRole("button", { name: "Open Harbor aerial.heic", exact: true }).waitFor({ state: "detached" });
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removes only the selected imported copy");
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
   await page.reload();
@@ -235,7 +241,9 @@ async (page) => {
   await openCategory('Images & Videos');
   await media.getByText("Harbor approach.mov", { exact: true }).waitFor();
   check(await media.getByText("Harbor aerial.heic", { exact: true }).count() === 0, "removal survives restart");
-  await media.getByRole("button", { name: "Select for Rift", exact: true }).click();
+  await media.getByRole("button", { name: "Open Harbor approach.mov", exact: true }).click();
+  await video.getByRole("button", { name: "Select for Rift", exact: true }).click();
+  await video.getByRole("button", { name: "Close photo", exact: true }).click();
   await page.getByRole("region", { name: "Selected object" }).getByText("Harbor approach.mov", { exact: true }).waitFor();
   await openCategory('Notes');
   const notes = page.getByRole("region", { name: "notes", exact: true });

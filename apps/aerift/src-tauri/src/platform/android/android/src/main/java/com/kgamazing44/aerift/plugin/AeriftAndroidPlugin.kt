@@ -70,6 +70,7 @@ class AeriftAndroidPlugin(private val activity: Activity) : Plugin(activity) {
     private val discovery = AndroidPeerDiscovery(activity.applicationContext)
     private val camera = AndroidCamera(activity)
     private val systemChooser = AtomicBoolean()
+    private val thumbnailForeground = AtomicBoolean()
     private var browserSession: BrowserCollection.Session? = null
     private val clipboard get() = requireNotNull(activity.getSystemService(ClipboardManager::class.java))
 
@@ -80,11 +81,17 @@ class AeriftAndroidPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     override fun onPause(activity: AppCompatActivity) {
-        if (activity === this.activity) discovery.foreground(false)
+        if (activity === this.activity) {
+            thumbnailForeground.set(false)
+            discovery.foreground(false)
+        }
     }
 
     override fun onResume(activity: AppCompatActivity) {
-        if (activity === this.activity) discovery.foreground(true)
+        if (activity === this.activity) {
+            thumbnailForeground.set(true)
+            discovery.foreground(true)
+        }
     }
 
     override fun onDestroy(activity: AppCompatActivity) {
@@ -129,6 +136,12 @@ class AeriftAndroidPlugin(private val activity: Activity) : Plugin(activity) {
     @Command fun listMedia(invoke: Invoke) = background(invoke) { objectOf("items" to files.list()) }
     @Command fun stageMedia(invoke: Invoke) = background(invoke) {
         objectOf("selection" to files.stageMedia(invoke.parseArgs(AssetArgs::class.java).assetId).wire())
+    }
+    @Command fun thumbnailMedia(invoke: Invoke) = background(invoke) {
+        check(thumbnailForeground.get() && !systemChooser.get())
+        val jpeg = files.thumbnail(invoke.parseArgs(AssetArgs::class.java).assetId)
+        check(thumbnailForeground.get())
+        objectOf("jpeg" to android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP))
     }
     @Command fun removeMedia(invoke: Invoke) = background(invoke) {
         objectOf("items" to files.remove(invoke.parseArgs(AssetArgs::class.java).assetId))
