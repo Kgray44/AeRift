@@ -2,13 +2,13 @@
 // clicks controls nor calls application IPC and never sees a native image path.
 const [port, phase, fixtureId, nameMode] = process.argv.slice(2);
 if (!/^[0-9]{1,5}$/.test(port ?? "") || Number(port) < 1024 || Number(port) > 65535 ||
-    !["imported", "removed"].includes(phase) || !/^[0-9]{1,19}$/.test(fixtureId ?? "") ||
+    !["target", "preview", "imported", "removed"].includes(phase) || !/^[0-9]{1,19}$/.test(fixtureId ?? "") ||
     !["original", "picker"].includes(nameMode)) throw new Error("Invalid emulator observation request");
 
 const fixtureName = nameMode === "original" ? "AeRift-Android-photo-smoke.png" : fixtureId + ".png";
 const embedded = new Set(["http://tauri.localhost", "https://tauri.localhost"]);
 const host = "127.0.0.1:" + port;
-const deadline = Date.now() + 22_000;
+const deadline = Date.now() + (phase === "target" ? 4000 : 22_000);
 const pause = () => new Promise(resolve => setTimeout(resolve, 350));
 const expression = `(() => {
   const gallery = document.querySelector('.aw-photos-main[aria-label="Photo gallery"]');
@@ -17,7 +17,18 @@ const expression = `(() => {
   const tile = matches.length === 1 ? matches[0] : null;
   const image = tile?.querySelector('img');
   const viewer = document.querySelector('.aw-photo-viewer[open]');
-  return { confirm: !!viewer?.querySelector('[role="group"][aria-label="Confirm remove imported copy"]'),
+  const closeButtons = [...(viewer?.querySelectorAll('button[aria-label="Close photo"]') ?? [])]
+    .filter(button => !button.disabled && button.getClientRects().length > 0);
+  const rect = tile?.getBoundingClientRect();
+  const tileAtCenter = !!rect && !!tile?.contains(document.elementFromPoint(
+    (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2));
+  const midY = rect ? (rect.top + rect.bottom) / 2 : 0;
+  const target = !tile || !rect?.width || !rect.height || viewer ? 'blocked' :
+    midY > innerHeight * 0.8 ? 'below' :
+    midY < innerHeight * 0.2 ? 'above' : tileAtCenter ? 'ready' : 'blocked';
+  return { target, exactPreview: viewer?.getAttribute('aria-label') === ${JSON.stringify("Viewing " + fixtureName)},
+    closes: closeButtons.length, tileAtCenter,
+    confirm: !!viewer?.querySelector('[role="group"][aria-label="Confirm remove imported copy"]'),
     viewerError: !!viewer?.querySelector('[role="alert"]'),
     gallery: !!gallery && gallery.getClientRects().length > 0,
     count: tiles.length, matches: matches.length, tile: !!tile, modal: !!document.querySelector('.aw-photo-viewer[open]'),
@@ -61,9 +72,19 @@ while (Date.now() < deadline) {
         throw new Error("Unowned WebView debugger");
       }
       last = await probe(endpoint);
-      if (last?.gallery && !last.modal && (phase === "imported" ?
-        last.tile && last.derived && last.width === 256 && last.height === 160 :
-        last.matches === 0 && last.count === 0)) {
+      if (phase === "target") {
+        if (["ready", "above", "below", "blocked"].includes(last?.target)) {
+          console.log(last.target);
+          process.exit(0);
+        }
+        throw new Error("Unknown installed Photos target state");
+      }
+      const witnessed = phase === "preview"
+        ? last?.modal && last.exactPreview && last.closes === 1
+        : last?.gallery && !last.modal && (phase === "imported"
+          ? last.tile && last.derived && last.width === 256 && last.height === 160
+          : last.matches === 0 && last.count === 0);
+      if (witnessed) {
         console.log("Android installed Photos witness:", JSON.stringify({ phase, ...last }));
         process.exit(0);
       }

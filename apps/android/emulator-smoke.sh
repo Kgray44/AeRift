@@ -17,8 +17,17 @@ photo_forward=
 photo_uri=
 tmp="$(mktemp -d)"
 pid=
-# Use the supported direct software backend; swiftshader_indirect is deprecated.
+# Keep the historical performance backend for comparable measurements.
 gpu=swiftshader
+perf="${AERIFT_PERF_OBSERVE:-0}"
+render_options=()
+# SDK 37.3.10 can stop mid-test with SwiftShader even without guest Vulkan.
+# Use the SDK's Mesa software backend for the functional gate instead.
+if [[ "$perf" != 1 ]]; then
+  gpu=lavapipe
+  render_options=(-feature -Vulkan)
+  printf 'Android functional smoke: Mesa lavapipe; guest Vulkan disabled.\n'
+fi
 assert_emulator_alive() {
   local phase="$1" status
   if status="$(ps -o stat= -p "$pid" 2>/dev/null)" &&
@@ -38,8 +47,19 @@ cleanup() {
     if [[ "$photo_uri" =~ ^content://media/external_primary/images/media/[0-9]+$ ]]; then
       adb -s "$serial" shell content delete --uri "$photo_uri" >/dev/null 2>&1 || true
     fi
-    adb -s "$serial" emu kill >/dev/null 2>&1 || true
-    kill "$pid" 2>/dev/null || true
+    timeout 5s adb -s "$serial" emu kill >/dev/null 2>&1 || true
+    # The emulator can still write its AVD while stopping. Poll only our
+    # launched child, then join it before removing test-owned scratch.
+    local i status
+    for ((i = 0; i < 40; ++i)); do
+      status="$(ps -o stat= -p "$pid" 2>/dev/null)" || break
+      [[ "$status" =~ ^[[:space:]]*[^ZX[:space:]] ]] || break
+      sleep 0.1
+    done
+    if [[ "$status" =~ ^[[:space:]]*[^ZX[:space:]] ]]; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
   fi
   rm -rf "$tmp"
 }
@@ -64,7 +84,7 @@ release="$(sed -n 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$(dirname "$em
 printf 'Android SDK emulator revision: %s.\n' "${release:-unknown}"
 printf 'Android emulator: GPU %s, VM acceleration %s.\n' "$gpu" "$accel"
 "$emulator" -avd "$avd" -port 5580 -no-window -no-audio -no-boot-anim -no-snapshot \
-  -gpu "$gpu" -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
+  -gpu "$gpu" "${render_options[@]}" -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
 pid=$!
 boot_budget=220
 [[ "$accel" == on ]] || boot_budget=650
@@ -84,7 +104,6 @@ printf 'AeRift Android CI: synthetic local-only selection fixture.\n' >"$tmp/$fi
 adb -s "$serial" push "$tmp/$fixture_name" "/sdcard/Download/$fixture_name"
 component="$(adb -s "$serial" shell cmd package resolve-activity --brief "$identity" | tail -n1)"
 [[ "$component" == "$identity/"* ]]
-perf="${AERIFT_PERF_OBSERVE:-0}"
 monotonic_ms() { python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'; }
 if [[ "$perf" == 1 ]]; then
   observe_started="$(monotonic_ms)"
@@ -493,15 +512,51 @@ PY_PNG
     echo 'Android Photos smoke did not find an enabled, unique, owned gallery import action.' >&2; exit 1
   fi
   tap_photo_picker() {
-    local action="$1" i hit x y
+    local action="$1" i hit previous="" x y
     for ((i = 0; i < 12; i++)); do
       if dump_ui && hit="$(python3 apps/android/photo_picker_ui.py "$tmp/ui.xml" "$action")"; then
-        read -r x y <<< "$hit"
-        adb -s "$serial" shell input tap "$x" "$y"
-        return 0
+        # A bottom-sheet transition can expose the node before it settles.
+        # Tap only after two fresh, identical owned target observations.
+        if [[ "$hit" == "$previous" ]]; then
+          read -r x y <<< "$hit"
+          adb -s "$serial" shell input tap "$x" "$y"
+          return 0
+        fi
+        previous="$hit"
+      else
+        previous=""
       fi
       sleep 1
     done
+    # Evidence only: count enumerated synthetic-picker nodes without logging
+    # labels, identifiers, screen content, or coordinates from any window.
+    if dump_ui; then
+      python3 - "$tmp/ui.xml" <<'PY_PICKER_REPORT' >&2 || true
+import runpy
+import sys
+from xml.etree import ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1])
+except (ET.ParseError, OSError):
+    print("Android Photo Picker diagnostic: fresh UI unreadable.")
+    raise SystemExit(0)
+picker = runpy.run_path("apps/android/photo_picker_ui.py")
+nodes = list(root.iter("node"))
+owned = [n for n in nodes if n.get("package") in picker["PACKAGES"]]
+photos = [n for n in owned if any(picker["PHOTO_DESC"].fullmatch(
+    n.get(field, "")) for field in ("text", "content-desc"))]
+add = [n for n in owned if n.get("text") == "Add (1)" or n.get("content-desc") == "Add (1)"]
+done = [n for n in owned if n.get("text") == "Done" or n.get("content-desc") == "Done"]
+print("Android Photo Picker diagnostic: "
+      f"nodes={len(nodes)} picker={len(owned)} photos={len(photos)} "
+      f"enabled_photos={sum(n.get('enabled') == 'true' for n in photos)} "
+      f"add={len(add)} done={len(done)} "
+      f"unique_photo={picker['find_target'](root, 'photo') is not None} "
+      f"unique_commit={picker['find_target'](root, 'commit') is not None}")
+PY_PICKER_REPORT
+    else
+      echo 'Android Photo Picker diagnostic: fresh UI capture unavailable.' >&2
+    fi
     echo "System Photos picker did not expose a unique $action action." >&2; return 1
   }
   photo_stage 'select fixture and explicitly commit through system picker'
@@ -512,12 +567,26 @@ PY_PNG
   # was verified above as the only local image, and the radios are off.
   # https://android.googlesource.com/platform/packages/providers/MediaProvider/+/0a212c65f2e4aef9cc7720161b339460b42696c2/src/com/android/providers/media/photopicker/data/PickerDbFacade.java
   tap_imported_fixture() {
-    local i hit x y mode
+    local i hit x y mode target x1 y1 x2 y2
     for ((i = 0; i < 12; i++)); do
       if gallery_capture && hit="$(gallery_ax imported "$photo_id" "$@")" && gallery_focused; then
         read -r x y mode <<<"$hit"
         [[ "$mode" == original || "$mode" == picker ]] || return 1
-        adb -s "$serial" shell input tap "$x" "$y" || return 1
+        target="$(node apps/android/emulator-photo-observer.mjs "$photo_forward" target "$photo_id" "$mode")" || return 1
+        if [[ "$target" == ready ]] && gallery_focused; then
+          adb -s "$serial" shell input tap "$x" "$y" || return 1
+        else
+          if [[ "$target" == below || "$target" == above ]] && hit="$(gallery_ax scroll)" && gallery_focused; then
+            read -r x1 y1 x2 y2 <<<"$hit"
+            if [[ "$target" == below ]]; then
+              adb -s "$serial" shell input swipe "$x1" "$y1" "$x2" "$y2" 350
+            else
+              adb -s "$serial" shell input swipe "$x2" "$y2" "$x1" "$y1" 350
+            fi
+          fi
+          sleep 1
+          continue
+        fi
         photo_name_mode="$mode"
         return 0
       fi
@@ -527,25 +596,16 @@ PY_PNG
     echo 'Android Photos smoke did not find one enabled owned tile with an exact fixture name or exact picker alias.' >&2
     return 1
   }
-  photo_stage 'verify exact imported fixture and close its preview'
-  tap_imported_fixture
-  await_ui 'Close photo' >/dev/null
-  tap_label 'Close photo'
-
   # WebView debugging on the existing debug build is observation only. An
   # app-process-owned local socket is forwarded briefly; no remote network.
-  photo_stage 'verify bounded native thumbnail in app WebView'
+  photo_stage 'bind read-only observer to owned Android debug WebView'
   process="$(adb -s "$serial" shell pidof "$identity" | tr -d '\r')"
   [[ "$process" =~ ^[0-9]+$ ]]
   package_dump="$(adb -s "$serial" shell dumpsys package "$identity")"
   grep -Eq 'pkgFlags=\[[^]]*[[:space:]]DEBUGGABLE([[:space:]]|])' <<<"$package_dump"
   photo_forward="$(adb -s "$serial" forward tcp:0 "localabstract:webview_devtools_remote_$process" | tr -d '\r')"
   [[ "$photo_forward" =~ ^[0-9]+$ ]]
-  node apps/android/emulator-photo-observer.mjs "$photo_forward" imported "$photo_id" "$photo_name_mode"
-
-  tap_imported_fixture "$photo_name_mode"
-  photo_stage 'confirm removal then verify original MediaStore bytes'
-  tap_owned_removal_action() {
+  tap_owned_gallery_button() {
     local action="$1" i hit x y
     for ((i = 0; i < 6; i++)); do
       if gallery_capture && hit="$(gallery_ax "$action")" && gallery_focused; then
@@ -556,13 +616,24 @@ PY_PNG
       sleep 1
     done
     gallery_report
-    echo "Android Photos smoke could not locate one owned removal button ($action)." >&2
+    echo "Android Photos smoke could not locate one owned gallery button ($action)." >&2
     return 1
   }
+  photo_stage 'open exact imported fixture by an owned pointer action'
+  tap_imported_fixture
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" preview "$photo_id" "$photo_name_mode"
+  photo_stage 'close the verified preview via its owned accessibility button'
+  tap_owned_gallery_button close
+
+  photo_stage 'verify bounded native thumbnail in app WebView'
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" imported "$photo_id" "$photo_name_mode"
+
+  tap_imported_fixture "$photo_name_mode"
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" preview "$photo_id" "$photo_name_mode"
   photo_stage 'tap owned Remove imported copy button'
-  tap_owned_removal_action remove
+  tap_owned_gallery_button remove
   photo_stage 'tap owned Confirm remove imported copy button'
-  tap_owned_removal_action confirm-remove
+  tap_owned_gallery_button confirm-remove
   photo_stage 'verify removed Android import and unchanged original'
   node apps/android/emulator-photo-observer.mjs "$photo_forward" removed "$photo_id" "$photo_name_mode"
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-after.png"

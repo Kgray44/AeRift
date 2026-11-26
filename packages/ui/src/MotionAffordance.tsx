@@ -3,21 +3,24 @@ import { forwardRef, useSyncExternalStore } from "react";
 import { LayoutGroup, LazyMotion, MotionConfig, type Variants } from "motion/react";
 import * as m from "motion/react-m";
 import { useAppearanceMotion } from "./theme";
+import { PUBLIC_MOTION_PRESENTATION, validateMotionPresentation } from "./motion-presentation-contract";
+import presentationProvider from "./motion-presentation-provider";
 
 // Keep gesture effects on the inner decoration. The actual hit target, focus
 // ring, layout, and Glass surface stay stable throughout press and release.
-const settle = { type: "spring", stiffness: 490, damping: 32, mass: 0.56 } as const;
-const push = { type: "spring", stiffness: 670, damping: 42, mass: 0.44 } as const;
+const { workspaceCard } = validateMotionPresentation(presentationProvider) ?? PUBLIC_MOTION_PRESENTATION;
+const settle = { type: "spring", ...workspaceCard.settle } as const;
+const push = { type: "spring", ...workspaceCard.push } as const;
 const accents: Record<"symbol" | "chevron", Variants> = {
   symbol: {
     idle: { scale: 1, y: 0, transition: settle },
-    hover: { scale: 1.045, y: -2, transition: settle },
-    press: { scale: 0.96, y: 0, transition: push },
+    hover: { scale: workspaceCard.symbol.hoverScale, y: workspaceCard.symbol.hoverY, transition: settle },
+    press: { scale: workspaceCard.symbol.pressScale, y: 0, transition: push },
   },
   chevron: {
     idle: { x: 0, transition: settle },
-    hover: { x: 3, transition: settle },
-    press: { x: 1, transition: push },
+    hover: { x: workspaceCard.chevron.hoverX, transition: settle },
+    press: { x: workspaceCard.chevron.pressX, transition: push },
   },
 };
 
