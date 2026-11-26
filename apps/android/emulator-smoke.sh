@@ -512,12 +512,19 @@ PY_PNG
     echo 'Android Photos smoke did not find an enabled, unique, owned gallery import action.' >&2; exit 1
   fi
   tap_photo_picker() {
-    local action="$1" i hit x y
+    local action="$1" i hit previous="" x y
     for ((i = 0; i < 12; i++)); do
       if dump_ui && hit="$(python3 apps/android/photo_picker_ui.py "$tmp/ui.xml" "$action")"; then
-        read -r x y <<< "$hit"
-        adb -s "$serial" shell input tap "$x" "$y"
-        return 0
+        # A bottom-sheet transition can expose the node before it settles.
+        # Tap only after two fresh, identical owned target observations.
+        if [[ "$hit" == "$previous" ]]; then
+          read -r x y <<< "$hit"
+          adb -s "$serial" shell input tap "$x" "$y"
+          return 0
+        fi
+        previous="$hit"
+      else
+        previous=""
       fi
       sleep 1
     done
