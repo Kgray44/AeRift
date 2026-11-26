@@ -49,7 +49,10 @@ export ANDROID_AVD_HOME="$tmp/avd"
 mkdir -p "$ANDROID_AVD_HOME"
 printf 'no\n' | "$avdmanager" create avd --force --name "$avd" --package "$cpu_image" --device pixel_6
 if [[ -w /dev/kvm ]]; then accel=on; else accel=off; fi
-"$emulator" -version
+# SDK metadata is informational. The non-headless -version command loads
+# desktop audio libraries that the actual headless runner does not need.
+release="$(sed -n 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$(dirname "$emulator")/source.properties" 2>/dev/null | head -n 1 || true)"
+printf 'Android SDK emulator revision: %s.\n' "${release:-unknown}"
 printf 'Android emulator: GPU %s, VM acceleration %s.\n' "$gpu" "$accel"
 "$emulator" -avd "$avd" -port 5580 -no-window -no-audio -no-boot-anim -no-snapshot \
   -gpu "$gpu" -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
