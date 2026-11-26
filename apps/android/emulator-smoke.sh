@@ -17,16 +17,16 @@ photo_forward=
 photo_uri=
 tmp="$(mktemp -d)"
 pid=
-# Use the supported direct software backend; swiftshader_indirect is deprecated.
+# Keep the historical performance backend for comparable measurements.
 gpu=swiftshader
 perf="${AERIFT_PERF_OBSERVE:-0}"
 render_options=()
-# The functional smoke does not exercise Vulkan. SDK 37.3.10 can crash in
-# the hosted headless graphics path before the Photos test. Keep the
-# historical performance configuration unchanged for comparable measurements.
+# SDK 37.3.10 can stop mid-test with SwiftShader even without guest Vulkan.
+# Use the SDK's Mesa software backend for the functional gate instead.
 if [[ "$perf" != 1 ]]; then
+  gpu=lavapipe
   render_options=(-feature -Vulkan)
-  printf 'Android functional smoke: GLES via SwiftShader; Vulkan disabled.\n'
+  printf 'Android functional smoke: Mesa lavapipe; guest Vulkan disabled.\n'
 fi
 assert_emulator_alive() {
   local phase="$1" status
