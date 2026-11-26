@@ -19,7 +19,8 @@ path = "src/main.rs"
 workspace-folder-picker-qualification = ["aerift-transfer/windows-folder-picker-qualification"]
 workspace-browser-qualification = ["dep:raw-window-handle", "dep:webview2-com", "dep:wry"]
 ambient-native-model-qualification = ["dep:sha2", "windows-sys/Win32_System_LibraryLoader"]
-ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "dep:windows-core"]
+ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "windows/Win32_System_WinRT", "windows/Win32_UI_Controls", "windows/Security_Authorization_AppCapabilityAccess", "dep:windows-core"]
+ambient-explorer-camera-owner = ["ambient-media-qualification", "ambient-native-model-qualification"]
 private-remote-host = []
 private-remote-app = ["tauri/custom-protocol"]
 

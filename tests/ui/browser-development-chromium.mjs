@@ -33,5 +33,21 @@ try {
   toggle = await development();
   await toggle.uncheck();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem("aerift.settings.v1")).embeddedWebsitesRequested === false);
-  console.log("Development preference defaults off, persists, and does not override the system browser fallback.");
+  const pickup = page.getByRole("checkbox", { name: "Explorer hand pickup", exact: true });
+  assert.equal(await pickup.isDisabled(), true);
+  await page.goto(root + local + "settings&explorerPickupFixture=1");
+  await development();
+  await page.getByText(/Enable Ambient capture first/).waitFor();
+  assert.equal(await pickup.isChecked(), false);
+  await pickup.check();
+  await page.waitForFunction(() => document.documentElement.dataset.explorerPermissionChanges === "1");
+  assert.equal(await pickup.isChecked(), true);
+  await pickup.uncheck();
+  await page.waitForFunction(() => document.documentElement.dataset.explorerPermissionChanges === "2");
+  assert.equal(await pickup.isChecked(), false);
+  await page.reload();
+  await development();
+  await page.getByText(/Enable Ambient capture first/).waitFor();
+  assert.equal(await pickup.isChecked(), false);
+  console.log("Development preferences honor platform availability, default off, and do not start native camera work.");
 } finally { await browser.close(); }

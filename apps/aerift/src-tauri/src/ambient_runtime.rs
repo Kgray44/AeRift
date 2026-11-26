@@ -22,9 +22,26 @@ use tauri::{ipc::Channel, AppHandle, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 
-use crate::ambient_context::{self, ContextError, ExplorerContext};
+use crate::ambient_context::{self, CaptureAnchor, ContextError, ExplorerContext};
 
+#[cfg(feature = "ambient-media-qualification")]
+mod explorer_gesture;
+#[cfg(feature = "ambient-media-qualification")]
+mod explorer_camera_session;
+#[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+pub(crate) mod explorer_camera_owner;
 mod nearby_actions;
+
+struct NativePickupGuard {
+    anchor: CaptureAnchor,
+    still_authorized: Box<dyn Fn() -> bool + Send + Sync>,
+}
+
+impl NativePickupGuard {
+    fn is_current(&self) -> bool {
+        (self.still_authorized)() && ambient_context::capture_anchor().ok() == Some(self.anchor)
+    }
+}
 
 #[derive(Clone, Serialize)]
 #[serde(
@@ -60,6 +77,8 @@ struct Slot {
 struct Config {
     enabled: bool,
     a4_opt_in: bool,
+    #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+    explorer_pickup_enabled: bool,
     receive_shortcut_registered: bool,
     paused: bool,
     excludes: BTreeSet<String>,
@@ -74,6 +93,8 @@ struct Supervisor {
     generation: AtomicU64,
     working: AtomicBool,
     lifecycle_wake: LifecycleWake,
+    #[cfg(feature = "ambient-media-qualification")]
+    explorer_camera_owned: AtomicBool,
 }
 
 #[derive(Clone, Default)]
@@ -263,6 +284,32 @@ impl AmbientRuntime {
     }
 
     pub(crate) fn request_pickup(&self) {
+        self.request_pickup_with_guard(None);
+    }
+
+    // The owner reads a native lease snapshot without acquiring the capture
+    // runtime's config lock. No renderer or shortcut creates this permit.
+    #[cfg(feature = "ambient-media-qualification")]
+    fn request_explorer_gesture(
+        &self,
+        pickup: explorer_gesture::ExplorerPickup<CaptureAnchor>,
+        current: impl Fn() -> Option<explorer_gesture::ExplorerCameraContext<CaptureAnchor>>
+            + Send + Sync + 'static,
+    ) {
+        let observed = current();
+        let Some(anchor) = pickup.claim(observed, Instant::now()) else {
+            return;
+        };
+        self.request_pickup_with_guard(Some(NativePickupGuard {
+            anchor,
+            still_authorized: Box::new(move || current() == observed),
+        }));
+    }
+
+    fn request_pickup_with_guard(&self, expected: Option<NativePickupGuard>) {
+        if expected.as_ref().is_some_and(|guard| !guard.is_current()) {
+            return;
+        }
         let Ok(mut cfg) = self.0.config.lock() else {
             return;
         };
@@ -271,11 +318,19 @@ impl AmbientRuntime {
         }
         let policy = camera_policy(&cfg, None);
         if policy.camera_mode() == CameraMode::Suspended {
+            // A declined camera permit must not invalidate a prior manual
+            // capture. Explicit lifecycle revocation still owns slot cleanup.
+            if expected.is_some() {
+                return;
+            }
             cfg.slot = None;
             emit(&cfg, CaptureView::Paused);
             return;
         }
         let Ok(anchor) = ambient_context::capture_anchor() else {
+            if expected.is_some() {
+                return;
+            }
             cfg.slot = None;
             emit(
                 &cfg,
@@ -285,12 +340,18 @@ impl AmbientRuntime {
             );
             return;
         };
+        if expected.as_ref().is_some_and(|guard| guard.anchor != anchor || !guard.is_current()) {
+            return;
+        }
         let source = ambient_context::foreground_executable();
         if source
             .as_ref()
             .is_none_or(|source| cfg.excludes.contains(source))
             || ambient_context::capture_anchor().ok() != Some(anchor)
         {
+            if expected.is_some() {
+                return;
+            }
             cfg.slot = None;
             emit(
                 &cfg,
@@ -298,6 +359,11 @@ impl AmbientRuntime {
                     reason: "sensitive_context",
                 },
             );
+            return;
+        }
+        // Camera recognition is passive until a user reviews the result. A
+        // repeated/false gesture must never replace a still-reviewable capture.
+        if expected.is_some() && cfg.slot.as_ref().is_some_and(Self::slot_is_live) {
             return;
         }
         if self.0.working.swap(true, Ordering::AcqRel) {
@@ -310,7 +376,12 @@ impl AmbientRuntime {
         let runtime = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let _lease = WorkLease(runtime.0.clone());
-            let result = ambient_context::capture(anchor)
+            let capture = if expected.as_ref().is_some_and(|guard| !guard.is_current()) {
+                Err(ContextError::SelectionChanged)
+            } else {
+                ambient_context::capture(anchor)
+            };
+            let result = capture
                 .map_err(|error| match error {
                     ContextError::Unsupported => CaptureError::NoSupportedObject,
                     ContextError::SelectionChanged => CaptureError::SourceChanged,
@@ -330,7 +401,9 @@ impl AmbientRuntime {
                     drop(cfg);
                     let guard_state = std::cell::Cell::new((None::<Instant>, true));
                     acquire(context, || {
-                        if runtime.0.generation.load(Ordering::Acquire) != generation {
+                        if runtime.0.generation.load(Ordering::Acquire) != generation
+                            || expected.as_ref().is_some_and(|guard| !(guard.still_authorized)())
+                        {
                             return false;
                         }
                         let (last_check, mut session_open) = guard_state.get();
@@ -351,6 +424,10 @@ impl AmbientRuntime {
                 || !cfg.enabled
                 || cfg.paused
             {
+                return;
+            }
+            if expected.as_ref().is_some_and(|guard| !guard.is_current()) {
+                emit(&cfg, CaptureView::Idle);
                 return;
             }
             if !ambient_context::interactive_session() {
@@ -389,7 +466,7 @@ impl AmbientRuntime {
         }
         if !cfg.slot.as_ref().is_some_and(|slot| {
             slot.id == capture_id
-                && slot.captured_at.elapsed() < Duration::from_secs(120)
+                && Self::slot_is_live(slot)
                 && slot.object.negotiate(ReceiverCapabilities::V1)
                     == Ok(Representation::SingleRawFile)
         }) {
@@ -398,6 +475,10 @@ impl AmbientRuntime {
         let object = cfg.slot.take().ok_or(ErrorCode::InvalidRequest)?.object;
         emit(&cfg, CaptureView::Idle);
         Ok(Arc::new(object))
+    }
+
+    fn slot_is_live(slot: &Slot) -> bool {
+        slot.captured_at.elapsed() < Duration::from_secs(120)
     }
 
     fn view(slot: &Slot) -> CaptureView {
@@ -443,7 +524,7 @@ impl AmbientRuntime {
                 } else if config
                     .slot
                     .as_ref()
-                    .is_some_and(|slot| slot.captured_at.elapsed() >= Duration::from_secs(120))
+                    .is_some_and(|slot| !Self::slot_is_live(slot))
                 {
                     config.slot = None;
                     emit(&config, CaptureView::Idle);
@@ -477,6 +558,27 @@ pub(crate) fn set_ambient_capture(
     window
         .state::<AmbientRuntime>()
         .configure(window.app_handle(), enabled, excluded_apps)
+}
+
+#[tauri::command]
+pub(crate) fn explorer_hand_pickup_status(window: WebviewWindow) -> Result<&'static str, TransferError> {
+    require_main(&window)?;
+    #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+    return explorer_camera_owner::status(&window);
+    #[cfg(not(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner")))]
+    Ok("unavailable")
+}
+
+#[tauri::command]
+pub(crate) fn set_explorer_hand_pickup(window: WebviewWindow, enabled: bool) -> Result<(), TransferError> {
+    require_main(&window)?;
+    #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+    return explorer_camera_owner::configure(&window, enabled);
+    #[cfg(not(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner")))]
+    {
+        let _ = enabled;
+        Err(ErrorCode::PeerUnavailable.into())
+    }
 }
 
 #[tauri::command]

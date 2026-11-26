@@ -10,18 +10,18 @@ use std::{
     os::windows::ffi::OsStrExt,
     ptr::null_mut,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
     },
     time::{Duration, Instant},
 };
 use windows::{
-    core::{implement, Ref, HRESULT, PCWSTR},
     Win32::{
         Media::MediaFoundation::*,
-        System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
+        System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
     },
+    core::{HRESULT, PCWSTR, Ref, implement},
 };
 
 const VIDEO_STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
@@ -55,7 +55,7 @@ impl NativeCameraGrant {
         })
     }
 
-    fn allowed(&self) -> Result<(), CameraIssue> {
+    pub(crate) fn allowed(&self) -> Result<(), CameraIssue> {
         (self.permission_now)()
             .then_some(())
             .ok_or(CameraIssue::PermissionDenied)
@@ -65,6 +65,7 @@ impl NativeCameraGrant {
 pub(crate) trait NativeIndicator: Send + 'static {
     type Guard;
     fn show(&mut self) -> Result<Self::Guard, CameraIssue>;
+    fn occupancy_probe(&self) -> Arc<dyn Fn() -> bool + Send + Sync>;
 }
 
 pub(crate) struct WindowsCameraProvider<M, I> {
@@ -75,10 +76,14 @@ pub(crate) struct WindowsCameraProvider<M, I> {
 
 impl<M: RgbLandmarker, I: NativeIndicator> WindowsCameraProvider<M, I> {
     pub(crate) fn new(model: M, indicator: I, grant: NativeCameraGrant) -> Self {
+        Self::with_shared_grant(model, indicator, Arc::new(grant))
+    }
+
+    pub(crate) fn with_shared_grant(model: M, indicator: I, grant: Arc<NativeCameraGrant>) -> Self {
         Self {
             model: Arc::new(Mutex::new(model)),
             indicator,
-            grant: Arc::new(grant),
+            grant,
         }
     }
 }
@@ -105,8 +110,17 @@ impl<M: RgbLandmarker, I: NativeIndicator> LocalCameraProvider for WindowsCamera
         budget: Duration,
     ) -> Result<Self::Lease, CameraIssue> {
         self.grant.allowed()?;
+        let occupancy = self.indicator.occupancy_probe();
+        if !occupancy() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
+        let ingress = MediaReader::start(&self.grant, cadence, budget)?;
+        if !occupancy() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
         Ok(WindowsLandmarkLease {
-            ingress: MediaReader::start(&self.grant, cadence, budget)?,
+            ingress,
+            occupancy,
             model: self.model.clone(),
             grant: self.grant.clone(),
         })
@@ -115,6 +129,7 @@ impl<M: RgbLandmarker, I: NativeIndicator> LocalCameraProvider for WindowsCamera
 
 pub(crate) struct WindowsLandmarkLease<M> {
     ingress: MediaReader,
+    occupancy: Arc<dyn Fn() -> bool + Send + Sync>,
     model: Arc<Mutex<M>>,
     grant: Arc<NativeCameraGrant>,
 }
@@ -122,6 +137,9 @@ pub(crate) struct WindowsLandmarkLease<M> {
 impl<M: RgbLandmarker> LocalLandmarkSource for WindowsLandmarkLease<M> {
     fn sample(&mut self, budget: Duration) -> Result<Option<LandmarkFrame>, CameraIssue> {
         self.grant.allowed()?;
+        if !(self.occupancy)() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
         let deadline = Instant::now() + budget;
         // Keep half the total budget available for the independently bounded model.
         let Some(frame) = self.ingress.sample(budget / 2)? else {
@@ -141,6 +159,9 @@ impl<M: RgbLandmarker> LocalLandmarkSource for WindowsLandmarkLease<M> {
             return Ok(None);
         }
         self.grant.allowed()?;
+        if !(self.occupancy)() {
+            return Err(CameraIssue::IndicatorUnavailable);
+        }
         Ok(Some(LandmarkFrame {
             captured: frame.captured,
             width: frame.width,
@@ -150,9 +171,9 @@ impl<M: RgbLandmarker> LocalLandmarkSource for WindowsLandmarkLease<M> {
     }
 }
 
-struct Com;
+pub(crate) struct Com;
 impl Com {
-    fn start() -> Result<Self, CameraIssue> {
+    pub(crate) fn start() -> Result<Self, CameraIssue> {
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }.map_err(mf_error)?;
         Ok(Self)
     }
@@ -163,9 +184,9 @@ impl Drop for Com {
     }
 }
 
-struct Mf;
+pub(crate) struct Mf;
 impl Mf {
-    fn start() -> Result<Self, CameraIssue> {
+    pub(crate) fn start() -> Result<Self, CameraIssue> {
         unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.map_err(mf_error)?;
         Ok(Self)
     }
