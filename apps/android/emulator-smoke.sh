@@ -567,12 +567,26 @@ PY_PICKER_REPORT
   # was verified above as the only local image, and the radios are off.
   # https://android.googlesource.com/platform/packages/providers/MediaProvider/+/0a212c65f2e4aef9cc7720161b339460b42696c2/src/com/android/providers/media/photopicker/data/PickerDbFacade.java
   tap_imported_fixture() {
-    local i hit x y mode
+    local i hit x y mode target x1 y1 x2 y2
     for ((i = 0; i < 12; i++)); do
       if gallery_capture && hit="$(gallery_ax imported "$photo_id" "$@")" && gallery_focused; then
         read -r x y mode <<<"$hit"
         [[ "$mode" == original || "$mode" == picker ]] || return 1
-        adb -s "$serial" shell input tap "$x" "$y" || return 1
+        target="$(node apps/android/emulator-photo-observer.mjs "$photo_forward" target "$photo_id" "$mode")" || return 1
+        if [[ "$target" == ready ]] && gallery_focused; then
+          adb -s "$serial" shell input tap "$x" "$y" || return 1
+        else
+          if [[ "$target" == below || "$target" == above ]] && hit="$(gallery_ax scroll)" && gallery_focused; then
+            read -r x1 y1 x2 y2 <<<"$hit"
+            if [[ "$target" == below ]]; then
+              adb -s "$serial" shell input swipe "$x1" "$y1" "$x2" "$y2" 350
+            else
+              adb -s "$serial" shell input swipe "$x2" "$y2" "$x1" "$y1" 350
+            fi
+          fi
+          sleep 1
+          continue
+        fi
         photo_name_mode="$mode"
         return 0
       fi
