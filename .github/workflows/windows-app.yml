@@ -88,6 +88,8 @@ jobs:
           retention-days: 7
       - name: Install, launch, and capture the WebView
         shell: pwsh
+        env:
+          AERIFT_WORKSPACE_FOLDER_FIXTURE: synthetic-fixed-ntfs-only
         run: ./apps/windows/Test-InstalledShell.ps1
       - name: Upload installer and native launch evidence
         if: always()

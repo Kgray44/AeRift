@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import type { DigitalObject } from "@aerift/app-contract/digital-objects";
 import { getVisibleModules, type ExperiencePreferences, type ModuleId } from "@aerift/app-contract/experience";
 import { Button, IconAction, MotionFeedbackProvider, Popover, SpatialIcon } from "@aerift/ui";
@@ -5,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { command } from "../nativeAppPort";
 import { DesktopNotesWorkspace } from "./DesktopNotesWorkspace";
 import { WorkspaceDocumentsGallery } from "../WorkspaceDocumentsGallery";
+import { WorkspaceChosenFolder } from "./WorkspaceChosenFolder";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
@@ -76,9 +78,10 @@ async function exportDocumentCopy(id: string, name: string) {
 const pageSize = 48;
 const browserHistoryKey = "aerift.desktop.workspace.browser-history.v1";
 
-export function DesktopWorkspace({ preferences, clipboardAllowed }: {
+export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
   preferences: ExperiencePreferences;
   clipboardAllowed: boolean;
+  active: boolean;
 }) {
   const modules = getVisibleModules(preferences);
   const workspace = useWorkspaceLibrary(id => modules.some(module => module.id === id));
@@ -334,6 +337,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed }: {
         </div>}
       </div>
       {current.id === "clipboard" && <WorkspaceClipboardTools tools={clipboardTools} count={visible.length} total={categoryItems.length} />}
+      {active && section?.id === "files" && isTauri() && <WorkspaceChosenFolder />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
           label={current.id === "photos" ? "Search imported media" : "Search imported files"}
