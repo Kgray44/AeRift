@@ -721,4 +721,7 @@ pub use windows_handles::{
     commit_verified_folder as commit_windows_folder,
 };
 
+#[cfg(all(windows, feature = "windows-folder-picker-qualification"))]
+pub use windows_handles::{WindowsFolderReadEntry, WindowsFolderReadGrant, WindowsFolderReadPage};
+
 pub mod admission_store;

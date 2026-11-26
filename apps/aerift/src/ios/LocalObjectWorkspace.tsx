@@ -6,9 +6,11 @@ import { DesktopNotesWorkspace } from "../windows/DesktopNotesWorkspace";
 import { MobileNoteAttachments } from "./MobileNoteAttachments";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
-import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
+import { WorkspaceCollectionsGallery } from "../WorkspaceCollectionsGallery";
+import { useCollectionGalleryAppearance } from "../useCollectionGalleryAppearance";
+import { availableCollectionMembers, selectedCollectionMembers, canUpdateCollectionMembers, collectionIncludesClipboard } from "../collection-gallery-adapter";
 import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
-import type { MobileOperations, MobilePlatformCopy } from "./mobile-platform";
+import { mobilePlatformCopy, type MobileOperations, type MobilePlatformCopy } from "./mobile-platform";
 import type { ObservedMediaPort } from "./mobile-media-observer";
 import {
   addBrowserLinks, maxTextLength, normalWebUrl, portableCollection, portableText, removeMobileObject, type MobileObject,
@@ -62,6 +64,15 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
   const visibleEntries = clips ? clipboardTools.browse(entries, item => item.kind === "text" ? item : undefined) : entries;
   const selected = entries.find(item => item.id === editing);
   const candidates = objects.filter(item => item.kind !== "collection");
+  const collectionRows = collections
+    ? entries.flatMap(item => item.kind === "collection" ? [{ id: item.id, name: item.name, memberIds: item.itemIds }] : [])
+    : [];
+  const availableMembers = availableCollectionMembers(candidates);
+  const clipboardIds = new Set(candidates.filter(item => item.kind === "text").map(item => item.id));
+  const collectionAppearance = useCollectionGalleryAppearance(
+    copy.device === mobilePlatformCopy.android.device ? "android" : "ios", collections ? collectionRows.map(row => row.id) : undefined);
+  const stagingCollection = useRef(false);
+  const [preparingCollection, setPreparingCollection] = useState(false);
 
   useEffect(() => {
     if (!clips) return;
@@ -74,7 +85,7 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
 
   function includesClipboard(object: MobileObject) {
     return object.kind === "text" || (object.kind === "collection" &&
-      object.itemIds.some(id => candidates.some(item => item.id === id && item.kind === "text")));
+      collectionIncludesClipboard(object.itemIds, clipboardIds));
   }
 
   async function pasteImage() {
@@ -119,17 +130,13 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       const url = normalWebUrl(draft);
       if (!url) { setFeedback("Enter a valid web address."); return; }
       object = { ...base, name: name || new URL(url).hostname, kind: "url", url };
-    } else if (collections) {
-      if (!name) return;
-      object = { ...base, kind: "collection", itemIds: selected?.kind === "collection" ? selected.itemIds : [] };
     } else {
       if (!name || !draft.trim()) return;
       object = { ...base, kind: "text", format: "plain", text: draft };
     }
     if (upsert(object)) {
       if (!selected) setJustAdded(object.id);
-      if (collections) edit(object);
-      else reset();
+      reset();
       setFeedback(`Saved on ${copy.device}.`);
     }
   }
@@ -179,6 +186,55 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
     if (result && workspaceOpen.current) openRift();
   }
 
+  function createCollection(name: string, initialIds: readonly string[]) {
+    const object: Collection = { ...newObject(name), kind: "collection", itemIds: selectedCollectionMembers(initialIds, availableMembers) };
+    return upsert(object) ? object.id : null;
+  }
+
+  function renameCollection(id: string, name: string) {
+    const object = objects.find(item => item.id === id);
+    return object?.kind === "collection" && upsert({ ...object, name });
+  }
+
+  function updateCollection(id: string, next: readonly string[], previous: readonly string[]) {
+    const object = objects.find(item => item.id === id);
+    return object?.kind === "collection" && canUpdateCollectionMembers(object.itemIds, next, previous, availableMembers) &&
+      upsert({ ...object, itemIds: next });
+  }
+
+  async function sendCollection(id: string) {
+    if (stagingCollection.current || !regions.canSelect) return;
+    const item = objects.find(value => value.id === id);
+    if (item?.kind !== "collection" || !item.itemIds.length || (includesClipboard(item) && !clipboardSharing)) return;
+    stagingCollection.current = true;
+    setPreparingCollection(true); setFeedback("");
+    try { await stage(item); }
+    catch { if (workspaceOpen.current) setFeedback("AeRift couldn't prepare this collection for Rift."); }
+    finally {
+      stagingCollection.current = false;
+      if (workspaceOpen.current) setPreparingCollection(false);
+    }
+  }
+
+  if (collections) return <>
+    <p>Group saved notes, links and pinned text. A transfer copy contains the saved items in one text file.</p>
+    <WorkspaceCollectionsGallery collections={collectionRows} objects={candidates}
+      appearance={collectionAppearance.appearance} onPersistAppearance={collectionAppearance.persist}
+      disabled={!collectionAppearance.ready || preparingCollection}
+      onCreate={createCollection} onRename={renameCollection} onChangeMembers={updateCollection}
+      onRemove={id => collectionRows.some(row => row.id === id) && save(removeMobileObject(objects, id))}
+      collectionActions={row => {
+        const clipboardBlocked = !clipboardSharing && collectionIncludesClipboard(row.memberIds, clipboardIds);
+        return <>
+          <NoteIconButton label="Send collection copy to Rift" icon="send"
+            disabled={!regions.canSelect || !row.memberIds.length || clipboardBlocked || preparingCollection}
+            onClick={() => void sendCollection(row.id)} />
+          {clipboardBlocked && <small>Enable clipboard sharing to offer the pinned text in this collection.</small>}
+        </>;
+      }} />
+    {feedback && <p role="status">{feedback}</p>}
+  </>;
+
   if (notes) return <><DesktopNotesWorkspace variant="mobile" titleLimit={100}
     notes={objects.filter(item => item.kind === "note")} disabled={false}
     onSave={async note => upsert(note)} onRemove={async id => save(removeMobileObject(objects, id))}
@@ -199,45 +255,34 @@ export function LocalObjectWorkspace({ module, objects, save, regions, openRift,
       {imagePasteSupported === false && <p>{copy.clipboardImageUnavailable}</p>}
       {!clipboardSharing && <p>Enable clipboard sharing in Control Center to send a copy.</p>}
     </>}
-    {collections && <p>Group saved notes, links and pinned text. A transfer copy contains the saved items in one text file.</p>}
     <details className="ios-object-composer" open={composerOpen} onToggle={event => setComposerOpen(event.currentTarget.open)}>
-    <summary>{editing ? "Edit saved item" : notes ? "New note" : browser ? "Add an address" : clips ? "New text pin" : "New collection"}</summary>
+    <summary>{editing ? "Edit saved item" : notes ? "New note" : browser ? "Add an address" : "New text pin"}</summary>
     <form className="ios-object-form" onSubmit={saveDraft}>
       <label><span>{browser ? "Link label (optional)" : "Name"}</span>
         <input value={title} required={!browser} maxLength={100} onChange={event => setTitle(event.currentTarget.value)} />
       </label>
       {browser ? <label><span>Address</span><input value={draft} required maxLength={4000}
         inputMode="url" autoCapitalize="none" spellCheck={false} onChange={event => setDraft(event.currentTarget.value)} /></label>
-        : !collections && <label><span>Text to pin</span>
+        : <label><span>Text to pin</span>
           <textarea value={draft} required rows={4} maxLength={maxTextLength}
             onChange={event => setDraft(event.currentTarget.value)} /></label>}
       <div className="ae-actions">
-        <Button type="submit">{editing ? "Save changes" : clips ? "Pin text" : browser ? "Collect link" :
-          collections ? "Create collection" : "Save note"}</Button>
+        <Button type="submit">{editing ? "Save changes" : clips ? "Pin text" : "Collect link"}</Button>
         {editing && <Button variant="quiet" onClick={reset}>Done editing</Button>}
       </div>
     </form>
     </details>
-    {selected?.kind === "collection" && <WorkspaceCollectionTools key={selected.id} name={selected.name}
-      objects={candidates} memberIds={selected.itemIds}
-      onChange={(next, previous) => selected.itemIds.length === previous.length &&
-        previous.every((id, index) => id === selected.itemIds[index]) && upsert({ ...selected, itemIds: next })} />}
     {feedback && <p role="status">{feedback}</p>}
     {visibleEntries.length > 0 && <ul className="ios-object-list">
       {visibleEntries.map(object => <li key={object.id} data-ae-route-enter={justAdded === object.id ? "neutral" : undefined}>
         <strong>{object.name}</strong>
-        {object.kind === "collection" ? <small>{object.itemIds.length} saved items</small> :
-          object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
-          <small className="ios-preview">{object.kind === "text" ? "Pinned text" : object.text.slice(0, 180)}</small>}
+        {object.kind === "url" ? <small>{new URL(object.url).hostname}</small> :
+          <small className="ios-preview">{object.kind === "text" ? "Pinned text" : object.kind === "note" ? object.text.slice(0, 180) : ""}</small>}
         {object.kind === "text" && <WorkspaceClipboardDetails text={object.text} format={object.format} />}
-        {object.kind === "collection" && includesClipboard(object) && !clipboardSharing &&
-          <small>Enable clipboard sharing to offer the pinned text in this collection.</small>}
         <div className="ae-actions">
-          {object.kind === "collection" ?
-            <Button disabled={!regions.canSelect || !object.itemIds.length || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>Send collection copy</Button> :
-            <Button disabled={!regions.canSelect || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>
-              {object.kind === "note" && object.attachmentIds?.length ? "Send note text" : "Send copy"}
-            </Button>}
+          {object.kind !== "collection" && <Button disabled={!regions.canSelect || (includesClipboard(object) && !clipboardSharing)} onClick={() => void stage(object)}>
+            {object.kind === "note" && object.attachmentIds?.length ? "Send note text" : "Send copy"}
+          </Button>}
           {object.kind === "text" && <WorkspaceClipboardCopy tools={clipboardTools} name={object.name} text={object.text} />}
           {object.kind === "url" && <Button variant="quiet" disabled={browsing} onClick={() => void browse(object.url, true)}>Open</Button>}
           <Button variant="quiet" onClick={() => edit(object)}>Edit</Button>

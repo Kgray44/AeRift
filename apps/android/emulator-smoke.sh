@@ -17,6 +17,21 @@ photo_forward=
 photo_uri=
 tmp="$(mktemp -d)"
 pid=
+# Use the supported direct software backend; swiftshader_indirect is deprecated.
+gpu=swiftshader
+assert_emulator_alive() {
+  local phase="$1" status
+  if status="$(ps -o stat= -p "$pid" 2>/dev/null)" &&
+    [[ "$status" =~ ^[[:space:]]*[^ZX[:space:]] ]]; then
+    return 0
+  fi
+  printf 'Android emulator process stopped during %s (PID %s, GPU %s).\n' "$phase" "$pid" "$gpu" >&2
+  if [[ -s "$tmp/emulator.log" ]]; then
+    echo '--- final Android emulator output ---' >&2
+    tail -n 40 "$tmp/emulator.log" >&2
+  fi
+  return 1
+}
 cleanup() {
   if [[ -n "$pid" ]]; then
     if [[ "$photo_forward" =~ ^[0-9]+$ ]]; then adb -s "$serial" forward --remove "tcp:$photo_forward" >/dev/null 2>&1 || true; fi
@@ -43,14 +58,19 @@ export ANDROID_AVD_HOME="$tmp/avd"
 mkdir -p "$ANDROID_AVD_HOME"
 printf 'no\n' | "$avdmanager" create avd --force --name "$avd" --package "$cpu_image" --device pixel_6
 if [[ -w /dev/kvm ]]; then accel=on; else accel=off; fi
+# SDK metadata is informational. The non-headless -version command loads
+# desktop audio libraries that the actual headless runner does not need.
+release="$(sed -n 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$(dirname "$emulator")/source.properties" 2>/dev/null | head -n 1 || true)"
+printf 'Android SDK emulator revision: %s.\n' "${release:-unknown}"
+printf 'Android emulator: GPU %s, VM acceleration %s.\n' "$gpu" "$accel"
 "$emulator" -avd "$avd" -port 5580 -no-window -no-audio -no-boot-anim -no-snapshot \
-  -gpu swiftshader_indirect -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
+  -gpu "$gpu" -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
 pid=$!
 boot_budget=220
 [[ "$accel" == on ]] || boot_budget=650
 deadline=$((SECONDS + boot_budget))
 while (( SECONDS < deadline )); do
-  kill -0 "$pid"
+  assert_emulator_alive "boot"
   [[ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null || true)" == 1 ]] && break
   sleep 2
 done
@@ -105,7 +125,13 @@ PY
 await_ui() {
   local label="$1" tries="${2:-12}" package="${3:-}" coordinates i
   for ((i = 0; i < tries; i++)); do
-    if dump_ui && coordinates="$(locate "$label" "$package")"; then printf '%s\n' "$coordinates"; return 0; fi
+    assert_emulator_alive "waiting for $label" || return 1
+    if dump_ui && coordinates="$(locate "$label" "$package")"; then
+      assert_emulator_alive "confirming $label" || return 1
+      printf '%s\n' "$coordinates"
+      return 0
+    fi
+    assert_emulator_alive "waiting for $label" || return 1
     sleep 1
   done
   echo "Android UI did not show: $label" >&2
@@ -289,10 +315,11 @@ PY_PNG
   tap_label 'Back to Workspace'
   await_ui 'Everything in its place.' >/dev/null
   photo_stage 'open Photos through AeRift Workspace'
-  tap_label 'Images & Videos'
   # Bind every AX capture and coordinate action to the actual app Activity
   # being resumed AND its window being focused. Require exact component
   # identity (normalize the short and full names Android can report).
+  # AOSP android-16.0.0_r1 Task.dumpInner reports topResumedActivity=.
+  # The separate "Resumed:" focused-area summary may fall back to pausing.
   gallery_focused() {
     local activity window
     activity="$(timeout 5s adb -s "$serial" shell dumpsys activity activities)" || return 1
@@ -302,7 +329,7 @@ PY_PNG
         if (split(value, parts, "/") != 2) return ""
         return parts[1] "/" (substr(parts[2], 1, 1) == "." ? parts[1] : "") parts[2]
       }
-      /^[[:space:]]*ResumedActivity:[[:space:]]+ActivityRecord/ {
+      /^[[:space:]]*topResumedActivity=ActivityRecord[{}[:space:]]/ {
         for (i = 1; i <= NF; i++) if ($i == "u0") {
           live++; if (full($(i+1)) == full(expected)) app++
         }
@@ -324,10 +351,60 @@ PY_PNG
   gallery_report() {
     if ! gallery_focused; then
       echo 'Owned Photos Activity and focused window identity not jointly confirmed.' >&2
+      # Evidence only: retain the exact owner guard. Do not print dump text,
+      # identifiers, coordinates, package names, or labels from arbitrary windows.
+      local activity_observation window_observation
+      if activity_observation="$(timeout 5s adb -s "$serial" shell dumpsys activity activities)" &&
+         window_observation="$(timeout 5s adb -s "$serial" shell dumpsys window displays)"; then
+        awk -v expected="$component" '
+          function full(value, parts) {
+            if (split(value, parts, "/") != 2) return ""
+            return parts[1] "/" (substr(parts[2], 1, 1) == "." ? parts[1] : "") parts[2]
+          }
+          function count_owner(kind, i, value) {
+            total[kind]++
+            for (i = 1; i < NF; ++i) if ($i == "u0") {
+              value = $(i+1); sub(/}$/, "", value)
+              primary[kind]++
+              if (full(value) == full(expected)) owned[kind]++
+            }
+          }
+          /^[[:space:]]*ResumedActivity:[[:space:]]+ActivityRecord/ { count_owner("legacy") }
+          /^[[:space:]]*Resumed:[[:space:]]+ActivityRecord/ { count_owner("summary") }
+          /^[[:space:]]*topResumedActivity=ActivityRecord/ { count_owner("top") }
+          /^[[:space:]]*mCurrentFocus=Window/ { count_owner("window") }
+          /^[[:space:]]*mFocusedApp=ActivityRecord/ { count_owner("app") }
+          END {
+            kinds[1] = "legacy"; kinds[2] = "summary"; kinds[3] = "top";
+            kinds[4] = "window"; kinds[5] = "app";
+            for (i = 1; i <= 5; ++i) {
+              kind = kinds[i];
+              printf "Photos guard diagnostic %s rows=%d primary-user=%d exact=%d\n",
+                kind, total[kind], primary[kind], owned[kind]
+            }
+          }
+        ' <<<"$activity_observation"$'\n'"$window_observation" >&2
+      else
+        echo 'Photos guard diagnostic: bounded dumpsys collection unavailable.' >&2
+      fi
     else
       gallery_capture && gallery_ax report || true
     fi
   }
+  category_opened=0
+  for ((attempt = 0; attempt < 6; attempt++)); do
+    if gallery_capture && hit="$(locate 'Images & Videos' "$identity")" && gallery_focused; then
+      read -r x y <<<"$hit"
+      adb -s "$serial" shell input tap "$x" "$y"
+      category_opened=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$category_opened" != 1 ]]; then
+    gallery_report
+    echo 'Android Photos smoke refused an unowned or missing Photos category target.' >&2; exit 1
+  fi
   confirmed=0
   for ((attempt = 0; attempt < 6; attempt++)); do
     if gallery_capture && gallery_ax confirm; then confirmed=1; break; fi

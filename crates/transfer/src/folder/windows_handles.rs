@@ -41,6 +41,16 @@ use windows_sys::{
 
 use crate::model::safe_name;
 
+// Explicit app-selected folder metadata; no file or child authority.
+#[cfg(any(test, feature = "windows-folder-picker-qualification"))]
+#[path = "windows_directory_page.rs"]
+mod directory_page;
+#[cfg(feature = "windows-folder-picker-qualification")]
+pub use directory_page::{
+    FolderReadEntry as WindowsFolderReadEntry, FolderReadGrant as WindowsFolderReadGrant,
+    FolderReadPage as WindowsFolderReadPage,
+};
+
 const DIRECTORY_ACCESS: u32 = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES;
 
 pub struct PinnedDirectory(File, Vec<File>);

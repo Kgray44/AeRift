@@ -1,3 +1,6 @@
+#[cfg(windows)]
+mod workspace_folder_picker;
+
 #[cfg(any(windows, target_os = "ios", target_os = "android"))]
 mod workspace_link;
 #[cfg(windows)]
@@ -149,6 +152,7 @@ pub fn run() {
         .manage(private_remote_app::RemoteRuntime::default())
         .manage(windows_friends::WindowsFriends::default())
         .manage(explorer_receive::ExplorerReceiveRuntime::default())
+        .manage(workspace_folder_picker::WorkspaceFolderPicker::default())
         .manage(windows_friends_member::MemberRuntime::default())
         .manage(windows_friends_member::ReviewRuntime::default())
         .manage(selection::SelectionRegistry::default())
@@ -195,6 +199,9 @@ pub fn run() {
             explorer_receive::cancel_explorer_receive,
             windows::get_receive_folder,
             windows::choose_receive_folder,
+            workspace_folder_picker::workspace_choose_folder,
+            workspace_folder_picker::workspace_list_chosen_folder,
+            workspace_folder_picker::workspace_close_chosen_folder,
             desktop::watch_desktop_ambient,
             desktop::set_desktop_ambient,
             desktop::update_desktop_ambient,
@@ -221,6 +228,10 @@ pub fn run() {
         })
         .setup(|app| {
             use tauri::Manager;
+            if let Some(main) = app.get_webview_window("main") {
+                app.state::<workspace_folder_picker::WorkspaceFolderPicker>()
+                    .bind_owner(&main);
+            }
             let remote = app.state::<private_remote_app::RemoteRuntime>();
             let mode = private_remote_app::load_mode(app.handle());
             let nearby = matches!(&mode, Ok(None));
