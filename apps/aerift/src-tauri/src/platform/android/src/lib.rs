@@ -10,6 +10,7 @@ pub use peer_storage::open_peer_node;
 pub use storage::{
     clipboard_image_available, import_media, list_media, open_browser, paste_clipboard_image,
     pick_file, present_selection, remove_media, stage_media, stage_text, storage_directories,
+    thumbnail_media,
     BrowserLink, MediaAsset, PickerSource, SelectionAction, StagedSelection,
 };
 

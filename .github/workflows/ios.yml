@@ -37,6 +37,7 @@ jobs:
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/ClipboardImagePicker.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FilePicker.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/ImportedPhotoThumbnail.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/MediaLibrary.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/HandCamera.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/BonjourDiscovery.swift"
@@ -45,9 +46,10 @@ jobs:
           swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
             apps/ios/tests/FileStagingSmoke.swift -o "$RUNNER_TEMP/file-staging-smoke"
           "$RUNNER_TEMP/file-staging-smoke"
-      - name: Test durable media library and active selection lifetime
+      - name: Test durable media library, thumbnails and active selection lifetime
         run: |
           swiftc "apps/aerift/src-tauri/src/platform/ios/swift/Sources/FileStaging.swift" \
+            "apps/aerift/src-tauri/src/platform/ios/swift/Sources/ImportedPhotoThumbnail.swift" \
             "apps/aerift/src-tauri/src/platform/ios/swift/Sources/MediaLibrary.swift" \
             apps/ios/tests/MediaLibrarySmoke.swift -o "$RUNNER_TEMP/media-library-smoke"
           "$RUNNER_TEMP/media-library-smoke"

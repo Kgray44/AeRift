@@ -77,7 +77,7 @@ const fixtureMedia = {
     { id: "import-log", name: "Harbor log.txt", kind: "file", sizeBytes: 2741 },
   ],
   photos: [
-    { id: "import-photo", name: "Harbor aerial.heic", kind: "photo", sizeBytes: 221402 },
+    { id: "ff1a587e-224a-41f0-a368-5ab457e719a3", name: "Harbor aerial.heic", kind: "photo", sizeBytes: 221402 },
     { id: "import-video", name: "Harbor approach.mov", kind: "video", sizeBytes: 948962 },
   ],
 } as const;
@@ -90,22 +90,34 @@ function saveImports(items: ImportedMedia[]) {
   localStorage.setItem(fixtureLibraryKey, JSON.stringify(items));
   return { ok: true, value: imports } as const;
 }
+// Expose only action names and synthetic fixture IDs in this fixture, never the app.
+const mediaTrace: string[] | undefined = new URLSearchParams(location.search).get("photoGalleryFixture") === "1"
+  ? ((window as Window & { aePhotoGalleryFixture?: string[] }).aePhotoGalleryFixture = []) : undefined;
 const media: MobileMediaPort = {
   async list() { return { ok: true, value: imports }; },
   async import(source) {
+    mediaTrace?.push(`import:${source}`);
     return saveImports([...imports, ...fixtureMedia[source].filter(item => !imports.some(value => value.id === item.id))
       .map(item => ({ ...item, assetId: item.id, schemaVersion: 1, ownership: "local" } as const))]);
   },
   async remove(id) {
+    mediaTrace?.push(`remove:${id}`);
     return saveImports(imports.filter(item => item.id !== id));
   },
   async select(id) {
+    mediaTrace?.push(`select:${id}`);
     const item = imports.find(asset => asset.id === id);
     if (!item) return { ok: false, error: { code: "invalid_request" } };
     selection = { selectionId: id, sizeBytes: item.sizeBytes, name: item.name };
     return { ok: true, value: selection };
   },
-  async present() { return { ok: true, value: undefined }; },
+  ...(mediaTrace ? { async thumbnail(id: string) {
+    mediaTrace.push(`thumbnail:${id}`);
+    return id === "ff1a587e-224a-41f0-a368-5ab457e719a3"
+      ? { ok: true, value: "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAKABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCrRRRX1J86f//Z" } as const
+      : { ok: false, error: { code: "invalid_request" } } as const;
+  } } : {}),
+  async present(id, action) { mediaTrace?.push(`${action}:${id}`); return { ok: true, value: undefined }; },
 };
 
 if (new URLSearchParams(location.search).get("receivedFixture") === "1") {

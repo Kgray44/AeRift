@@ -7,6 +7,7 @@ use platform::{BrowserLink, MediaAsset, PickerSource, SelectionAction, StagedSel
 use uuid::Uuid;
 
 use crate::{
+    mobile_photo_thumbnail::{require_thumbnail_origin, validate_thumbnail, DecodePermit},
     android_received::{self, ReceivedFile},
     runtime::{AppRuntime, AppSnapshot, PairRequest, PairResult, Session, TransferRequest, TransferView},
     selection::{FileSelection, SelectionRegistry},
@@ -105,6 +106,18 @@ pub(crate) async fn import_android_media(window: WebviewWindow, source: PickerSo
 pub(crate) async fn list_android_media(window: WebviewWindow) -> Result<Vec<MediaAsset>, TransferError> {
     require_main(&window)?;
     platform::list_media(window.app_handle()).await
+}
+
+#[tauri::command]
+pub(crate) async fn thumbnail_android_media(
+    window: WebviewWindow,
+    asset_id: Uuid,
+) -> Result<String, TransferError> {
+    require_thumbnail_origin(&window)?;
+    let _permit = DecodePermit::acquire()?;
+    let jpeg = platform::thumbnail_media(window.app_handle(), asset_id)
+        .await?;
+    validate_thumbnail(jpeg)
 }
 
 #[tauri::command]

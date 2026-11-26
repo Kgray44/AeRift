@@ -6,6 +6,7 @@ use tauri_plugin_aerift_ios::{MediaImport, PickerSource, SelectionAction};
 use uuid::Uuid;
 
 use crate::{
+    mobile_photo_thumbnail::{require_thumbnail_origin, validate_thumbnail, DecodePermit},
     runtime::{
         AppRuntime, AppSnapshot, PairRequest, PairResult, Session, TransferRequest, TransferView,
     },
@@ -166,6 +167,19 @@ pub(crate) async fn list_ios_media(
     tauri_plugin_aerift_ios::list_media(window.app_handle())
         .await
         .map_err(|_| ErrorCode::StorageFailed.into())
+}
+
+#[tauri::command]
+pub(crate) async fn thumbnail_ios_media(
+    window: WebviewWindow,
+    asset_id: Uuid,
+) -> Result<String, TransferError> {
+    require_thumbnail_origin(&window)?;
+    let _permit = DecodePermit::acquire()?;
+    let jpeg = tauri_plugin_aerift_ios::thumbnail_media(window.app_handle(), &asset_id.to_string())
+        .await
+        .map_err(|_| ErrorCode::StorageFailed)?;
+    validate_thumbnail(jpeg)
 }
 
 #[tauri::command]
