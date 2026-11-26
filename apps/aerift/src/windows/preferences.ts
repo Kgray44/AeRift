@@ -20,6 +20,7 @@ export interface DesktopPreferences {
   cameraShortcut: CameraShortcut;
   cameraId: string;
   clipboard: boolean;
+  embeddedWebsitesRequested: boolean;
   ambientNotifications: boolean;
   ambientShortcut: AmbientShortcut;
   ambientPreviewCorner: AmbientPreviewCorner;
@@ -41,6 +42,7 @@ export function parseDesktopPreferences(value: unknown): DesktopPreferences {
     cameraId: typeof input.cameraId === "string" ? input.cameraId :
       typeof input.cameraDeviceId === "string" ? input.cameraDeviceId : "",
     clipboard: input.clipboard === true,
+    embeddedWebsitesRequested: input.embeddedWebsitesRequested === true,
     ambientNotifications: input.ambientNotifications === true,
     ambientPreviewCorner: ambientPreviewCorner(input.ambientPreviewCorner),
     ambientContextEnabled: input.ambientContextEnabled === true,

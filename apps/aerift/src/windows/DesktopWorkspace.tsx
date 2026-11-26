@@ -78,10 +78,11 @@ async function exportDocumentCopy(id: string, name: string) {
 const pageSize = 48;
 const browserHistoryKey = "aerift.desktop.workspace.browser-history.v1";
 
-export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
+export function DesktopWorkspace({ preferences, clipboardAllowed, active, embeddedWebsitesRequested = false }: {
   preferences: ExperiencePreferences;
   clipboardAllowed: boolean;
   active: boolean;
+  embeddedWebsitesRequested?: boolean;
 }) {
   const modules = getVisibleModules(preferences);
   const workspace = useWorkspaceLibrary(id => modules.some(module => module.id === id));
@@ -314,7 +315,9 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active }: {
       onRemove={id => byId.get(id)?.kind === "collection" && removeObjects([id])} />}
     {current && section?.id !== "notes" && section?.id !== "collections" && section?.id !== "documents" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
-        onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: "Opens pages in your default browser." }} />}
+        onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: embeddedWebsitesRequested
+          ? "Embedded Websites is requested, but unavailable in this build. Opens pages in your default browser."
+          : "Opens pages in your default browser." }} />}
       <div className="aerift-workspace-controls">
         {(current?.id === "files" || current?.id === "photos") &&
           <div className="aerift-workspace-import">

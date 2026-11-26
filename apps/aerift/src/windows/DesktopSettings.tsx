@@ -17,6 +17,7 @@ const categories = [
   { id: "transfers", label: "Transfers", icon: "drop" },
   { id: "privacy", label: "Privacy", icon: "clipboard" },
   { id: "ambient", label: "Ambient", icon: "desktop" },
+  { id: "development", label: "Development", icon: "settings" },
 ] as const;
 
 export function DesktopSettings({ value, onChange, folder, folderError, openingFolderPicker, chooseFolder,
@@ -287,5 +288,15 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
       </label>}
       {startupError && <p role="alert">AeRift could not update Windows startup settings.</p>}
     </section>}
+    <section hidden={category !== "development"} aria-labelledby="development-heading">
+      <h3 id="development-heading">Development</h3>
+      <label className="aerift-check">
+        <input type="checkbox" checked={value.embeddedWebsitesRequested} aria-describedby="embedded-websites-policy"
+          onChange={event => onChange({ ...value, embeddedWebsitesRequested: event.currentTarget.checked })} />
+        Embedded Websites
+      </label>
+      <p id="embedded-websites-policy">Prefer opening websites inside AeRift when an isolated browser is available.
+        This build still opens websites in your default browser.</p>
+    </section>
   </div>;
 }
