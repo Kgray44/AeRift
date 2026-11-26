@@ -48,6 +48,9 @@ jobs:
             AERIFT_COMPACT_HEADER_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence/header" \
             node tests/ui/compact-header-browser.mjs
           AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            node tests/ui/trusted-browser-chromium.mjs
+          AERIFT_PLAYWRIGHT_MODULE="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \
+            node tests/ui/browser-development-chromium.mjs
             AERIFT_WORKSPACE_EVIDENCE="$RUNNER_TEMP/aerift-workspace-evidence" \
             node tests/ui/photos-gallery-browser.mjs
           AERIFT_FRIENDS_PLAYWRIGHT="$RUNNER_TEMP/aerift-browser/node_modules/playwright/index.mjs" \

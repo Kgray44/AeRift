@@ -16,6 +16,7 @@ export default defineConfig({
         orbit: fileURLToPath(new URL("orbit.html", import.meta.url)),
         desktop: fileURLToPath(new URL("desktop-visual.html", import.meta.url)),
         mobile: fileURLToPath(new URL("mobile.html", import.meta.url)),
+        trustedBrowser: fileURLToPath(new URL("trusted-browser.html", import.meta.url)),
       },
     },
   },

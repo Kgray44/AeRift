@@ -334,13 +334,28 @@ PY_PNG
           live++; if (full($(i+1)) == full(expected)) app++
         }
       }
-      /^[[:space:]]*mCurrentFocus=Window/ {
-        for (i = 1; i <= NF; i++) if ($i == "u0") {
-          value = $(i+1); sub(/}$/, "", value)
-          focused++; if (full(value) == full(expected)) owned++
-        }
+      # dumpsys window displays reports one focus per DisplayContent. The
+      # smoke sends coordinates to display 0. Its focus must be present and
+      # unique; a non-null focus elsewhere must also be the exact owned app.
+      /^[[:space:]]*Display: mDisplayId=[0-9]+([[:space:]]|$)/ {
+        display = $2; sub(/^mDisplayId=/, "", display)
+        if (display == "0") defaultDisplays++
       }
-      END { exit !(live == 1 && app == 1 && focused == 1 && owned == 1) }
+      /^[[:space:]]*mCurrentFocus=/ {
+        if (display == "") bad++
+        if (display == "0") defaultFocus++
+        if ($0 ~ /^[[:space:]]*mCurrentFocus=null[[:space:]]*$/) next
+        if ($0 !~ /^[[:space:]]*mCurrentFocus=Window[{]/) { bad++; next }
+        matching = 0
+        for (i = 1; i < NF; i++) if ($i == "u0") {
+          value = $(i+1); sub(/}$/, "", value)
+          if (full(value) == full(expected)) matching++
+        }
+        if (matching != 1) bad++
+        else if (display == "0") owned++
+      }
+      END { exit !(live == 1 && app == 1 && defaultDisplays == 1 &&
+                    defaultFocus == 1 && owned == 1 && bad == 0) }
     ' <<<"$activity"$'\n'"$window"
   }
   gallery_ax() { python3 apps/android/photo_gallery_ui.py "$tmp/ui.xml" "$identity" "$1"; }

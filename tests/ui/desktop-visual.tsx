@@ -18,7 +18,9 @@ const state = query.get("state") ?? "populated";
 const settings = { version: 1, theme: "glass", scheme, windowMode: "full",
   motion: query.get("motion") === "reduce" ? "reduce" : "system",
   transparency: query.get("transparency") === "reduce" ? "reduce" : "system" };
-localStorage.setItem("aerift.settings.v1", JSON.stringify({ route, experience: settings, appearance: settings }));
+const developmentFixture = query.get("developmentFixture") === "1";
+const fixturePreferences = developmentFixture ? JSON.parse(localStorage.getItem("aerift.settings.v1") ?? "{}") : {};
+localStorage.setItem("aerift.settings.v1", JSON.stringify({ ...fixturePreferences, route, experience: settings, appearance: settings }));
 
 const first = { id: "iphone", name: "Mira’s iPhone", paired: true, online: true, platform: "ios" } as const;
 const second = { id: "laptop", name: "Travel laptop", paired: true, online: false, platform: "windows" } as const;
