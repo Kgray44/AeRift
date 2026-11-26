@@ -1,0 +1,74 @@
+name: AeRift TestFlight 6ae2a7d1462f8f2ed7b47e5d77c76ca4dd8e4de8
+on:
+  push:
+    branches: ["codex/aerift-testflight-*"]
+permissions:
+  contents: read
+concurrency:
+  group: aerift-testflight-aerift-ios-release
+  cancel-in-progress: false
+jobs:
+  protected:
+    environment: aerift-testflight
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 6ae2a7d1462f8f2ed7b47e5d77c76ca4dd8e4de8
+          persist-credentials: false
+      - name: Inspect exact build and existing export evidence (GET only)
+        env:
+          AERIFT_ASC_PRIVATE_KEY_P8: ${{ secrets.AERIFT_ASC_PRIVATE_KEY_P8 }}
+          AERIFT_ASC_KEY_ID: ${{ vars.AERIFT_ASC_KEY_ID }}
+          AERIFT_ASC_ISSUER_ID: ${{ vars.AERIFT_ASC_ISSUER_ID }}
+          AERIFT_ASC_APP_ID: ${{ vars.AERIFT_ASC_APP_ID }}
+          AERIFT_INTERNAL_GROUP_ID: f2e29c03-efdd-4153-9678-44438df78590
+        run: |
+          python3 - <<'PY'
+          import argparse, json, sys, urllib.parse
+          sys.path.insert(0, "scripts/testflight")
+          from runner import Runner, Failure, require
+          r = Runner(argparse.Namespace(candidate="6ae2a7d1462f8f2ed7b47e5d77c76ca4dd8e4de8", mode="observe", version="0.1.0", build="7"))
+          def get(route):
+              try:
+                  return r.api(route)
+              except Failure as e:
+                  return {"error": str(e)}
+          def attrs(d):
+              return (d.get("data") or {}).get("attributes", {})
+          def pick(d, keys):
+              return {k: d[k] for k in keys if k in d}
+          keys = ("usesEncryption", "exempt", "containsProprietaryCryptography", "containsThirdPartyCryptography", "availableOnFrenchStore", "platform", "appEncryptionDeclarationState")
+          try:
+              r.configure_api()
+              r.app_record()
+              build = get("builds/6ba4482b-2d1f-42ab-a103-9ab63fb3b992?include=app,preReleaseVersion,appEncryptionDeclaration")
+              require((build.get("data") or {}).get("id") == "6ba4482b-2d1f-42ab-a103-9ab63fb3b992", "BUILD_ID_MISMATCH")
+              rel = build["data"]["relationships"]
+              require(rel["app"]["data"]["id"] == r.app_id and attrs(build)["version"] == "7", "BUILD_IDENTITY_MISMATCH")
+              require(any(x["type"] == "preReleaseVersions" and x["id"] == rel["preReleaseVersion"]["data"]["id"] and x["attributes"]["version"] == "0.1.0" for x in build.get("included", [])), "BUILD_VERSION_MISMATCH")
+              r.stage = "READ_ONLY_INSPECTION"
+              beta = get("builds/6ba4482b-2d1f-42ab-a103-9ab63fb3b992/buildBetaDetail")
+              prior = get("builds?" + urllib.parse.urlencode({"filter[app]": r.app_id, "filter[version]": "6", "include": "preReleaseVersion,appEncryptionDeclaration", "limit": "5"}))
+              declared = get(f"apps/{r.app_id}/appEncryptionDeclarations?limit=30")
+              group = get("betaGroups/f2e29c03-efdd-4153-9678-44438df78590/relationships/builds?limit=200")
+              prior_declarations = [x for x in prior.get("included", []) if x["type"] == "appEncryptionDeclarations"]
+              r.receipt.update({"result":"PASS","build":pick(attrs(build), ("processingState", "usesNonExemptEncryption", "buildAudienceType")), "beta":pick(attrs(beta),("internalBuildState","externalBuildState")), "betaError":beta.get("error"), "groupContainsBuild":any(x["id"] == "6ba4482b-2d1f-42ab-a103-9ab63fb3b992" for x in group.get("data", [])), "groupLookupError":group.get("error"), "groupLookupTruncated":bool((group.get("links") or {}).get("next")), "linkedDeclaration":(rel.get("appEncryptionDeclaration",{}).get("data") or {}).get("id") is not None, "priorBuild6": [pick(x.get("attributes",{}),("usesNonExemptEncryption","processingState")) for x in prior.get("data",[])], "priorDeclarations":[pick(x.get("attributes",{}),keys) for x in prior_declarations], "sameAppDeclarations":[dict(pick(x.get("attributes",{}),keys), linkedToPrior6=any(y["id"]==x["id"] for y in prior_declarations)) for x in declared.get("data",[])], "declarationLookupError":declared.get("error"), "declarationsTruncated":bool((declared.get("links") or {}).get("next"))})
+          except Exception:
+              sys.exit("AERIFT_INSPECT_FAILED")
+          finally:
+              if not r.cleanup():
+                  sys.exit("AERIFT_INSPECT_CLEANUP_FAILED")
+          print(json.dumps(r.receipt))
+          PY
+      - name: Recover job-owned signing state
+        if: always()
+        run: python3 scripts/testflight/runner.py --cleanup-owned
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: aerift-testflight-inspect-6ae2a7d1462f8f2ed7b47e5d77c76ca4dd8e4de8
+          path: artifacts/aerift-testflight/public
+          if-no-files-found: error
+          retention-days: 14
