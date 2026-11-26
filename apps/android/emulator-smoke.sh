@@ -334,28 +334,38 @@ PY_PNG
           live++; if (full($(i+1)) == full(expected)) app++
         }
       }
-      # dumpsys window displays reports one focus per DisplayContent. The
-      # smoke sends coordinates to display 0. Its focus must be present and
-      # unique; a non-null focus elsewhere must also be the exact owned app.
+      # API 36 may repeat display 0 with the same Window token. Accept
+      # identical reports, not ambiguity: every section gets exactly one
+      # consistent focus field and every non-null row must identify the
+      # same primary-user app window. The input coordinates target display 0.
       /^[[:space:]]*Display: mDisplayId=[0-9]+([[:space:]]|$)/ {
+        section++
         display = $2; sub(/^mDisplayId=/, "", display)
-        if (display == "0") defaultDisplays++
+        if (display == "0") defaultDisplay[section] = 1
       }
       /^[[:space:]]*mCurrentFocus=/ {
-        if (display == "") bad++
-        if (display == "0") defaultFocus++
+        if (!section) { bad++; next }
+        focusFields[section]++
         if ($0 ~ /^[[:space:]]*mCurrentFocus=null[[:space:]]*$/) next
-        if ($0 !~ /^[[:space:]]*mCurrentFocus=Window[{]/) { bad++; next }
+        if ($1 !~ /^mCurrentFocus=Window[{][a-fA-F0-9]+$/) { bad++; next }
         matching = 0
         for (i = 1; i < NF; i++) if ($i == "u0") {
           value = $(i+1); sub(/}$/, "", value)
           if (full(value) == full(expected)) matching++
         }
-        if (matching != 1) bad++
-        else if (display == "0") owned++
+        if (matching != 1) { bad++; next }
+        if (token != "" && token != $1) bad++
+        token = $1
+        if (defaultDisplay[section]) ownedDefaults++
       }
-      END { exit !(live == 1 && app == 1 && defaultDisplays == 1 &&
-                    defaultFocus == 1 && owned == 1 && bad == 0) }
+      END {
+        for (i = 1; i <= section; ++i) {
+          if (focusFields[i] != 1) bad++
+          if (defaultDisplay[i]) ++defaultDisplays
+        }
+        exit !(live == 1 && app == 1 && defaultDisplays >= 1 &&
+               ownedDefaults == defaultDisplays && bad == 0)
+      }
     ' <<<"$activity"$'\n'"$window"
   }
   gallery_ax() { python3 apps/android/photo_gallery_ui.py "$tmp/ui.xml" "$identity" "$1"; }
