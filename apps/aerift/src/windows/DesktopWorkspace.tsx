@@ -10,7 +10,9 @@ import { WorkspaceChosenFolder } from "./WorkspaceChosenFolder";
 import { useWorkspaceFileTools, WorkspaceFileTools } from "../WorkspaceFileTools";
 import { WorkspaceBrowserTools } from "../WorkspaceBrowserTools";
 import { useWorkspaceClipboardTools, WorkspaceClipboardCopy, WorkspaceClipboardDetails, WorkspaceClipboardTools } from "../WorkspaceClipboardTools";
-import { WorkspaceCollectionTools } from "../WorkspaceCollectionTools";
+import { WorkspaceCollectionsGallery } from "../WorkspaceCollectionsGallery";
+import { useCollectionGalleryAppearance } from "../useCollectionGalleryAppearance";
+import { availableCollectionMembers, selectedCollectionMembers, canUpdateCollectionMembers } from "../collection-gallery-adapter";
 import { readWorkspaceBrowserHistory, recordWorkspaceBrowserLaunch } from "../workspace-browser-tools";
 import { useDesktopContentEnter } from "./desktopContentMotion";
 import { WorkspaceCategoryHeading, WorkspaceLibrary, WorkspaceScene, useWorkspaceLibrary } from "../WorkspaceLibrary";
@@ -97,13 +99,19 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
   const [status, setStatus] = useState<string>();
   const [error, setError] = useState<string>();
   const [preview, setPreview] = useState<string>();
-  const [editingCollection, setEditingCollection] = useState<string>();
+  const changing = useRef(false);
   const clipboardTools = useWorkspaceClipboardTools({ copyAllowed: clipboardAllowed });
   const [selected, setSelected] = useState<readonly string[]>([]);
   const items = entries ?? [];
   const byId = new Map(items.map(({ object }) => [object.id, object]));
-  const candidates = items.map(({ object }) => object).filter(object => object.kind !== "collection");
-  const selectedCollection = editingCollection ? byId.get(editingCollection) : undefined;
+  const collections = items.flatMap(({ object }) => object.kind === "collection" ? [{ id: object.id, name: object.name, memberIds: object.itemIds }] : []);
+  // Clipboard capture stores a wrapper and its backing text. Offer the wrapper
+  // once, but retain existing raw text IDs if older collections reference them.
+  const wrappedText = new Set(items.flatMap(({ object }) => object.kind === "clipboard" ? [object.objectId] : []));
+  const candidates = items.flatMap(({ object }) => object.kind !== "collection" && !wrappedText.has(object.id)
+    ? [{ id: object.id, name: object.name, kind: object.kind }] : []);
+  const memberIds = availableCollectionMembers(candidates);
+  const collectionAppearance = useCollectionGalleryAppearance("desktop", entries && collections.map(item => item.id));
   const inCategory = (object: DigitalObject, id: WorkspaceSectionId, module: ModuleId) =>
     belongsTo(object, module) && (id !== "documents" || (object.kind === "file" && isWorkspaceDocument(object.name, object.mediaType)));
   const categoryItems = section ? items.filter(({ object }) => inCategory(object, section.id, section.module)) : [];
@@ -120,7 +128,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
   const counts = entries && Object.fromEntries(workspaceSections.map(({ id, module }) =>
     [id, entries.filter(({ object }) => inCategory(object, id, module)).length]));
   function openSection(id: WorkspaceSectionId) {
-    setError(undefined); setStatus(undefined); setPreview(undefined); setEditingCollection(undefined);
+    setError(undefined); setStatus(undefined); setPreview(undefined);
     setPageIndex(0); clipboardTools.reset(); workspace.open(id);
   }
 
@@ -138,7 +146,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
 
   async function change(prepare: () => Promise<WorkspaceEntry[]> | WorkspaceEntry[],
     message: string, removed: readonly string[] = []) {
-    if (busy || !entries) return false;
+    if (changing.current || !entries) return false;
+    changing.current = true;
     setBusy(true);
     setError(undefined);
     setStatus(undefined);
@@ -154,6 +163,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
       setError("AeRift could not save this change. Check permissions and available storage, then try again.");
       return false;
     } finally {
+      changing.current = false;
       setBusy(false);
     }
   }
@@ -174,31 +184,40 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
     return [];
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>, kind: "url" | "collection") {
+  async function submitLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
     const name = String(data.get("name") ?? "").trim();
     if (!name) return;
-    const base = newObject(name);
-    let object: DigitalObject;
-    if (kind === "url") {
-      try {
-        const url = new URL(String(data.get("url") ?? ""));
-        if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw new Error();
-        object = { ...base, kind, url: url.href };
-      } catch {
-        setError("Enter an HTTP or HTTPS address without sign-in credentials.");
-        return;
-      }
-    } else {
-      if (selected.length === 0) return;
-      object = { ...base, kind, itemIds: selected };
+    let url: URL;
+    try {
+      url = new URL(String(data.get("url") ?? ""));
+      if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw new Error();
+    } catch {
+      setError("Enter an HTTP or HTTPS address without sign-in credentials.");
+      return;
     }
-    if (await change(() => [{ object }], "Saved to Workspace.")) {
-      form.reset();
-      if (kind === "collection") { setSelected([]); setEditingCollection(object.id); }
-    }
+    if (await change(() => [{ object: { ...newObject(name), kind: "url", url: url.href } }], "Saved to Workspace.")) form.reset();
+  }
+
+  async function createCollection(name: string, initialIds: readonly string[]) {
+    const object = { ...newObject(name), kind: "collection" as const, itemIds: selectedCollectionMembers(initialIds, memberIds) };
+    if (!await change(() => [{ object }], "")) return null;
+    const used = new Set(object.itemIds);
+    setSelected(value => value.filter(id => !used.has(id)));
+    return object.id;
+  }
+
+  function renameCollection(id: string, name: string) {
+    const object = byId.get(id);
+    return object?.kind === "collection" && change(() => [{ object: { ...object, name } }], "");
+  }
+
+  function updateCollection(id: string, next: readonly string[], previous: readonly string[]) {
+    const object = byId.get(id);
+    return object?.kind === "collection" && canUpdateCollectionMembers(object.itemIds, next, previous, memberIds) &&
+      change(() => [{ object: { ...object, itemIds: next } }], "");
   }
 
   async function openWorkspaceLink(url: string, saved = false): Promise<boolean> {
@@ -253,7 +272,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
       if (result) {
         setSelected(current => current.filter(id => !deleted.has(id)));
         if (preview && deleted.has(preview)) setPreview(undefined);
-        if (editingCollection && deleted.has(editingCollection)) setEditingCollection(undefined);
       }
       return result;
     });
@@ -261,10 +279,6 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
 
   function select(id: string, checked: boolean) {
     setSelected(current => checked ? [...current, id] : current.filter(item => item !== id));
-  }
-
-  function label(id: string) {
-    return items.find(({ object }) => object.id === id)?.object.name ?? "Unavailable object";
   }
 
   const disabled = busy || !entries;
@@ -294,7 +308,12 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
       onSelect={row => { select(row.id, !selected.includes(row.id)); return true; }}
       selectLabel="Toggle collection selection"
       emptyText="No documents here yet. Use the plus icon to import documents." />}
-    {current && section?.id !== "notes" && section?.id !== "documents" && <div className="aerift-workspace-content">
+    {section?.id === "collections" && <WorkspaceCollectionsGallery collections={collections} objects={candidates}
+      appearance={collectionAppearance.appearance} onPersistAppearance={collectionAppearance.persist}
+      preselectedIds={selected} disabled={disabled || !collectionAppearance.ready} onCreate={createCollection}
+      onRename={renameCollection} onChangeMembers={updateCollection}
+      onRemove={id => byId.get(id)?.kind === "collection" && removeObjects([id])} />}
+    {current && section?.id !== "notes" && section?.id !== "collections" && section?.id !== "documents" && <div className="aerift-workspace-content">
       {current.id === "browser" && <WorkspaceBrowserTools storageKey={browserHistoryKey}
         onOpen={openWorkspaceLink} labels={{ open: "Open in system browser", description: embeddedWebsitesRequested
           ? "Embedded Websites is requested, but unavailable in this build. Opens pages in your default browser."
@@ -310,7 +329,7 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
                 event.currentTarget.value = "";
               }} />
           </div>}
-        {current?.id === "browser" && <details className="aerift-workspace-create"><summary><SpatialIcon name="pair" size={18} />Save a link</summary><form onSubmit={event => void submit(event, "url")}>
+        {current?.id === "browser" && <details className="aerift-workspace-create"><summary><SpatialIcon name="pair" size={18} />Save a link</summary><form onSubmit={event => void submitLink(event)}>
           <label>Title<input name="name" required maxLength={180} /></label>
           <label>Web address<input name="url" type="url" required /></label>
           <div><Button type="submit" disabled={disabled}>Save link</Button></div>
@@ -319,21 +338,8 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
           {clipboardAllowed ? <IconAction variant="secondary" label="Capture clipboard text" icon="clipboard" disabled={disabled} onClick={() => void captureClipboard()} />
             : <p>Enable manual capture in Settings to save clipboard text.</p>}
         </div>}
-        {current?.id === "collections" && <details className="aerift-workspace-create" open={selected.length ? true : undefined}><summary><SpatialIcon name="collection" size={18} />Create a collection{selected.length > 0 ? ` (${selected.length} selected)` : ""}</summary><form onSubmit={event => void submit(event, "collection")}>
-          <label>Name<input name="name" required maxLength={180} /></label>
-          <p>Select files, notes, media, links, or clipboard entries in their modules to group them here.</p>
-          {!!selected.length && <ol>{selected.map(id => <li key={id}>{label(id)}
-            <IconAction label={`Remove ${label(id)} from selection`} icon="close" onClick={() => select(id, false)} /></li>)}</ol>}
-          <div><Button type="submit" disabled={disabled || !selected.length}>Create collection</Button></div>
-        </form></details>}
       </div>
       {current.id === "clipboard" && <WorkspaceClipboardTools tools={clipboardTools} count={visible.length} total={categoryItems.length} />}
-      {current.id === "collections" && selectedCollection?.kind === "collection" &&
-        <WorkspaceCollectionTools key={selectedCollection.id} name={selectedCollection.name}
-          objects={candidates} memberIds={selectedCollection.itemIds} disabled={disabled}
-          onChange={(next, previous) => previous.length === selectedCollection.itemIds.length &&
-            previous.every((id, index) => id === selectedCollection.itemIds[index]) &&
-            change(() => [{ object: { ...selectedCollection, itemIds: next } }], "Collection updated.")} />}
       {active && section?.id === "files" && isTauri() && <WorkspaceChosenFolder />}
       {fileCategory && <section className="ae-surface aw-file-filter" data-material="control" aria-label="Find in imported library">
         <WorkspaceFileTools tools={fileTools}
@@ -352,23 +358,18 @@ export function DesktopWorkspace({ preferences, clipboardAllowed, active, embedd
           const { object } = entry;
           const captured = object.kind === "clipboard" ? byId.get(object.objectId) : undefined;
           return <li key={object.id} className="ae-surface aerift-workspace-object" data-material="content" data-selected={selected.includes(object.id)}><div>
-            <span className="aerift-object-glyph"><SpatialIcon name={object.kind === "url" ? "pair" : object.kind === "collection" ? "workspace" : "file"} size={24} /></span>
+            <span className="aerift-object-glyph"><SpatialIcon name={object.kind === "url" ? "pair" : "file"} size={24} /></span>
             <span className="aerift-object-kind">{object.kind}</span>
-            {object.kind === "collection" ? <strong>{object.name}</strong> :
-              <label className="aerift-check"><input type="checkbox" checked={selected.includes(object.id)}
-                onChange={event => select(object.id, event.currentTarget.checked)} />{object.name}</label>}
+            <label className="aerift-check"><input type="checkbox" checked={selected.includes(object.id)}
+                onChange={event => select(object.id, event.currentTarget.checked)} />{object.name}</label>
             {captured?.kind === "text" && <>
               <p className="aerift-note-text">{captured.text}</p>
               <WorkspaceClipboardDetails text={captured.text} format={captured.format} />
               <WorkspaceClipboardCopy tools={clipboardTools} name={object.name} text={captured.text} />
             </>}
-            {object.kind === "collection" && (object.itemIds.length
-              ? <ol>{object.itemIds.map(id => <li key={id}>{label(id)}</li>)}</ol> : <p>This collection is empty.</p>)}
             <Popover label={`Actions for ${object.name}`} actions={[
               ...(entry.hasAsset ? [{ id: "preview", label: preview === object.id ? "Close file details" : "File details",
                 onSelect: () => setPreview(preview === object.id ? undefined : object.id) }] : []),
-              ...(object.kind === "collection" ? [{ id: "members", label: "Manage collection",
-                onSelect: () => setEditingCollection(object.id) }] : []),
               ...(object.kind === "url" ? [{ id: "open-link", label: "Open in browser", onSelect: () =>
                 void openWorkspaceLink(object.url, true) }] : []),
               { id: "remove", label: "Remove", disabled, onSelect: () => removeObjects([object.id]) },
