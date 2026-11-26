@@ -180,6 +180,8 @@ pub fn run() {
             windows_friends_files::friends_files_action,
             ambient_runtime::watch_ambient_capture,
             ambient_runtime::set_ambient_capture,
+            ambient_runtime::explorer_hand_pickup_status,
+            ambient_runtime::set_explorer_hand_pickup,
             ambient_runtime::send_ambient_file,
             windows::unwatch_app,
             windows::watch_file_selection,
@@ -228,6 +230,8 @@ pub fn run() {
         })
         .setup(|app| {
             use tauri::Manager;
+            #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+            app.manage(ambient_runtime::explorer_camera_owner::NativeCameraCommands::default());
             if let Some(main) = app.get_webview_window("main") {
                 app.state::<workspace_folder_picker::WorkspaceFolderPicker>()
                     .bind_owner(&main);
@@ -261,6 +265,10 @@ pub fn run() {
             #[cfg(any(windows, target_os = "ios", target_os = "android"))]
             if matches!(_event, tauri::RunEvent::Exit) {
                 use tauri::Manager;
+                #[cfg(all(windows, target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+                if let Some(camera) = _app.try_state::<ambient_runtime::explorer_camera_owner::NativeCameraCommands>() {
+                    let _ = camera.stop();
+                }
                 _app.state::<runtime::AppRuntime>().shutdown();
             }
         });

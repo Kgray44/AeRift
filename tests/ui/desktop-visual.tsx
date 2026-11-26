@@ -83,7 +83,22 @@ if (privateRemoteFixture) {
     mockUpload.settle(mockUpload.kind === "file" ? receipt : { incoming: remoteIncoming(), outgoingReceipt: receipt });
   } };
 }
+const explorerPickupFixture = query.get("explorerPickupFixture") === "1";
+let explorerPickupEnabled = false;
+let explorerPermissionChanges = 0;
 mockIPC((cmd, args) => {
+  if (cmd === "explorer_hand_pickup_status") {
+    return explorerPickupFixture ? (explorerPickupEnabled ? "enabled" : "disabled") : "unavailable";
+  }
+  if (cmd === "set_explorer_hand_pickup") {
+    if (!explorerPickupFixture || typeof (args as { enabled?: unknown })?.enabled !== "boolean") {
+      throw { code: "invalid_request" };
+    }
+    explorerPickupEnabled = (args as { enabled: boolean }).enabled;
+    document.documentElement.dataset.explorerPermissionChanges = String(++explorerPermissionChanges);
+    return;
+  }
+
   if (privateRemoteFixture) {
     if (cmd === "windows_remote_mode") return { current: "remote", nextEndpoint: fixtureEndpoint, restartNeeded: false };
     if (cmd === "private_remote_snapshot") {

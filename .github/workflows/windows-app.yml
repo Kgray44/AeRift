@@ -50,6 +50,13 @@ jobs:
           cargo test --locked --manifest-path src-tauri/Cargo.toml --features private-remote-app --lib private_remote
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git diff --exit-code -- ../../package-lock.json ../../Cargo.lock src-tauri/Cargo.lock
+      - name: Compile Windows Explorer camera tester wiring without camera resources
+        working-directory: apps/aerift
+        shell: pwsh
+        run: |
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          cargo check --locked --manifest-path src-tauri/Cargo.toml --features ambient-explorer-camera-owner
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Build unsigned private Remote qualifier and checksum
         if: github.head_ref == 'feat/remote-private-windows-host'
         working-directory: apps/aerift
@@ -195,6 +202,58 @@ jobs:
             $qualificationFailed = $true
           }
           if ($qualificationFailed) { throw 'One or more mandatory native fixture groups failed.' }
+      - name: Verify synthetic Explorer hand pickup admission without a camera
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
+        run: |
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'Run this fixture only on a disposable hosted Windows runner.'
+          }
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          $lines = & cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features ambient-media-qualification --lib ambient_runtime::explorer_gesture::tests 2>&1
+          $code = $LASTEXITCODE
+          $lines | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0 -or -not ($lines -match 'test result: ok\. 6 passed; 0 failed')) {
+            throw 'Expected all six synthetic Explorer gesture admission tests.'
+          }
+          $ownerLines = & cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features ambient-media-qualification --lib ambient_runtime::explorer_camera_session:: 2>&1
+          $ownerCode = $LASTEXITCODE
+          $ownerLines | ForEach-Object { Write-Host $_ }
+          if ($ownerCode -ne 0 -or -not ($ownerLines -match 'test result: ok\. 10 passed; 0 failed')) {
+            throw 'Expected all ten synthetic Explorer camera owner, indicator, chooser and revocation tests.'
+          }
+      - name: Verify bounded native camera command ownership without a camera
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
+        run: |
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') {
+            throw 'Requires disposable GitHub-hosted Windows.'
+          }
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          $lines = & cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features ambient-media-qualification,ambient-native-model-qualification --lib ambient_runtime::explorer_camera_session::native_command::tests:: 2>&1
+          $code = $LASTEXITCODE
+          $lines | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0 -or -not ($lines -match 'test result: ok\. 1 passed; 0 failed')) {
+            throw 'Expected the fake-device command ownership regression.'
+          }
+      - name: Verify the native camera indicator window without a camera
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/aerift-private-lanes-target
+          AERIFT_HOSTED_INDICATOR_WINDOW_TEST: '1'
+        run: |
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') {
+            throw 'Requires disposable GitHub-hosted Windows.'
+          }
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          $lines = & cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features ambient-media-qualification --lib ambient_runtime::explorer_camera_session::indicator::hosted_window_tests:: -- --ignored --test-threads=1 2>&1
+          $code = $LASTEXITCODE
+          $lines | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0 -or -not ($lines -match 'test result: ok\. 2 passed; 0 failed')) {
+            throw 'Expected both native indicator lifecycle checks without a camera.'
+          }
       - name: Compile the standard Windows app without launching or publishing it
         if: ${{ !cancelled() && (steps.native_private_lanes.outcome == 'success' || steps.native_private_lanes.outcome == 'failure') }}
         shell: pwsh
