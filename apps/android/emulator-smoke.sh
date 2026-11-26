@@ -368,7 +368,7 @@ PY_PNG
       }
     ' <<<"$activity"$'\n'"$window"
   }
-  gallery_ax() { python3 apps/android/photo_gallery_ui.py "$tmp/ui.xml" "$identity" "$1"; }
+  gallery_ax() { python3 apps/android/photo_gallery_ui.py "$tmp/ui.xml" "$identity" "$@"; }
   gallery_capture() {
     rm -f "$tmp/ui.xml"
     gallery_focused && dump_ui && gallery_focused || { rm -f "$tmp/ui.xml"; return 1; }
@@ -507,8 +507,28 @@ PY_PNG
   photo_stage 'select fixture and explicitly commit through system picker'
   tap_photo_picker photo
   tap_photo_picker commit
+  # Android's Photo Picker may return the source display name or its AOSP
+  # picker alias <selected local media ID>.<MIME extension>. The ID here
+  # was verified above as the only local image, and the radios are off.
+  # https://android.googlesource.com/platform/packages/providers/MediaProvider/+/0a212c65f2e4aef9cc7720161b339460b42696c2/src/com/android/providers/media/photopicker/data/PickerDbFacade.java
+  tap_imported_fixture() {
+    local i hit x y mode
+    for ((i = 0; i < 12; i++)); do
+      if gallery_capture && hit="$(gallery_ax imported "$photo_id" "$@")" && gallery_focused; then
+        read -r x y mode <<<"$hit"
+        [[ "$mode" == original || "$mode" == picker ]] || return 1
+        adb -s "$serial" shell input tap "$x" "$y" || return 1
+        photo_name_mode="$mode"
+        return 0
+      fi
+      sleep 1
+    done
+    gallery_report
+    echo 'Android Photos smoke did not find one enabled owned tile with an exact fixture name or exact picker alias.' >&2
+    return 1
+  }
   photo_stage 'verify exact imported fixture and close its preview'
-  tap_label "Open $photo_name"
+  tap_imported_fixture
   await_ui 'Close photo' >/dev/null
   tap_label 'Close photo'
 
@@ -521,14 +541,14 @@ PY_PNG
   grep -Eq 'pkgFlags=\[[^]]*[[:space:]]DEBUGGABLE([[:space:]]|])' <<<"$package_dump"
   photo_forward="$(adb -s "$serial" forward tcp:0 "localabstract:webview_devtools_remote_$process" | tr -d '\r')"
   [[ "$photo_forward" =~ ^[0-9]+$ ]]
-  node apps/android/emulator-photo-observer.mjs "$photo_forward" imported
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" imported "$photo_id" "$photo_name_mode"
 
-  tap_label "Open $photo_name"
+  tap_imported_fixture "$photo_name_mode"
   photo_stage 'confirm removal then verify original MediaStore bytes'
   tap_label 'Remove imported copy'
   await_ui 'Confirm remove imported copy' >/dev/null
   tap_label 'Confirm remove imported copy'
-  node apps/android/emulator-photo-observer.mjs "$photo_forward" removed
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" removed "$photo_id" "$photo_name_mode"
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-after.png"
   cmp "$tmp/$photo_name" "$tmp/source-after.png"
   trap 'printf "Android emulator smoke failed at line %s.\n" "$LINENO" >&2' ERR

@@ -1,19 +1,23 @@
 // Read-only DOM witness for a debug APK in the owned CI emulator. This neither
 // clicks controls nor calls application IPC and never sees a native image path.
-const [port, phase] = process.argv.slice(2);
+const [port, phase, fixtureId, nameMode] = process.argv.slice(2);
 if (!/^[0-9]{1,5}$/.test(port ?? "") || Number(port) < 1024 || Number(port) > 65535 ||
-    !["imported", "removed"].includes(phase)) throw new Error("Invalid emulator observation request");
+    !["imported", "removed"].includes(phase) || !/^[0-9]{1,19}$/.test(fixtureId ?? "") ||
+    !["original", "picker"].includes(nameMode)) throw new Error("Invalid emulator observation request");
 
+const fixtureName = nameMode === "original" ? "AeRift-Android-photo-smoke.png" : fixtureId + ".png";
 const embedded = new Set(["http://tauri.localhost", "https://tauri.localhost"]);
 const host = "127.0.0.1:" + port;
 const deadline = Date.now() + 22_000;
 const pause = () => new Promise(resolve => setTimeout(resolve, 350));
 const expression = `(() => {
   const gallery = document.querySelector('.aw-photos-main[aria-label="Photo gallery"]');
-  const tile = gallery?.querySelector('[aria-label="Open AeRift-Android-photo-smoke.png"]');
+  const tiles = [...(gallery?.querySelectorAll(".aw-photo-tile") ?? [])];
+  const matches = tiles.filter(node => node.getAttribute("aria-label") === ${JSON.stringify("Open " + fixtureName)});
+  const tile = matches.length === 1 ? matches[0] : null;
   const image = tile?.querySelector('img');
   return { gallery: !!gallery && gallery.getClientRects().length > 0,
-    tile: !!tile, modal: !!document.querySelector('.aw-photo-viewer[open]'),
+    count: tiles.length, matches: matches.length, tile: !!tile, modal: !!document.querySelector('.aw-photo-viewer[open]'),
     width: image?.naturalWidth ?? 0, height: image?.naturalHeight ?? 0,
     derived: !!image?.currentSrc.startsWith('blob:' + location.origin + '/') };
 })()`;
@@ -56,7 +60,7 @@ while (Date.now() < deadline) {
       last = await probe(endpoint);
       if (last?.gallery && !last.modal && (phase === "imported" ?
         last.tile && last.derived && last.width === 256 && last.height === 160 :
-        !last.tile)) {
+        last.matches === 0 && last.count === 0)) {
         console.log("Android installed Photos witness:", JSON.stringify({ phase, ...last }));
         process.exit(0);
       }
