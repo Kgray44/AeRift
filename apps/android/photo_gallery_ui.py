@@ -12,6 +12,8 @@ EXPECTED = (
     "Import photos and videos",
     "Retry loading imports",
     "Loading imports…",
+    "Remove imported copy",
+    "Confirm remove imported copy",
 )
 
 
@@ -67,6 +69,22 @@ def find(root, owner, action, fixture_id=None, admitted=None):
     left, top, right, bottom = frames[0]
     if action == "confirm":
         return any(EXPECTED[0] in labels(node) and bounds(node) for node in nodes)
+    if action in ("remove", "confirm-remove"):
+        label = ("Remove imported copy" if action == "remove" else
+                 "Confirm remove imported copy")
+        matches = [
+            node for node in nodes if label in labels(node)
+            and node.get("class") == "android.widget.Button"
+            and node.get("enabled") == "true" and node.get("clickable") == "true"
+            and bounds(node)
+        ]
+        if len(matches) != 1:
+            return False
+        l, t, r, b = bounds(matches[0])
+        if not (left <= l < r <= right and top <= t < b <= bottom):
+            return False
+        print((l + r) // 2, (t + b) // 2)
+        return True
     if action == "imported":
         allowed = imported_names(fixture_id)
         if admitted is not None:

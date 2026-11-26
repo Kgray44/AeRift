@@ -16,7 +16,10 @@ const expression = `(() => {
   const matches = tiles.filter(node => node.getAttribute("aria-label") === ${JSON.stringify("Open " + fixtureName)});
   const tile = matches.length === 1 ? matches[0] : null;
   const image = tile?.querySelector('img');
-  return { gallery: !!gallery && gallery.getClientRects().length > 0,
+  const viewer = document.querySelector('.aw-photo-viewer[open]');
+  return { confirm: !!viewer?.querySelector('[role="group"][aria-label="Confirm remove imported copy"]'),
+    viewerError: !!viewer?.querySelector('[role="alert"]'),
+    gallery: !!gallery && gallery.getClientRects().length > 0,
     count: tiles.length, matches: matches.length, tile: !!tile, modal: !!document.querySelector('.aw-photo-viewer[open]'),
     width: image?.naturalWidth ?? 0, height: image?.naturalHeight ?? 0,
     derived: !!image?.currentSrc.startsWith('blob:' + location.origin + '/') };

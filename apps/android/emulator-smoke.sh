@@ -545,9 +545,25 @@ PY_PNG
 
   tap_imported_fixture "$photo_name_mode"
   photo_stage 'confirm removal then verify original MediaStore bytes'
-  tap_label 'Remove imported copy'
-  await_ui 'Confirm remove imported copy' >/dev/null
-  tap_label 'Confirm remove imported copy'
+  tap_owned_removal_action() {
+    local action="$1" i hit x y
+    for ((i = 0; i < 6; i++)); do
+      if gallery_capture && hit="$(gallery_ax "$action")" && gallery_focused; then
+        read -r x y <<<"$hit"
+        adb -s "$serial" shell input tap "$x" "$y"
+        return
+      fi
+      sleep 1
+    done
+    gallery_report
+    echo "Android Photos smoke could not locate one owned removal button ($action)." >&2
+    return 1
+  }
+  photo_stage 'tap owned Remove imported copy button'
+  tap_owned_removal_action remove
+  photo_stage 'tap owned Confirm remove imported copy button'
+  tap_owned_removal_action confirm-remove
+  photo_stage 'verify removed Android import and unchanged original'
   node apps/android/emulator-photo-observer.mjs "$photo_forward" removed "$photo_id" "$photo_name_mode"
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-after.png"
   cmp "$tmp/$photo_name" "$tmp/source-after.png"
