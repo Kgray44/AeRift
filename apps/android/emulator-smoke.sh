@@ -368,9 +368,12 @@ PY_PNG
       echo 'Owned Photos Activity and focused window identity not jointly confirmed.' >&2
       # Evidence only: retain the exact owner guard. Do not print dump text,
       # identifiers, coordinates, package names, or labels from arbitrary windows.
-      local activity_observation window_observation
+      local activity_observation window_observation global_observation
       if activity_observation="$(timeout 5s adb -s "$serial" shell dumpsys activity activities)" &&
-         window_observation="$(timeout 5s adb -s "$serial" shell dumpsys window displays)"; then
+         window_observation="$(timeout 5s adb -s "$serial" shell dumpsys window displays)" &&
+         global_observation="$(timeout 5s adb -s "$serial" shell dumpsys window)"; then
+        awk '/^[[:space:]]*mTopFocusedDisplayId=/ { seen++; if ($0 ~ /=0[[:space:]]*$/) primary++ }
+          END { printf "Photos global focus top-labels=%d default-top=%d\n", seen, primary }' <<<"$global_observation" >&2
         awk -v expected="$component" '
           function full(value, parts) {
             if (split(value, parts, "/") != 2) return ""
@@ -387,9 +390,36 @@ PY_PNG
           /^[[:space:]]*ResumedActivity:[[:space:]]+ActivityRecord/ { count_owner("legacy") }
           /^[[:space:]]*Resumed:[[:space:]]+ActivityRecord/ { count_owner("summary") }
           /^[[:space:]]*topResumedActivity=ActivityRecord/ { count_owner("top") }
+          /^[[:space:]]*Display: mDisplayId=[0-9]+([[:space:]]|$)/ {
+            section = ($2 == "mDisplayId=0" ? "default" : "secondary")
+            display_headers[section]++
+          }
+          /^[[:space:]]*mTopFocusedDisplayId=/ {
+            top_labels++
+            if ($0 ~ /mTopFocusedDisplayId=0[[:space:]]*$/) top_default++
+          }
+          /^[[:space:]]*mCurrentFocus=/ {
+            bucket = section == "" ? "unrecognized" : section
+            focus_fields[bucket]++
+            if ($0 ~ /^[[:space:]]*mCurrentFocus=null[[:space:]]*$/) empty_fields[bucket]++
+            if ($0 ~ /^[[:space:]]*mCurrentFocus=Window[{]/) {
+              focus_windows[bucket]++
+              value = $1; sub(/^mCurrentFocus=Window[{]/, "", value)
+              if (value ~ /^[a-fA-F0-9]+$/) window_ids[value] = 1
+            }
+          }
           /^[[:space:]]*mCurrentFocus=Window/ { count_owner("window") }
           /^[[:space:]]*mFocusedApp=ActivityRecord/ { count_owner("app") }
           END {
+            buckets[1]="default"; buckets[2]="secondary"; buckets[3]="unrecognized"
+            for (i = 1; i <= 3; ++i) {
+              b = buckets[i]
+              printf "Photos focus shape %s sections=%d fields=%d windows=%d null=%d\n",
+                b, display_headers[b], focus_fields[b], focus_windows[b], empty_fields[b]
+            }
+            for (id in window_ids) distinct++
+            printf "Photos focus shape distinct-window-tokens=%d top-display-labels=%d default-top=%d\n",
+              distinct, top_labels, top_default
             kinds[1] = "legacy"; kinds[2] = "summary"; kinds[3] = "top";
             kinds[4] = "window"; kinds[5] = "app";
             for (i = 1; i <= 5; ++i) {
