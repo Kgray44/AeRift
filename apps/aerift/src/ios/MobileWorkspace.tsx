@@ -154,4 +154,3 @@ export function MobileWorkspace({ platform, regions, modules, pick, media, recei
     {regions.selecting && <p role="status">Opening picker or preparing item…</p>}
   </MotionFeedbackProvider>;
 }
-

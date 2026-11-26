@@ -279,7 +279,7 @@ export function DesktopApp() {
           ambientSending={ambientSending} ambientTargets={nearbyCaptureTargets} offerAmbientCapture={offerAmbientCapture} cameraStatus={cameraStatus} retryCamera={() => setCameraRetry(value => value + 1)} />}
         {keepWorkspaceMounted &&
           <div hidden={route !== "workspace"}>
-            <DesktopWorkspace preferences={settings.experience} clipboardAllowed={settings.clipboard} />
+            <DesktopWorkspace preferences={settings.experience} clipboardAllowed={settings.clipboard} active={route === "workspace"} />
           </div>}
         <TransferWorkspace
           port={nativeAppPort}
