@@ -12,6 +12,21 @@ identity=com.kgamazing44.aerift
 fixture_name=AeRift-Android-smoke.txt
 tmp="$(mktemp -d)"
 pid=
+# Use the supported direct software backend; swiftshader_indirect is deprecated.
+gpu=swiftshader
+assert_emulator_alive() {
+  local phase="$1" status
+  if status="$(ps -o stat= -p "$pid" 2>/dev/null)" &&
+    [[ "$status" =~ ^[[:space:]]*[^ZX[:space:]] ]]; then
+    return 0
+  fi
+  printf 'Android emulator process stopped during %s (PID %s, GPU %s).\n' "$phase" "$pid" "$gpu" >&2
+  if [[ -s "$tmp/emulator.log" ]]; then
+    echo '--- final Android emulator output ---' >&2
+    tail -n 40 "$tmp/emulator.log" >&2
+  fi
+  return 1
+}
 cleanup() {
   if [[ -n "$pid" ]]; then
     adb -s "$serial" emu kill >/dev/null 2>&1 || true
@@ -34,14 +49,16 @@ export ANDROID_AVD_HOME="$tmp/avd"
 mkdir -p "$ANDROID_AVD_HOME"
 printf 'no\n' | "$avdmanager" create avd --force --name "$avd" --package "$cpu_image" --device pixel_6
 if [[ -w /dev/kvm ]]; then accel=on; else accel=off; fi
+"$emulator" -version
+printf 'Android emulator: GPU %s, VM acceleration %s.\n' "$gpu" "$accel"
 "$emulator" -avd "$avd" -port 5580 -no-window -no-audio -no-boot-anim -no-snapshot \
-  -gpu swiftshader_indirect -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
+  -gpu "$gpu" -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
 pid=$!
 boot_budget=220
 [[ "$accel" == on ]] || boot_budget=650
 deadline=$((SECONDS + boot_budget))
 while (( SECONDS < deadline )); do
-  kill -0 "$pid"
+  assert_emulator_alive "boot"
   [[ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null || true)" == 1 ]] && break
   sleep 2
 done
@@ -96,7 +113,13 @@ PY
 await_ui() {
   local label="$1" tries="${2:-12}" package="${3:-}" coordinates i
   for ((i = 0; i < tries; i++)); do
-    if dump_ui && coordinates="$(locate "$label" "$package")"; then printf '%s\n' "$coordinates"; return 0; fi
+    assert_emulator_alive "waiting for $label" || return 1
+    if dump_ui && coordinates="$(locate "$label" "$package")"; then
+      assert_emulator_alive "confirming $label" || return 1
+      printf '%s\n' "$coordinates"
+      return 0
+    fi
+    assert_emulator_alive "waiting for $label" || return 1
     sleep 1
   done
   echo "Android UI did not show: $label" >&2
