@@ -1,0 +1,27 @@
+name: Windows Workspace browser compile proof
+
+on:
+  pull_request:
+    paths:
+      - 'apps/aerift/src-tauri/src/workspace_browser_*.rs'
+      - 'apps/aerift/src-tauri/tests/workspace_browser_qualification.rs'
+      - '.github/workflows/workspace-browser-native.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-policy:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Compile the locked opt-in WebView2 host and exercise pure policy tests
+        shell: pwsh
+        run: |
+          cargo test --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features workspace-browser-qualification --test workspace_browser_qualification
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git diff --exit-code -- Cargo.lock apps/aerift/src-tauri/Cargo.lock

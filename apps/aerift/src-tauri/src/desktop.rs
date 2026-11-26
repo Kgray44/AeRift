@@ -404,6 +404,10 @@ pub(crate) fn handle_shortcut(app: &AppHandle, key: &Shortcut, state: ShortcutSt
     if !app.state::<AppRuntime>().nearby_enabled() {
         return;
     }
+    #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+    if ambient_runtime::explorer_camera_owner::handles(app, key, state) {
+        return;
+    }
     if key == &crate::explorer_receive::shortcut() {
         if state == ShortcutState::Pressed {
             crate::explorer_receive::capture_focused_explorer(app);

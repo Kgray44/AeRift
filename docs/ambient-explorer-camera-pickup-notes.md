@@ -61,3 +61,31 @@ real Windows; confirm camera close/pause/revocation, Explorer tab/selection
 changes and supported app identity; do the real opt-in Explorer/fist/paired
 device/explicit accept test on owner-authorized hardware. Passing synthetic
 tests is not evidence of real camera or transfer behavior.
+
+## Windows x64 owner tester wiring
+
+`ambient-explorer-camera-owner` compiles the route only for Windows x64. The
+ordinary installer does not ship the feature or model; its Development
+control reports that the tester build is required. A dedicated tester must
+stage the reviewed, pinned model bundle at `ambient-camera-model` in the
+application resource directory; runtime verification still occurs before
+loading the DLL. Enabling the switch in Settings → Development only registers
+two native shortcuts for this app session. It does not enumerate devices,
+turn on the camera, or grant permission.
+
+1. Turn on Ambient and its Explorer context capture, then enable **Explorer
+   hand pickup** in Development. Leave AeRift open behind File Explorer.
+2. In File Explorer, select a disposable local file and press **Ctrl+Shift+F8**.
+   Choose a device from the native dialog. This leaves the camera off.
+3. Return to the same Explorer window and press **Ctrl+Shift+F9** within the
+   chooser lifetime. Verify that the visible camera indicator is present.
+   Use the open-hand-then-fist gesture and look for the staged capture in
+   AeRift. Nothing is sent by that gesture.
+4. Press **Ctrl+Shift+F9** again to stop, or turn the switch off. Focus loss,
+   capture pause, lock, permission loss, and exclusion still revoke the
+   active camera session; nothing restarts it automatically.
+
+The hosted build compiles the tester code without the model. The existing
+native harnesses use synthetic landmark inputs and do not acquire a camera.
+Installing and testing the owner build on physical hardware is separate
+from merge qualification. Do not count the ordinary installer as the tester.

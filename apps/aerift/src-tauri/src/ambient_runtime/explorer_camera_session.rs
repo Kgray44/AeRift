@@ -46,6 +46,14 @@ impl ExplorerCameraSession {
         self.join()
     }
 
+    #[cfg(feature = "ambient-explorer-camera-owner")]
+    pub(crate) fn request_stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = &self.worker {
+            worker.thread().unpark();
+        }
+    }
+
     /// Poll from the native owner to surface permission/model/device failure.
     pub(crate) fn is_finished(&self) -> bool {
         self.worker.as_ref().is_none_or(JoinHandle::is_finished)
@@ -243,6 +251,10 @@ impl AmbientRuntime {
             .config
             .lock()
             .map_err(|_| ExplorerCameraEnd::ContextLost)?;
+        #[cfg(feature = "ambient-explorer-camera-owner")]
+        if !cfg.explorer_pickup_enabled {
+            return Err(ExplorerCameraEnd::ContextLost);
+        }
         if ambient_context::capture_anchor().ok() != Some(anchor)
             || ambient_context::foreground_executable().as_deref() != Some("explorer.exe")
         {

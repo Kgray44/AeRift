@@ -28,6 +28,8 @@ use crate::ambient_context::{self, CaptureAnchor, ContextError, ExplorerContext}
 mod explorer_gesture;
 #[cfg(feature = "ambient-media-qualification")]
 mod explorer_camera_session;
+#[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+pub(crate) mod explorer_camera_owner;
 mod nearby_actions;
 
 struct NativePickupGuard {
@@ -75,6 +77,8 @@ struct Slot {
 struct Config {
     enabled: bool,
     a4_opt_in: bool,
+    #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+    explorer_pickup_enabled: bool,
     receive_shortcut_registered: bool,
     paused: bool,
     excludes: BTreeSet<String>,
@@ -554,6 +558,27 @@ pub(crate) fn set_ambient_capture(
     window
         .state::<AmbientRuntime>()
         .configure(window.app_handle(), enabled, excluded_apps)
+}
+
+#[tauri::command]
+pub(crate) fn explorer_hand_pickup_status(window: WebviewWindow) -> Result<&'static str, TransferError> {
+    require_main(&window)?;
+    #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+    return explorer_camera_owner::status(&window);
+    #[cfg(not(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner")))]
+    Ok("unavailable")
+}
+
+#[tauri::command]
+pub(crate) fn set_explorer_hand_pickup(window: WebviewWindow, enabled: bool) -> Result<(), TransferError> {
+    require_main(&window)?;
+    #[cfg(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner"))]
+    return explorer_camera_owner::configure(&window, enabled);
+    #[cfg(not(all(target_arch = "x86_64", feature = "ambient-explorer-camera-owner")))]
+    {
+        let _ = enabled;
+        Err(ErrorCode::PeerUnavailable.into())
+    }
 }
 
 #[tauri::command]

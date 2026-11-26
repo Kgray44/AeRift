@@ -50,6 +50,13 @@ jobs:
           cargo test --locked --manifest-path src-tauri/Cargo.toml --features private-remote-app --lib private_remote
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git diff --exit-code -- ../../package-lock.json ../../Cargo.lock src-tauri/Cargo.lock
+      - name: Compile Windows Explorer camera tester wiring without camera resources
+        working-directory: apps/aerift
+        shell: pwsh
+        run: |
+          $env:RUSTUP_TOOLCHAIN = 'stable'
+          cargo check --locked --manifest-path src-tauri/Cargo.toml --features ambient-explorer-camera-owner
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Build unsigned private Remote qualifier and checksum
         if: github.head_ref == 'feat/remote-private-windows-host'
         working-directory: apps/aerift
@@ -88,6 +95,8 @@ jobs:
           retention-days: 7
       - name: Install, launch, and capture the WebView
         shell: pwsh
+        env:
+          AERIFT_WORKSPACE_FOLDER_FIXTURE: synthetic-fixed-ntfs-only
         run: ./apps/windows/Test-InstalledShell.ps1
       - name: Upload installer and native launch evidence
         if: always()

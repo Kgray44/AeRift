@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { WorkspaceCategoryHeading, WorkspaceLibrary, WorkspaceScene, useWorkspaceLibrary } from "../WorkspaceLibrary";
 import { isWorkspaceDocument, workspaceSections } from "../workspace-categories";
+import { MobileDocumentsGallery } from "./MobileDocumentsGallery";
 import { MobileMediaTray } from "./MobileMediaTray";
 import type { MediaSource } from "./mobile-media";
 import type { ObservedMediaPort } from "./mobile-media-observer";
 import { LocalObjectWorkspace, type LocalModule } from "./LocalObjectWorkspace";
 import type { MobileObject } from "./local-objects";
-import type { MobileOperations, MobilePlatformCopy, ReceivedCopy } from "./mobile-platform";
+import type { MobileOperations, MobilePlatform, MobilePlatformCopy, ReceivedCopy } from "./mobile-platform";
 import type { AppPort, Transfer } from "@aerift/app-contract";
 import { Button, MotionFeedbackProvider, TransferObject, type TransferWorkspaceRegions } from "@aerift/ui";
 
 export type PickerSource = MediaSource;
 export type ModuleVisibility = Record<PickerSource | LocalModule, boolean>;
 
-export function MobileWorkspace({ regions, modules, pick, media, received, openRift, objects, save, clipboardSharing, markClipboardSelection, operations, copy, reducedMotion = false }: {
+export function MobileWorkspace({ platform, regions, modules, pick, media, received, openRift, objects, save, clipboardSharing, markClipboardSelection, operations, copy, reducedMotion = false }: {
+  platform: MobilePlatform;
   regions: TransferWorkspaceRegions;
   modules: ModuleVisibility;
   pick: (source: PickerSource) => ReturnType<AppPort["selectFile"]>;
@@ -106,13 +108,13 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
     <WorkspaceScene scene={workspace}><div className="ios-module-moment" key={section?.id ?? "library"}>
     {!section && <WorkspaceLibrary sections={workspace.sections} open={openSection} cardRef={workspace.cardRef} />}
     {section && <WorkspaceCategoryHeading section={section} heading={workspace.heading} onBack={back} />}
-    {current === "files" && <section className="ae-surface ios-section aw-focused-surface" data-material="content" aria-labelledby="ios-files">
-      <div className="ios-section-head">
-        <div><h4 id="ios-files">{documents ? "Documents on this device" : "Choose a file"}</h4><p>{documents ? "Document copies are filtered from your files." : copy.fileSources}</p></div>
-        {documents ? <Button variant="quiet" onClick={() => openSection("files")}>Browse all files</Button> :
-          <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose for Rift</Button>}
-      </div>
-      {(operations.listReceived || visibleReceived.length > 0) && <h4>Received on {copy.device}</h4>}
+    {documents && <MobileDocumentsGallery platform={platform} regions={regions} port={media} />}
+    {current === "files" && (!documents || !!visibleReceived.length || catalogState === "error") && <section className="ae-surface ios-section aw-focused-surface" data-material="content" aria-labelledby={documents ? "ios-received-documents" : "ios-files"}>
+      {!documents && <div className="ios-section-head">
+        <div><h4 id="ios-files">Choose a file</h4><p>{copy.fileSources}</p></div>
+        <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("files"))}>Choose for Rift</Button>
+      </div>}
+      {(operations.listReceived || visibleReceived.length > 0) && <h4 id="ios-received-documents">Received on {copy.device}</h4>}
       {operations.listReceived && catalogState === "loading" && !catalog.length &&
         <p role="status">Loading received copies…</p>}
       {operations.listReceived && catalogState === "error" && <div className="ae-actions">
@@ -141,7 +143,7 @@ export function MobileWorkspace({ regions, modules, pick, media, received, openR
         <Button data-ae-lens-role="control" disabled={!regions.canSelect} onClick={() => void regions.select(() => pick("photos"))}>Choose for Rift</Button>
       </div>
     </section>}
-    {(current === "files" || current === "photos") &&
+    {!documents && (current === "files" || current === "photos") &&
       <MobileMediaTray key={section?.id} source={current} documents={documents} port={media} regions={regions} copy={copy} />}
     {current && current !== "files" && current !== "photos" && (objects
       ? <LocalObjectWorkspace key={current} module={current} objects={objects} save={save} media={media}

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { verifyCollectionsGallery } from "./collections-gallery-integration-browser.mjs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReceivedActivity } from "./received-activity-browser.mjs";
 import { verifyWorkspaceReactMotion } from "./workspace-motion-browser.mjs";
+import { verifyDocumentsGallery } from "./documents-gallery-browser.mjs";
 const module = process.env.AERIFT_PLAYWRIGHT_MODULE;
 const { chromium } = await import(module ? pathToFileURL(module).href : "playwright");
 const root = process.env.AERIFT_FIXTURE_URL ?? "http://127.0.0.1:4175";
@@ -55,6 +57,7 @@ const back = async (page, name) => {
 };
 try {
   await verifyWorkspaceReactMotion(browser, root, evidence);
+  await verifyCollectionsGallery(browser, root);
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
   await desktop.goto(root + "/desktop-visual.html?route=workspace&scheme=dark");
   await verifyHeader(desktop);
@@ -81,11 +84,15 @@ try {
   assert.equal(await desktop.getByText("Recent searches", { exact: true }).count(), 0);
   await back(desktop, "File Browser");
   await open(desktop, "Documents");
-  await desktop.getByRole("checkbox", { name: "Report.pdf" }).waitFor();
-  assert.equal(await desktop.getByRole("checkbox", { name: "Sketch.png" }).count(), 0);
-  await desktop.getByRole("button", { name: "Actions for Report.pdf" }).click();
-  await button(desktop, "File details").click();
-  await desktop.getByRole("link", { name: "Save a copy" }).waitFor();
+  const documentGallery = desktop.getByRole("region", { name: "Document gallery", exact: true });
+  await button(documentGallery, "View Report.pdf").waitFor();
+  assert.equal(await button(documentGallery, "View Sketch.png").count(), 0);
+  await button(documentGallery, "View Report.pdf").click();
+  const pdfDetails = desktop.getByRole("dialog", { name: "Viewing Report.pdf", exact: true });
+  await button(pdfDetails, "Export document copy").waitFor();
+  await pdfDetails.getByText("In-app preview isn’t available for this document format.", { exact: true }).waitFor();
+  await button(pdfDetails, "Close document").press("Enter");
+  await verifyDocumentsGallery(desktop);
   await snapped(desktop, "desktop-documents-dark");
   await back(desktop, "Documents");
   await open(desktop, "Notes");
@@ -198,10 +205,13 @@ try {
   assert.deepEqual(prior, { storeNames: ["objects"], count: 52, fileContents: "%PDF-1.7" });
   await large.reload();
   await open(large, "Documents");
-  const updated = large.getByRole("region", { name: "Saved documents", exact: true });
-  await updated.getByText("Page 1 of 2").waitFor();
-  await button(updated, "Next page").click();
-  assert.equal(await updated.getByRole("checkbox").count(), 3);
+  const updated = large.getByRole("region", { name: "Document gallery", exact: true });
+  await updated.getByText("1 / 2", { exact: true }).waitFor();
+  await button(updated, "Next documents").click();
+  assert.equal(await updated.getByRole("button", { name: /^View / }).count(), 21);
+  const docFilter = updated.getByRole("searchbox", { name: "Search imported documents", exact: true });
+  await docFilter.fill("Prior edit");
+  await button(updated, "View Prior edit.pdf").waitFor();
   await large.close();
 
   const home = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -287,8 +297,12 @@ try {
     await page.getByText("Navigation chart.pdf", { exact: true }).last().waitFor();
     await back(page, "File Browser");
     await open(page, "Documents");
-    const docs = page.getByRole("region", { name: "Imported documents" });
-    await docs.getByText("Navigation chart.pdf", { exact: true }).waitFor();
+    const docs = page.getByRole("region", { name: "Document gallery", exact: true });
+    await button(docs, "View Navigation chart.pdf").click();
+    const docViewer = page.getByRole("dialog", { name: "Viewing Navigation chart.pdf", exact: true });
+    await button(docViewer, "Open document preview").click();
+    await button(docViewer, "Export document copy").waitFor();
+    await button(docViewer, "Close document").press("Enter");
     await back(page, "Documents");
     await open(page, "Notes");
     const mobileNotes = page.getByRole("complementary", { name: "Notes", exact: true });
@@ -342,8 +356,8 @@ try {
     await page.getByText("No pins match your filters.").waitFor();
     await back(page, "Clipboard");
     await open(page, "Collections");
-    await page.getByText("New collection", { exact: true }).click();
-    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Weekend items");
+    await button(page, "New collection").click();
+    await page.getByRole("textbox", { name: "Collection name", exact: true }).fill("Weekend items");
     await button(page, "Create collection").click();
     const contents = page.getByRole("region", { name: "Weekend items contents" });
     await contents.getByRole("searchbox", { name: "Find an item to add" }).fill("Weekend plan");

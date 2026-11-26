@@ -193,6 +193,18 @@ impl NativeCameraCommands {
         Ok(())
     }
 
+    #[cfg(feature = "ambient-explorer-camera-owner")]
+    pub(crate) fn request_stop_if_running(&self) -> Result<bool, ExplorerCameraEnd> {
+        let slot = self.0.lock().map_err(|_| ExplorerCameraEnd::ContextLost)?;
+        if let State::Running(session) = &slot.state {
+            if !session.is_finished() {
+                session.request_stop();
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Run on a native worker (joining camera teardown may block). Invalidates
     /// an actually selected or merely pending choice before doing teardown.
     pub(crate) fn stop(&self) -> Result<ExplorerCameraEnd, ExplorerCameraEnd> {

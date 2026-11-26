@@ -17,6 +17,7 @@ const categories = [
   { id: "transfers", label: "Transfers", icon: "drop" },
   { id: "privacy", label: "Privacy", icon: "clipboard" },
   { id: "ambient", label: "Ambient", icon: "desktop" },
+  { id: "development", label: "Development", icon: "settings" },
 ] as const;
 
 export function DesktopSettings({ value, onChange, folder, folderError, openingFolderPicker, chooseFolder,
@@ -45,6 +46,35 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
   const [ambientTarget, setAmbientTarget] = useState<{ captureId: string; deviceId: string }>();
   const selectedAmbientDevice = ambientCapture?.state === "frozen" && ambientTarget?.captureId === ambientCapture.id
     && ambientTargets.some(device => device.id === ambientTarget.deviceId) ? ambientTarget.deviceId : "";
+  const [explorerPickup, setExplorerPickup] = useState<"unavailable" | "enabled" | "disabled">("unavailable");
+  const [explorerPickupBusy, setExplorerPickupBusy] = useState(false);
+  const [explorerPickupError, setExplorerPickupError] = useState(false);
+  useEffect(() => {
+    if (category !== "development") return;
+    let current = true;
+    void command<"unavailable" | "enabled" | "disabled">("explorer_hand_pickup_status", {}).then(result => {
+      if (current && result.ok && (result.value === "enabled" || result.value === "disabled")) {
+        setExplorerPickup(result.value);
+      }
+    });
+    return () => { current = false; };
+  }, [category]);
+  async function changeExplorerPickup(enabled: boolean) {
+    setExplorerPickupBusy(true);
+    setExplorerPickupError(false);
+    try {
+      const result = await command<void>("set_explorer_hand_pickup", { enabled });
+      if (!result.ok) {
+        setExplorerPickupError(true);
+        const status = await command<typeof explorerPickup>("explorer_hand_pickup_status", {});
+        setExplorerPickup(status.ok ? status.value : "unavailable");
+        return;
+      }
+      setExplorerPickup(enabled ? "enabled" : "disabled");
+    } finally {
+      setExplorerPickupBusy(false);
+    }
+  }
   const [explorerEnabled, setExplorerEnabled] = useState<boolean>();
   const [explorerUpdating, setExplorerUpdating] = useState(false);
   const [explorerError, setExplorerError] = useState(false);
@@ -287,5 +317,26 @@ export function DesktopSettings({ value, onChange, folder, folderError, openingF
       </label>}
       {startupError && <p role="alert">AeRift could not update Windows startup settings.</p>}
     </section>}
+    <section hidden={category !== "development"} aria-labelledby="development-heading">
+      <h3 id="development-heading">Development</h3>
+      <label className="aerift-check">
+        <input type="checkbox" checked={value.embeddedWebsitesRequested} aria-describedby="embedded-websites-policy"
+          onChange={event => onChange({ ...value, embeddedWebsitesRequested: event.currentTarget.checked })} />
+        Embedded Websites
+      </label>
+      <p id="embedded-websites-policy">Prefer opening websites inside AeRift when an isolated browser is available.
+        This build still opens websites in your default browser.</p>
+      <label className="aerift-check">
+        <input type="checkbox" checked={explorerPickup === "enabled"}
+          disabled={explorerPickup === "unavailable" || explorerPickupBusy}
+          aria-describedby="explorer-hand-pickup-policy"
+          onChange={event => void changeExplorerPickup(event.currentTarget.checked)} />
+        Explorer hand pickup
+      </label>
+      <p id="explorer-hand-pickup-policy">{explorerPickup === "unavailable"
+        ? "Requires the Windows Explorer camera tester build."
+        : "Enable Ambient capture first. With AeRift open behind File Explorer, press Ctrl+Shift+F8 to choose a camera. Back in the same Explorer window, press Ctrl+Shift+F9 to start or stop. Pickup stages files for review and does not send them. This setting resets when AeRift quits."}</p>
+      {explorerPickupError && <p role="alert">Could not change Explorer hand pickup. Check Ambient capture, exclusions, and shortcut conflicts.</p>}
+    </section>
   </div>;
 }

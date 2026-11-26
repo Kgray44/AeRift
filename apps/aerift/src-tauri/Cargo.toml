@@ -16,8 +16,11 @@ name = "aerift"
 path = "src/main.rs"
 
 [features]
+workspace-folder-picker-qualification = ["aerift-transfer/windows-folder-picker-qualification"]
+workspace-browser-qualification = ["dep:raw-window-handle", "dep:webview2-com", "dep:wry"]
 ambient-native-model-qualification = ["dep:sha2", "windows-sys/Win32_System_LibraryLoader"]
 ambient-media-qualification = ["windows/Win32_Media_MediaFoundation", "windows/Win32_System_WinRT", "windows/Win32_UI_Controls", "windows/Security_Authorization_AppCapabilityAccess", "dep:windows-core"]
+ambient-explorer-camera-owner = ["ambient-media-qualification", "ambient-native-model-qualification"]
 private-remote-host = []
 private-remote-app = ["tauri/custom-protocol"]
 
@@ -25,6 +28,11 @@ private-remote-app = ["tauri/custom-protocol"]
 name = "private_remote_host"
 path = "examples/private_remote_host.rs"
 required-features = ["private-remote-host"]
+
+[[test]]
+name = "workspace_browser_qualification"
+path = "tests/workspace_browser_qualification.rs"
+required-features = ["workspace-browser-qualification"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -49,14 +57,17 @@ url = "2"
 
 [target.'cfg(any(windows, target_os = "ios", target_os = "android"))'.dependencies]
 aerift-peers = { path = "../../../crates/peers" }
-aerift-transfer = { path = "../../../crates/transfer" }
 serde = { version = "1", features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+aerift-transfer = { path = "../../../crates/transfer" }
+
 [target.'cfg(windows)'.dependencies]
+aerift-transfer = { path = "../../../crates/transfer", features = ["windows-folder-picker-qualification"] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde_json = "1"
 tauri-plugin-dialog = "2"
@@ -71,3 +82,8 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security"
 windows-core = { version = "0.62.2", optional = true }
 
 sha2 = { version = "0.10.9", optional = true }
+
+# Direct imports used by the isolated Windows browser qualification target only.
+raw-window-handle = { version = "=0.6.2", optional = true }
+webview2-com = { version = "=0.39.1", optional = true }
+wry = { version = "=0.57.3", default-features = false, optional = true }
