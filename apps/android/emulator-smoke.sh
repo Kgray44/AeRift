@@ -527,25 +527,16 @@ PY_PNG
     echo 'Android Photos smoke did not find one enabled owned tile with an exact fixture name or exact picker alias.' >&2
     return 1
   }
-  photo_stage 'verify exact imported fixture and close its preview'
-  tap_imported_fixture
-  await_ui 'Close photo' >/dev/null
-  tap_label 'Close photo'
-
   # WebView debugging on the existing debug build is observation only. An
   # app-process-owned local socket is forwarded briefly; no remote network.
-  photo_stage 'verify bounded native thumbnail in app WebView'
+  photo_stage 'bind read-only observer to owned Android debug WebView'
   process="$(adb -s "$serial" shell pidof "$identity" | tr -d '\r')"
   [[ "$process" =~ ^[0-9]+$ ]]
   package_dump="$(adb -s "$serial" shell dumpsys package "$identity")"
   grep -Eq 'pkgFlags=\[[^]]*[[:space:]]DEBUGGABLE([[:space:]]|])' <<<"$package_dump"
   photo_forward="$(adb -s "$serial" forward tcp:0 "localabstract:webview_devtools_remote_$process" | tr -d '\r')"
   [[ "$photo_forward" =~ ^[0-9]+$ ]]
-  node apps/android/emulator-photo-observer.mjs "$photo_forward" imported "$photo_id" "$photo_name_mode"
-
-  tap_imported_fixture "$photo_name_mode"
-  photo_stage 'confirm removal then verify original MediaStore bytes'
-  tap_owned_removal_action() {
+  tap_owned_gallery_button() {
     local action="$1" i hit x y
     for ((i = 0; i < 6; i++)); do
       if gallery_capture && hit="$(gallery_ax "$action")" && gallery_focused; then
@@ -556,13 +547,24 @@ PY_PNG
       sleep 1
     done
     gallery_report
-    echo "Android Photos smoke could not locate one owned removal button ($action)." >&2
+    echo "Android Photos smoke could not locate one owned gallery button ($action)." >&2
     return 1
   }
+  photo_stage 'open exact imported fixture by an owned pointer action'
+  tap_imported_fixture
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" preview "$photo_id" "$photo_name_mode"
+  photo_stage 'close the verified preview via its owned accessibility button'
+  tap_owned_gallery_button close
+
+  photo_stage 'verify bounded native thumbnail in app WebView'
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" imported "$photo_id" "$photo_name_mode"
+
+  tap_imported_fixture "$photo_name_mode"
+  node apps/android/emulator-photo-observer.mjs "$photo_forward" preview "$photo_id" "$photo_name_mode"
   photo_stage 'tap owned Remove imported copy button'
-  tap_owned_removal_action remove
+  tap_owned_gallery_button remove
   photo_stage 'tap owned Confirm remove imported copy button'
-  tap_owned_removal_action confirm-remove
+  tap_owned_gallery_button confirm-remove
   photo_stage 'verify removed Android import and unchanged original'
   node apps/android/emulator-photo-observer.mjs "$photo_forward" removed "$photo_id" "$photo_name_mode"
   adb -s "$serial" exec-out content read --uri "$photo_uri" > "$tmp/source-after.png"

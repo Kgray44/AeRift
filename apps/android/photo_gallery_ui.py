@@ -14,6 +14,7 @@ EXPECTED = (
     "Loading imports…",
     "Remove imported copy",
     "Confirm remove imported copy",
+    "Close photo",
 )
 
 
@@ -69,9 +70,10 @@ def find(root, owner, action, fixture_id=None, admitted=None):
     left, top, right, bottom = frames[0]
     if action == "confirm":
         return any(EXPECTED[0] in labels(node) and bounds(node) for node in nodes)
-    if action in ("remove", "confirm-remove"):
-        label = ("Remove imported copy" if action == "remove" else
-                 "Confirm remove imported copy")
+    if action in ("remove", "confirm-remove", "close"):
+        label = {"remove": "Remove imported copy",
+                 "confirm-remove": "Confirm remove imported copy",
+                 "close": "Close photo"}[action]
         matches = [
             node for node in nodes if label in labels(node)
             and node.get("class") == "android.widget.Button"

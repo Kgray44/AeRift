@@ -2,7 +2,7 @@
 // clicks controls nor calls application IPC and never sees a native image path.
 const [port, phase, fixtureId, nameMode] = process.argv.slice(2);
 if (!/^[0-9]{1,5}$/.test(port ?? "") || Number(port) < 1024 || Number(port) > 65535 ||
-    !["imported", "removed"].includes(phase) || !/^[0-9]{1,19}$/.test(fixtureId ?? "") ||
+    !["preview", "imported", "removed"].includes(phase) || !/^[0-9]{1,19}$/.test(fixtureId ?? "") ||
     !["original", "picker"].includes(nameMode)) throw new Error("Invalid emulator observation request");
 
 const fixtureName = nameMode === "original" ? "AeRift-Android-photo-smoke.png" : fixtureId + ".png";
@@ -17,7 +17,14 @@ const expression = `(() => {
   const tile = matches.length === 1 ? matches[0] : null;
   const image = tile?.querySelector('img');
   const viewer = document.querySelector('.aw-photo-viewer[open]');
-  return { confirm: !!viewer?.querySelector('[role="group"][aria-label="Confirm remove imported copy"]'),
+  const closeButtons = [...(viewer?.querySelectorAll('button[aria-label="Close photo"]') ?? [])]
+    .filter(button => !button.disabled && button.getClientRects().length > 0);
+  const rect = tile?.getBoundingClientRect();
+  const tileAtCenter = !!rect && !!tile?.contains(document.elementFromPoint(
+    (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2));
+  return { exactPreview: viewer?.getAttribute('aria-label') === ${JSON.stringify("Viewing " + fixtureName)},
+    closes: closeButtons.length, tileAtCenter,
+    confirm: !!viewer?.querySelector('[role="group"][aria-label="Confirm remove imported copy"]'),
     viewerError: !!viewer?.querySelector('[role="alert"]'),
     gallery: !!gallery && gallery.getClientRects().length > 0,
     count: tiles.length, matches: matches.length, tile: !!tile, modal: !!document.querySelector('.aw-photo-viewer[open]'),
@@ -61,9 +68,12 @@ while (Date.now() < deadline) {
         throw new Error("Unowned WebView debugger");
       }
       last = await probe(endpoint);
-      if (last?.gallery && !last.modal && (phase === "imported" ?
-        last.tile && last.derived && last.width === 256 && last.height === 160 :
-        last.matches === 0 && last.count === 0)) {
+      const witnessed = phase === "preview"
+        ? last?.modal && last.exactPreview && last.closes === 1
+        : last?.gallery && !last.modal && (phase === "imported"
+          ? last.tile && last.derived && last.width === 256 && last.height === 160
+          : last.matches === 0 && last.count === 0);
+      if (witnessed) {
         console.log("Android installed Photos witness:", JSON.stringify({ phase, ...last }));
         process.exit(0);
       }
