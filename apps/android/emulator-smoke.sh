@@ -47,8 +47,19 @@ cleanup() {
     if [[ "$photo_uri" =~ ^content://media/external_primary/images/media/[0-9]+$ ]]; then
       adb -s "$serial" shell content delete --uri "$photo_uri" >/dev/null 2>&1 || true
     fi
-    adb -s "$serial" emu kill >/dev/null 2>&1 || true
-    kill "$pid" 2>/dev/null || true
+    timeout 5s adb -s "$serial" emu kill >/dev/null 2>&1 || true
+    # The emulator can still write its AVD while stopping. Poll only our
+    # launched child, then join it before removing test-owned scratch.
+    local i status
+    for ((i = 0; i < 40; ++i)); do
+      status="$(ps -o stat= -p "$pid" 2>/dev/null)" || break
+      [[ "$status" =~ ^[[:space:]]*[^ZX[:space:]] ]] || break
+      sleep 0.1
+    done
+    if [[ "$status" =~ ^[[:space:]]*[^ZX[:space:]] ]]; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
   fi
   rm -rf "$tmp"
 }
