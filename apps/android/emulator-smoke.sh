@@ -19,6 +19,15 @@ tmp="$(mktemp -d)"
 pid=
 # Use the supported direct software backend; swiftshader_indirect is deprecated.
 gpu=swiftshader
+perf="${AERIFT_PERF_OBSERVE:-0}"
+render_options=()
+# The functional smoke does not exercise Vulkan. SDK 37.3.10 can crash in
+# the hosted headless graphics path before the Photos test. Keep the
+# historical performance configuration unchanged for comparable measurements.
+if [[ "$perf" != 1 ]]; then
+  render_options=(-feature -Vulkan)
+  printf 'Android functional smoke: GLES via SwiftShader; Vulkan disabled.\n'
+fi
 assert_emulator_alive() {
   local phase="$1" status
   if status="$(ps -o stat= -p "$pid" 2>/dev/null)" &&
@@ -64,7 +73,7 @@ release="$(sed -n 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$(dirname "$em
 printf 'Android SDK emulator revision: %s.\n' "${release:-unknown}"
 printf 'Android emulator: GPU %s, VM acceleration %s.\n' "$gpu" "$accel"
 "$emulator" -avd "$avd" -port 5580 -no-window -no-audio -no-boot-anim -no-snapshot \
-  -gpu "$gpu" -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
+  -gpu "$gpu" "${render_options[@]}" -accel "$accel" -camera-front none -camera-back none >"$tmp/emulator.log" 2>&1 &
 pid=$!
 boot_budget=220
 [[ "$accel" == on ]] || boot_budget=650
@@ -84,7 +93,6 @@ printf 'AeRift Android CI: synthetic local-only selection fixture.\n' >"$tmp/$fi
 adb -s "$serial" push "$tmp/$fixture_name" "/sdcard/Download/$fixture_name"
 component="$(adb -s "$serial" shell cmd package resolve-activity --brief "$identity" | tail -n1)"
 [[ "$component" == "$identity/"* ]]
-perf="${AERIFT_PERF_OBSERVE:-0}"
 monotonic_ms() { python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'; }
 if [[ "$perf" == 1 ]]; then
   observe_started="$(monotonic_ms)"
