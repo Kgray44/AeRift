@@ -1,0 +1,27 @@
+name: Windows Workspace folder picker compile proof
+
+on:
+  pull_request:
+    paths:
+      - 'apps/aerift/src-tauri/src/workspace_folder_picker.rs'
+      - 'crates/transfer/src/folder/windows_directory_page.rs'
+      - '.github/workflows/workspace-folder-picker-native.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-policy:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Compile the locked opt-in folder chooser
+        shell: pwsh
+        run: |
+          cargo check --locked --manifest-path apps/aerift/src-tauri/Cargo.toml --features workspace-folder-picker-qualification
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git diff --exit-code -- Cargo.lock apps/aerift/src-tauri/Cargo.lock
