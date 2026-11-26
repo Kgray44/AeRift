@@ -2,13 +2,13 @@
 // clicks controls nor calls application IPC and never sees a native image path.
 const [port, phase, fixtureId, nameMode] = process.argv.slice(2);
 if (!/^[0-9]{1,5}$/.test(port ?? "") || Number(port) < 1024 || Number(port) > 65535 ||
-    !["preview", "imported", "removed"].includes(phase) || !/^[0-9]{1,19}$/.test(fixtureId ?? "") ||
+    !["target", "preview", "imported", "removed"].includes(phase) || !/^[0-9]{1,19}$/.test(fixtureId ?? "") ||
     !["original", "picker"].includes(nameMode)) throw new Error("Invalid emulator observation request");
 
 const fixtureName = nameMode === "original" ? "AeRift-Android-photo-smoke.png" : fixtureId + ".png";
 const embedded = new Set(["http://tauri.localhost", "https://tauri.localhost"]);
 const host = "127.0.0.1:" + port;
-const deadline = Date.now() + 22_000;
+const deadline = Date.now() + (phase === "target" ? 4000 : 22_000);
 const pause = () => new Promise(resolve => setTimeout(resolve, 350));
 const expression = `(() => {
   const gallery = document.querySelector('.aw-photos-main[aria-label="Photo gallery"]');
@@ -22,7 +22,11 @@ const expression = `(() => {
   const rect = tile?.getBoundingClientRect();
   const tileAtCenter = !!rect && !!tile?.contains(document.elementFromPoint(
     (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2));
-  return { exactPreview: viewer?.getAttribute('aria-label') === ${JSON.stringify("Viewing " + fixtureName)},
+  const midY = rect ? (rect.top + rect.bottom) / 2 : 0;
+  const target = !tile || !rect?.width || !rect.height || viewer ? 'blocked' :
+    midY > innerHeight * 0.8 ? 'below' :
+    midY < innerHeight * 0.2 ? 'above' : tileAtCenter ? 'ready' : 'blocked';
+  return { target, exactPreview: viewer?.getAttribute('aria-label') === ${JSON.stringify("Viewing " + fixtureName)},
     closes: closeButtons.length, tileAtCenter,
     confirm: !!viewer?.querySelector('[role="group"][aria-label="Confirm remove imported copy"]'),
     viewerError: !!viewer?.querySelector('[role="alert"]'),
@@ -68,6 +72,13 @@ while (Date.now() < deadline) {
         throw new Error("Unowned WebView debugger");
       }
       last = await probe(endpoint);
+      if (phase === "target") {
+        if (["ready", "above", "below", "blocked"].includes(last?.target)) {
+          console.log(last.target);
+          process.exit(0);
+        }
+        throw new Error("Unknown installed Photos target state");
+      }
       const witnessed = phase === "preview"
         ? last?.modal && last.exactPreview && last.closes === 1
         : last?.gallery && !last.modal && (phase === "imported"
