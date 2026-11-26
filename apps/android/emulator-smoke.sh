@@ -528,6 +528,35 @@ PY_PNG
       fi
       sleep 1
     done
+    # Evidence only: count enumerated synthetic-picker nodes without logging
+    # labels, identifiers, screen content, or coordinates from any window.
+    if dump_ui; then
+      python3 - "$tmp/ui.xml" <<'PY_PICKER_REPORT' >&2 || true
+import runpy
+import sys
+from xml.etree import ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1])
+except (ET.ParseError, OSError):
+    print("Android Photo Picker diagnostic: fresh UI unreadable.")
+    raise SystemExit(0)
+picker = runpy.run_path("apps/android/photo_picker_ui.py")
+nodes = list(root.iter("node"))
+owned = [n for n in nodes if n.get("package") in picker["PACKAGES"]]
+photos = [n for n in owned if any(picker["PHOTO_DESC"].fullmatch(
+    n.get(field, "")) for field in ("text", "content-desc"))]
+add = [n for n in owned if n.get("text") == "Add (1)" or n.get("content-desc") == "Add (1)"]
+done = [n for n in owned if n.get("text") == "Done" or n.get("content-desc") == "Done"]
+print("Android Photo Picker diagnostic: "
+      f"nodes={len(nodes)} picker={len(owned)} photos={len(photos)} "
+      f"enabled_photos={sum(n.get('enabled') == 'true' for n in photos)} "
+      f"add={len(add)} done={len(done)} "
+      f"unique_photo={picker['find_target'](root, 'photo') is not None} "
+      f"unique_commit={picker['find_target'](root, 'commit') is not None}")
+PY_PICKER_REPORT
+    else
+      echo 'Android Photo Picker diagnostic: fresh UI capture unavailable.' >&2
+    fi
     echo "System Photos picker did not expose a unique $action action." >&2; return 1
   }
   photo_stage 'select fixture and explicitly commit through system picker'
